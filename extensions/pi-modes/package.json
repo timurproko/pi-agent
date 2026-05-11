@@ -1,0 +1,13 @@
+{
+  "name": "pi-modes",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Three operating modes for pi: Command, Plan, and Ask",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,42 @@
+{
+  "name": "pi-paste",
+  "version": "1.0.0",
+  "description": "Paste clipboard into Pi prompt via Ctrl+V",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npx --yes -p typescript@5.7.3 tsc -p tsconfig.json --noCheck",
+    "lint": "npm run build"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "image",
+    "clipboard"
+  ],
+  "author": "MasuRii",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.72.0"
+  },
+  "optionalDependencies": {
+    "@mariozechner/clipboard": "^0.3.5"
+  }
+}

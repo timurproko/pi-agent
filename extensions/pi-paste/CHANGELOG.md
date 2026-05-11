@@ -1,0 +1,82 @@
+# Changelog
+
+## [1.1.0] - 2026-05-03
+
+### Added
+- Added centralized image MIME, image-size, PowerShell, and error utilities used by clipboard, preview, attachment, and recent-image flows.
+- Added size-limit enforcement for image attachments, recent-cache writes, recent-image loads, and Sixel preview conversion through `PI_IMAGE_TOOLS_MAX_IMAGE_BYTES`.
+
+### Changed
+- Reworked recent-image caching to use an extension-owned cache directory with safe pruning that preserves user files.
+- Reworked Sixel preview rendering to use an existing PowerShell `Sixel` module only, normalize converter output into complete terminal sequences, and fall back to native previews with actionable warnings.
+- Reworked terminal image width resolution to honor Pi project/global `terminal.imageWidthCells` settings with a documented default fallback.
+
+### Fixed
+- Prevented extension debug logging from writing terminal output; debug events now remain file-based and disabled by default.
+- Preserved Sixel, Kitty, and iTerm inline image protocol rows during preview width fitting.
+
+## [1.0.11] - 2026-04-25
+
+### Changed
+- Avoid Pi's built-in image paste shortcut by default while preserving the previous primary shortcut when users disable or rebind `app.clipboard.pasteImage` (thanks to @danielcherubini for reporting this in PR #3).
+- Replaced the placeholder `enabled` config with validated `debug`, explicit `shortcuts.pasteImage`, configurable built-in conflict avoidance, and built-in warning suppression settings.
+- Removed obsolete packaged README image assets now that the README uses a GitHub-hosted image.
+
+## [1.0.9] - 2026-04-01
+
+### Changed
+- Updated README image to use HTML tag for better npm display compatibility
+- Added npm keywords for improved package discoverability
+- Added Related Pi Extensions cross-linking section to README
+
+## [1.0.8] - 2026-04-01
+
+### Changed
+- Updated `@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui` peer dependencies to ^0.64.0
+
+## [1.0.7] - 2026-03-23
+
+### Changed
+- Updated `@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui` peer dependencies to ^0.62.0
+
+## [1.0.6] - 2026-03-12
+
+### Changed
+- Updated AWS SDK client-bedrock-runtime to 3.1005.0
+
+## [1.0.5] - 2026-03-12
+
+### Changed
+- Updated AWS SDK client-bedrock-runtime to 3.1005.0
+
+## [1.0.4] - 2026-03-07
+
+### Added
+- Added Linux clipboard image support via `wl-paste` and `xclip` fallback readers.
+- Added Linux and macOS default recent-image discovery locations so the recent picker works beyond Windows.
+- Added non-Windows image paste shortcuts including `Ctrl+V` in addition to the existing alternate bindings.
+
+### Changed
+- Updated README documentation to reflect current cross-platform support, clipboard backends, recent-image discovery behavior, and inline preview details.
+
+### Fixed
+- Removed the Windows-only extension gate so supported non-Windows platforms can register commands and shortcuts.
+- Preserved Kitty and iTerm inline image protocol rows during preview width fitting, alongside the existing Sixel-safe handling.
+- Improved clipboard reader error handling so unsupported environments report missing backends more clearly.
+
+## [1.0.3] - 2026-03-04
+
+### Fixed
+- Use absolute GitHub raw URL for README image to fix npm display
+
+## [1.0.2] - 2026-03-04
+
+### Changed
+- Rewrote README.md with professional documentation standards
+- Added comprehensive feature documentation, configuration reference, and usage examples
+
+## 1.0.0
+
+- Standardized repository layout to `src/` + root shim entrypoint.
+- Added TypeScript/Bundler project config, package metadata, and publish whitelist.
+- Added standard docs, license, and initial runtime config files.
