@@ -470,6 +470,11 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 			}
 		};
 
+		const isEditorBorderLine = (line: string): boolean => {
+			const plain = line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+			return /^─+$/.test(plain) || /^─── [↑↓] \d+ more ─*$/.test(plain);
+		};
+
 		class ModeBorderEditor extends CustomEditor {
 			private syncBashDraftStatus(): void {
 				const next = this.getText().startsWith("!");
@@ -491,6 +496,24 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 					enumerable: true,
 					get: () => this.getText().startsWith("!") ? paintBashBorder : paintBorder,
 					set: () => { /* ignore */ },
+				});
+			}
+
+			render(width: number): string[] {
+				const gutterWidth = 2;
+				if (width <= gutterWidth + 1) return super.render(width);
+
+				const border = this.borderColor;
+				let contentLineSeen = false;
+				return super.render(width - gutterWidth).map((line) => {
+					if (isEditorBorderLine(line)) {
+						const pad = Math.max(0, width - visibleWidth(line));
+						return line + border("─".repeat(pad));
+					}
+
+					const prefix = contentLineSeen ? "  " : `${border("❯")} `;
+					contentLineSeen = true;
+					return prefix + line;
 				});
 			}
 
