@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Muted amber/yellow editor border warning, matching temporary `bash` mode label, and matching submitted user-bash block border/header when the current draft starts with `!` / `!!`.
+
 ## [1.0.0] - 2026-05-11
 
 ### Added

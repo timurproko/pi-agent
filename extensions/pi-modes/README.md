@@ -32,6 +32,7 @@ Adds three operating modes to pi, switchable on the fly, with a custom 2-line fo
 - **System prompt injection** — appends per-mode guidance so the LLM knows the active constraints
 - **Custom 2-line footer** — top line shows mode + git branch + model + thinking level; bottom line shows cwd + token stats + context usage
 - **Custom editor border** — input border color matches the active mode color
+- **Bash command warning** — when the draft starts with `!` / `!!`, the input border and temporary `bash` mode label turn muted amber/yellow; submitted user-bash blocks use the same color for their border and `$ command` header
 - **Thinking-level color sync** — thinking text color dynamically matches the active thinking level's border color
 - **Session persistence** — mode survives session restarts via `pi.appendEntry()`
 - **Plan management** — plans are saved as Markdown in `.pi/plans/` with a standard template (Goal, Context, Steps, Verification)

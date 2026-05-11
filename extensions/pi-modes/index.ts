@@ -87,6 +87,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	let mode: Mode = "command";
 	let activeTui: TUI | undefined;
 	let lastWrittenPlanFile: string | null = null;
+	let editorDraftIsBash = false;
 
 	// ---- status bar ----
 	// Use a key that sorts BEFORE "model" alphabetically so the mode badge
@@ -96,10 +97,12 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	const STATUS_KEY = "aaa-pi-plan-mode";
 
 	function renderStatus(ctx: ExtensionContext): void {
-		const label = MODE_LABEL[mode];
+		const label = editorDraftIsBash ? "bash" : MODE_LABEL[mode];
 		let painted = label;
 		try {
-			painted = ctx.ui.theme.fg(MODE_COLOR[mode], label);
+			painted = editorDraftIsBash
+				? ctx.ui.theme.fg(PI_PLAN_BASH_TOKEN, label)
+				: ctx.ui.theme.fg(MODE_COLOR[mode], label);
 		} catch {
 			/* theme not ready - fall back to plain */
 		}
@@ -326,6 +329,8 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	const PI_PLAN_BRIGHTEST_HEX = "#ff79e1"; // bright pink/magenta
 	const PI_PLAN_LOW_TOKEN = "piPlanThinkingLow";
 	const PI_PLAN_LOW_HEX = "#4fb090"; // muted teal - distinct from minimal but dimmer than medium
+	const PI_PLAN_BASH_TOKEN = "piPlanBashCommand";
+	const PI_PLAN_BASH_HEX = "#c6a15b"; // muted amber - visible warning without overpowering mode colors
 	const THINKING_LEVEL_TOKEN: Record<string, string> = {
 		off: "thinkingOff",
 		minimal: "thinkingLow",
@@ -358,6 +363,14 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 			if (brightest) theme.fgColors.set(PI_PLAN_BRIGHTEST_TOKEN, brightest);
 			const low = toAnsi(PI_PLAN_LOW_HEX, "thinkingMedium");
 			if (low) theme.fgColors.set(PI_PLAN_LOW_TOKEN, low);
+			const bash = toAnsi(PI_PLAN_BASH_HEX, "warning");
+			if (bash) {
+				theme.fgColors.set(PI_PLAN_BASH_TOKEN, bash);
+				// Built-in user-bash execution blocks use the `bashMode` color for
+				// their borders and `$ command` header. Align those with our muted
+				// amber warning instead of the default green.
+				theme.fgColors.set("bashMode", bash);
+			}
 		} catch { /* theme shape changed - silently ignore */ }
 	}
 
@@ -424,11 +437,12 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		if (last?.data?.mode && MODES.includes(last.data.mode)) {
 			mode = last.data.mode;
 		}
+		editorDraftIsBash = false;
 		ensurePlansDir();
 		renderStatus(ctx);
+		installBrightestColor(ctx);
 		installFooter(ctx);
 		installEditor(ctx);
-		installBrightestColor(ctx);
 		installThinkingTextProxy(ctx);
 		syncThinkingTextColor(ctx);
 	});
@@ -444,20 +458,50 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 				return text;
 			}
 		};
+		const paintBashBorder = (text: string): string => {
+			try {
+				return theme.fg(PI_PLAN_BASH_TOKEN, text);
+			} catch {
+				try {
+					return theme.fg("warning", text);
+				} catch {
+					return text;
+				}
+			}
+		};
 
 		class ModeBorderEditor extends CustomEditor {
+			private syncBashDraftStatus(): void {
+				const next = this.getText().startsWith("!");
+				if (next === editorDraftIsBash) return;
+				editorDraftIsBash = next;
+				renderStatus(ctx);
+				activeTui?.requestRender();
+			}
+
 			constructor(tui: TUI, edTheme: EditorTheme, kb: KeybindingsManager) {
 				super(tui, edTheme, kb);
 				activeTui = tui;
 				// Lock borderColor: ignore external assignments (e.g. pi resetting
-				// it on thinking-level / bash-mode changes) and always render with
-				// the current pi-plan mode color.
+				// it on thinking-level / bash-mode changes). Normally render with
+				// the current pi-plan mode color, but use yellow warning borders
+				// while the draft starts with `!` because that will run local bash.
 				Object.defineProperty(this, "borderColor", {
 					configurable: true,
 					enumerable: true,
-					get: () => paintBorder,
+					get: () => this.getText().startsWith("!") ? paintBashBorder : paintBorder,
 					set: () => { /* ignore */ },
 				});
+			}
+
+			handleInput(data: string): void {
+				super.handleInput(data);
+				this.syncBashDraftStatus();
+			}
+
+			setText(text: string): void {
+				super.setText(text);
+				this.syncBashDraftStatus();
 			}
 		}
 
