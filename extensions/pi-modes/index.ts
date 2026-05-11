@@ -38,6 +38,12 @@ const MODE_LABEL: Record<Mode, string> = {
 	ask: "ask",
 };
 
+const MODE_LABEL_TITLE: Record<Mode, string> = {
+	command: "Command",
+	plan: "Plan",
+	ask: "Ask",
+};
+
 // Theme color token per mode.
 //   Ask     -> green  (success)
 //   Command -> gray   (muted)
@@ -110,7 +116,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		renderStatus(ctx);
 		persist();
 		activeTui?.requestRender();
-		ctx.ui.notify(`Switched to ${MODE_LABEL[mode]} mode`);
+		ctx.ui.notify(`Switched to ${MODE_LABEL_TITLE[mode]} mode`);
 	}
 
 	function cycleMode(ctx: ExtensionContext): void {

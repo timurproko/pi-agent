@@ -264,16 +264,6 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 				container.addChild(
 					new Text(theme.fg("accent", theme.bold("Extensions")), 0, 0),
 				);
-				container.addChild(
-					new Text(
-						theme.fg(
-							"muted",
-							"↑↓ - navigate · Space - toggle · Enter - apply & reload · Esc - cancel",
-						),
-						0,
-						0,
-					),
-				);
 				container.addChild(new Spacer(1));
 
 				const list = new SettingsList(
@@ -292,6 +282,16 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 
 				container.addChild(list);
 				container.addChild(new Spacer(1));
+				container.addChild(
+					new Text(
+						theme.fg(
+							"dim",
+							"enter apply & reload · space toggle · esc cancel",
+						),
+						0,
+						0,
+					),
+				);
 				container.addChild(new DynamicBorder((s) => theme.fg("border", s)));
 
 				return {
