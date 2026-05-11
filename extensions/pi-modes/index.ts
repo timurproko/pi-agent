@@ -464,6 +464,17 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		ctx.ui.setEditorComponent((tui, edTheme, kb) => new ModeBorderEditor(tui, edTheme, kb));
 	}
 
+	function shortenUserPath(p: string): string {
+		const home = os.homedir();
+		const pathText = p.replace(/\//g, "\\");
+		const homeText = home.replace(/\//g, "\\");
+		const pathLower = pathText.toLowerCase();
+		const homeLower = homeText.toLowerCase();
+		if (pathLower === homeLower) return "~";
+		if (pathLower.startsWith(homeLower + "\\")) return "~" + pathText.slice(homeText.length);
+		return p;
+	}
+
 	// ---- 2-line footer: stats on top, model on bottom ----
 	// Match the default pi footer's formatTokens (uppercase M, sensible thresholds).
 	function fmt(count: number): string {
@@ -576,8 +587,8 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 					try {
 						modePainted = theme.fg(MODE_COLOR[mode], modeLabel);
 					} catch { /* */ }
-					// Truncate cwd from the beginning to nearest \ if longer than 30 chars
-					let cwdDisplay = ctx.cwd;
+					// Show home-relative paths as ~\...; keep all other footer behavior unchanged.
+					let cwdDisplay = shortenUserPath(ctx.cwd);
 					if (cwdDisplay.length > 30) {
 						const slashIdx = cwdDisplay.indexOf("\\", cwdDisplay.length - 30);
 						if (slashIdx !== -1 && slashIdx < cwdDisplay.length - 1) {
