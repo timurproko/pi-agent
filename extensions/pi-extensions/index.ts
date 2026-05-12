@@ -25,7 +25,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, getSettingsListTheme, InteractiveMode, DynamicBorder } from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList, Spacer, Text } from "@earendil-works/pi-tui";
 
@@ -43,6 +43,14 @@ interface ExtensionInfo {
 }
 
 const SELF_DIRNAME = "pi-extensions";
+const PI_MCP_DIRNAME = "pi-mcp";
+const PI_MCP_STATUS_PATCH_KEY = "__piMcpStatusPatch";
+
+type PiMcpPatchableUi = ExtensionContext["ui"] & {
+	__piMcpStatusPatch?: {
+		originalSetStatus: (key: string, text?: string) => void;
+	};
+};
 
 function isExtensionFileName(name: string): boolean {
 	return name.endsWith(".ts") || name.endsWith(".js");
@@ -173,6 +181,40 @@ function discoverAll(cwd: string): ExtensionInfo[] {
 	return result;
 }
 
+function isPiMcpDisabled(cwd: string): boolean {
+	return discoverAll(cwd).some((ext) => ext.name === PI_MCP_DIRNAME && !ext.enabled);
+}
+
+function readConfiguredMcpServerCount(): number {
+	try {
+		const configPath = path.join(getAgentDir(), "mcp.json");
+		const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as {
+			mcpServers?: Record<string, unknown>;
+			"mcp-servers"?: Record<string, unknown>;
+		};
+		return Object.keys(raw.mcpServers ?? raw["mcp-servers"] ?? {}).length;
+	} catch {
+		return 0;
+	}
+}
+
+function restoreStalePiMcpStatusPatch(ctx: ExtensionContext): void {
+	if (!ctx.hasUI || !isPiMcpDisabled(ctx.cwd)) return;
+
+	const ui = ctx.ui as PiMcpPatchableUi;
+	const patch = ui[PI_MCP_STATUS_PATCH_KEY];
+	if (!patch) return;
+
+	ui.setStatus = patch.originalSetStatus as typeof ui.setStatus;
+	delete ui[PI_MCP_STATUS_PATCH_KEY];
+
+	// Clear the already-formatted bulb status left behind by pi-mcp. Then seed
+	// the same plain status shape emitted by pi-mcp-adapter so the footer does
+	// not continue to show stale bulbs until the adapter updates again.
+	const total = readConfiguredMcpServerCount();
+	ui.setStatus("mcp", total > 0 ? `MCP: 0/${total} servers` : undefined);
+}
+
 /**
  * Apply pending toggle decisions to the filesystem.
  * Returns the count of changes actually made.
@@ -230,6 +272,10 @@ function stripAutocompleteScopeTag(): void {
 
 export default function piExtensionsExtension(pi: ExtensionAPI) {
 	stripAutocompleteScopeTag();
+
+	pi.on("session_start", async (_event, ctx) => {
+		restoreStalePiMcpStatusPatch(ctx);
+	});
 
 	pi.registerCommand("extensions", {
 		description: "Enable/disable extensions on the fly",
@@ -321,6 +367,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 
 			// Apply pending toggles
 			const { changed, errors } = applyToggles(exts, desired);
+			restoreStalePiMcpStatusPatch(ctx);
 			for (const err of errors) {
 				ctx.ui.notify(`Failed to toggle: ${err}`, "error");
 			}

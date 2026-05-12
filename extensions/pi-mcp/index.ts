@@ -1,14 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Container, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const STATUS_KEY = "mcp";
 const PATCH_KEY = "__piMcpStatusPatch";
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
-const knownConnectedNames = new Set<string>();
 
 interface StatusPatch {
 	originalSetStatus: (key: string, text?: string) => void;
@@ -23,16 +20,32 @@ interface FormatterState {
 	pulseTimer?: ReturnType<typeof setInterval>;
 }
 
+// Module-level mirror of the most recently observed connected-server set.
+// Used by the tool_result listener to demote a server on connection loss
+// without ever calling into pi-mcp-adapter.
+let lastConnectedNames: string[] = [];
+
+// Regexes that indicate an MCP server's transport/app connection is dead, not
+// just that a tool call returned a logical error. Keep these tight to avoid
+// demoting servers for unrelated failures (bad args, missing tool, etc.).
+const CONNECTION_LOSS_PATTERNS: RegExp[] = [
+	/could not connect to\b/i,
+	/forcibly closed by the remote host/i,
+	/connection (?:was )?(?:reset|closed|refused|aborted|lost)/i,
+	/econnrefused|econnreset|epipe|enotconn|etimedout/i,
+	/socket hang up/i,
+	/is the (?:plugin|server) running/i,
+	/no .+ instances? found/i,
+	/please ensure .+ (?:is )?running/i,
+	/mcp for .+ bridge/i,
+	/not connected to mcp server/i,
+	/transport (?:closed|disconnected|error)/i,
+];
+
 interface McpConfig {
 	mcpServers?: Record<string, unknown>;
 	"mcp-servers"?: Record<string, unknown>;
 }
-
-interface McpCache {
-	servers?: Record<string, unknown>;
-}
-
-type ServerStatus = "connected" | "cached" | "not connected";
 
 type PatchableUi = ExtensionContext["ui"] & {
 	__piMcpStatusPatch?: StatusPatch;
@@ -57,19 +70,8 @@ function readConfiguredServerCount(): number {
 	return readConfiguredServerNames().length;
 }
 
-function readCachedServerNames(): string[] {
-	try {
-		const cachePath = path.join(getAgentDir(), "mcp-cache.json");
-		const raw = JSON.parse(fs.readFileSync(cachePath, "utf-8")) as McpCache;
-		return Object.keys(raw.servers ?? {});
-	} catch {
-		return [];
-	}
-}
-
-function getServerStatus(name: string): ServerStatus {
-	if (knownConnectedNames.has(name)) return "connected";
-	return readCachedServerNames().includes(name) ? "cached" : "not connected";
+function rememberConnectedNames(names: string[]): void {
+	lastConnectedNames = [...names];
 }
 
 function parseServerCount(text: string): { connected: number; total: number; names: string[] } | null {
@@ -111,17 +113,9 @@ function ansi(code: number, text: string): string {
 	return `\x1b[${code}m${text}\x1b[39m`;
 }
 
-function paintGray(ctx: ExtensionContext, label: string): string {
-	try {
-		return ctx.ui.theme.fg("dim", label);
-	} catch {
-		return ansi(90, label);
-	}
-}
-
 function paintMuted(ctx: ExtensionContext, label: string): string {
 	try {
-		return ctx.ui.theme.fg("muted", label);
+		return ctx.ui.theme.fg("dim", label);
 	} catch {
 		return ansi(90, label);
 	}
@@ -137,6 +131,14 @@ function paintSuccess(ctx: ExtensionContext, label: string): string {
 
 function paintCyan(label: string): string {
 	return ansi(36, label);
+}
+
+function paintDim(ctx: ExtensionContext, label: string): string {
+	try {
+		return ctx.ui.theme.fg("dim", label);
+	} catch {
+		return label;
+	}
 }
 
 function paintStatus(
@@ -155,7 +157,7 @@ function paintStatus(
 
 	if (finalDisplayNames.length === 0) return paintMuted(ctx, "mcp:");
 
-	const pulseBulbs = ["○", "◌", "●", "◌"];
+	const pulseBulbs = ["◌", "○"];
 	const parts = finalDisplayNames.map((name) => {
 		const bulb = connectedNames.has(name)
 			? paintSuccess(ctx, "●")
@@ -166,155 +168,6 @@ function paintStatus(
 	});
 
 	return `${paintMuted(ctx, "mcp: ")}${parts.join(paintMuted(ctx, " "))}`;
-}
-
-function paintDim(ctx: ExtensionContext, label: string): string {
-	try {
-		return ctx.ui.theme.fg("dim", label);
-	} catch {
-		return label;
-	}
-}
-
-function rememberConnectedNames(names: string[], replace = false): void {
-	if (replace) knownConnectedNames.clear();
-	for (const name of names) {
-		knownConnectedNames.add(name);
-	}
-}
-
-function publishKnownStatus(ctx: ExtensionContext): void {
-	const total = readConfiguredServerCount();
-	if (total === 0 || knownConnectedNames.size === 0) return;
-	const names = [...knownConnectedNames];
-	ctx.ui.setStatus(STATUS_KEY, `MCP: ${names.length}/${total} servers ${names.join(", ")}`);
-}
-
-function getDetailsRecord(details: unknown): Record<string, unknown> | null {
-	return details && typeof details === "object" ? (details as Record<string, unknown>) : null;
-}
-
-function extractConnectedNamesFromDetails(details: unknown): string[] {
-	const record = getDetailsRecord(details);
-	if (!record) return [];
-
-	if (record.mode === "status" && Array.isArray(record.servers)) {
-		return record.servers
-			.filter(server => getDetailsRecord(server)?.status === "connected")
-			.map(server => getDetailsRecord(server)?.name)
-			.filter((name): name is string => typeof name === "string" && name.length > 0);
-	}
-
-	if ((record.mode === "list" || record.mode === "connect") && typeof record.server === "string") {
-		return [record.server];
-	}
-
-	return [];
-}
-
-function hasMeaningfulValue(value: unknown): boolean {
-	if (value === undefined || value === null || value === false) return false;
-	if (typeof value === "string") return value.trim().length > 0;
-	return true;
-}
-
-function isGenericMcpStatusInput(input: unknown): boolean {
-	const record = getDetailsRecord(input);
-	if (!record) return true;
-
-	const actionKeys = new Set(["tool", "args", "connect", "describe", "search", "server", "action"]);
-	for (const key of actionKeys) {
-		if (hasMeaningfulValue(record[key])) return false;
-	}
-	if (record.regex === true || record.includeSchemas === true) return false;
-
-	for (const [key, value] of Object.entries(record)) {
-		if (actionKeys.has(key) || key === "regex" || key === "includeSchemas") continue;
-		if (hasMeaningfulValue(value)) return false;
-	}
-
-	return true;
-}
-
-function contentText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.map((part) => getDetailsRecord(part)?.text)
-		.filter((text): text is string => typeof text === "string")
-		.join("\n");
-}
-
-function latestUserText(ctx: ExtensionContext): string {
-	const entries = ctx.sessionManager.getBranch();
-	for (let i = entries.length - 1; i >= 0; i--) {
-		const entry = entries[i];
-		if (!entry || entry.type !== "message") continue;
-		if (entry.message.role !== "user") continue;
-		return contentText(entry.message.content);
-	}
-	return "";
-}
-
-function latestUserAskedToConnectMcp(ctx: ExtensionContext): boolean {
-	const text = latestUserText(ctx).toLowerCase();
-	return /\bconnect\b[\s\S]*\bmcp\b/.test(text) || /\bmcp\b[\s\S]*\bconnect\b/.test(text);
-}
-
-async function showMcpConnectSelector(ctx: ExtensionContext): Promise<string | null> {
-	const serverNames = readConfiguredServerNames();
-	if (serverNames.length === 0) {
-		ctx.ui.notify("No MCP servers configured.", "info");
-		return null;
-	}
-	if (serverNames.length === 1) return serverNames[0] ?? null;
-
-	const items: SelectItem[] = serverNames.map((name) => ({
-		value: name,
-		label: name,
-		description: getServerStatus(name),
-	}));
-
-	return ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-		const container = new Container();
-		container.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
-		container.addChild(new Spacer(1));
-		container.addChild(new Text(theme.fg("accent", theme.bold("Connect MCP")), 0, 0));
-		container.addChild(new Spacer(1));
-
-		const list = new SelectList(
-			items,
-			Math.min(items.length, 12),
-			{
-				selectedPrefix: (text) => theme.fg("accent", text),
-				selectedText: (text) => theme.fg("accent", text),
-				description: (text) => theme.fg("muted", text),
-				scrollInfo: (text) => theme.fg("dim", text),
-				noMatch: (text) => theme.fg("warning", text),
-			},
-			{ maxPrimaryColumnWidth: 32 },
-		);
-		list.onSelect = (item) => done(item.value);
-		list.onCancel = () => done(null);
-
-		container.addChild(list);
-		container.addChild(new Spacer(1));
-		container.addChild(new Text(theme.fg("dim", "enter connect · esc cancel"), 0, 0));
-		container.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
-
-		return {
-			render(width: number) {
-				return container.render(width);
-			},
-			invalidate() {
-				container.invalidate();
-			},
-			handleInput(data: string) {
-				list.handleInput(data);
-				tui.requestRender();
-			},
-		};
-	});
 }
 
 function stopConnectingPulse(state: FormatterState): void {
@@ -338,29 +191,94 @@ function startConnectingPulse(ctx: ExtensionContext, state: FormatterState): voi
 
 function updateConnectedNames(state: FormatterState, counts: { connected: number; names: string[] }): string[] {
 	stopConnectingPulse(state);
-	if (counts.names.length > 0) {
-		state.connectedNames = counts.names.slice(0, counts.connected);
-		rememberConnectedNames(state.connectedNames, true);
-	} else if (
-		counts.connected > state.lastConnected &&
-		state.pendingTarget &&
-		isResolvedServerName(state.pendingTarget) &&
-		!state.connectedNames.includes(state.pendingTarget)
-	) {
-		state.connectedNames.push(state.pendingTarget);
-		rememberConnectedNames([state.pendingTarget]);
-	}
 
-	if (counts.connected === 0) {
-		state.connectedNames = [];
-		knownConnectedNames.clear();
-	} else if (state.connectedNames.length > counts.connected) {
-		state.connectedNames = state.connectedNames.slice(0, counts.connected);
-	}
+	// pi-mcp-adapter reports the MCP transport process as connected before the
+	// target app/bridge is proven reachable. If we trust that count directly the
+	// footer flashes green, then gray when the first app call fails. Keep bulbs
+	// green only for servers that have produced a successful app-level tool result.
+	const adapterNames = counts.names.length > 0 ? counts.names.slice(0, counts.connected) : [];
+	const adapterNameSet = new Set(adapterNames);
+	const verifiedNames = lastConnectedNames.filter((name) => {
+		// If the adapter included names, keep only verified names still present in
+		// that list. If it only emitted counts, keep current verified state.
+		return adapterNameSet.size === 0 || adapterNameSet.has(name);
+	});
 
-	state.lastConnected = counts.connected;
+	state.connectedNames = verifiedNames;
+	state.lastConnected = verifiedNames.length;
 	state.pendingTarget = undefined;
+	rememberConnectedNames(state.connectedNames);
 	return state.connectedNames;
+}
+
+function contentText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((part) => {
+			if (part && typeof part === "object" && "text" in part) {
+				const text = (part as { text?: unknown }).text;
+				return typeof text === "string" ? text : "";
+			}
+			return "";
+		})
+		.join("\n");
+}
+
+function looksLikeConnectionLoss(text: string): boolean {
+	if (!text) return false;
+	return CONNECTION_LOSS_PATTERNS.some((re) => re.test(text));
+}
+
+function identifyAffectedServer(input: unknown, text: string): string | null {
+	const configured = readConfiguredServerNames();
+	const record = input && typeof input === "object" ? (input as Record<string, unknown>) : null;
+
+	for (const key of ["server", "connect"]) {
+		const value = record?.[key];
+		if (typeof value === "string" && configured.includes(value)) return value;
+	}
+
+	const tool = record?.tool;
+	if (typeof tool === "string") {
+		for (const name of configured) {
+			if (tool === name || tool.startsWith(`${name}_`)) return name;
+		}
+	}
+
+	// Fall back to scanning the error text for any configured server name.
+	const plain = stripAnsi(text);
+	for (const name of configured) {
+		const re = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+		if (re.test(plain)) return name;
+	}
+	return null;
+}
+
+function emitConnectedStatus(ctx: ExtensionContext, connected: string[]): void {
+	const total = readConfiguredServerCount();
+	if (total === 0) return;
+	const suffix = connected.length > 0 ? ` ${connected.join(", ")}` : "";
+	ctx.ui.setStatus(STATUS_KEY, `MCP: ${connected.length}/${total} servers${suffix}`);
+}
+
+function handleConnectionLoss(ctx: ExtensionContext, serverName: string): void {
+	const wasConnected = lastConnectedNames.includes(serverName);
+	const next = lastConnectedNames.filter((n) => n !== serverName);
+	rememberConnectedNames(next);
+	emitConnectedStatus(ctx, next);
+	if (!wasConnected) return;
+	try {
+		ctx.ui.notify(`MCP server "${serverName}" disconnected.`, "warning");
+	} catch {
+		/* notify is best-effort */
+	}
+}
+
+function handleServerRecovered(ctx: ExtensionContext, serverName: string): void {
+	if (lastConnectedNames.includes(serverName)) return;
+	rememberConnectedNames([...lastConnectedNames, serverName]);
+	emitConnectedStatus(ctx, lastConnectedNames);
 }
 
 function makeFormatter(ctx: ExtensionContext) {
@@ -418,178 +336,41 @@ function installStatusPatch(ctx: ExtensionContext): void {
 	}) as typeof ui.setStatus;
 }
 
-// Monkey-patch the (private) ExtensionRunner so pi-mcp-adapter's `/mcp` command
-// shows up as `/mcp-status` without touching the adapter package itself. The
-// patch is idempotent and only renames the entry; description and handler are
-// preserved verbatim, so upgrading pi-mcp-adapter continues to work.
-let runnerPatchPromise: Promise<void> | null = null;
-
-async function findRunnerJsPath(): Promise<string | null> {
-	const candidates: string[] = [];
-
-	// 1. import.meta.resolve (Node ≥20 stable; may be missing under some loaders).
-	try {
-		const resolveFn = (import.meta as { resolve?: (spec: string) => string }).resolve;
-		if (typeof resolveFn === "function") {
-			const indexUrl = resolveFn("@earendil-works/pi-coding-agent");
-			const distDir = path.dirname(fileURLToPath(indexUrl));
-			candidates.push(path.join(distDir, "core/extensions/runner.js"));
-		}
-	} catch {
-		/* fall through */
-	}
-
-	// 2. process.argv[1] points at pi-coding-agent's dist/cli.js when launched via
-	// the installed `pi` shim.
-	const argvEntry = process.argv[1];
-	if (argvEntry) {
-		const distDir = path.dirname(argvEntry);
-		candidates.push(path.join(distDir, "core/extensions/runner.js"));
-	}
-
-	// 3. Walk up from this extension file searching for the installed package.
-	try {
-		let dir = path.dirname(fileURLToPath(import.meta.url));
-		for (let i = 0; i < 8; i++) {
-			const guess = path.join(
-				dir,
-				"node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js",
-			);
-			candidates.push(guess);
-			const parent = path.dirname(dir);
-			if (parent === dir) break;
-			dir = parent;
-		}
-	} catch {
-		/* ignore */
-	}
-
-	for (const candidate of candidates) {
-		try {
-			if (fs.existsSync(candidate)) {
-				return fs.realpathSync.native(candidate);
-			}
-		} catch {
-			/* ignore */
-		}
-	}
-	return null;
-}
-
-async function ensureAdapterCommandRenamed(): Promise<void> {
-	if (runnerPatchPromise) return runnerPatchPromise;
-	runnerPatchPromise = (async () => {
-		try {
-			const runnerPath = await findRunnerJsPath();
-			if (!runnerPath) {
-				console.error("pi-mcp: unable to locate pi-coding-agent runner.js; /mcp rename disabled");
-				return;
-			}
-			const mod = (await import(pathToFileURL(runnerPath).href)) as {
-				ExtensionRunner?: { prototype: Record<string, unknown> } & Record<string, unknown>;
-			};
-			const Runner = mod.ExtensionRunner;
-			if (!Runner) return;
-			if ((Runner as { __piMcpRenamePatch?: boolean }).__piMcpRenamePatch) return;
-			(Runner as { __piMcpRenamePatch?: boolean }).__piMcpRenamePatch = true;
-
-			const proto = Runner.prototype as {
-				resolveRegisteredCommands?: (this: { extensions: Array<{
-					resolvedPath?: string;
-					path?: string;
-					commands: Map<string, { name: string } & Record<string, unknown>>;
-				}> }) => unknown;
-			};
-			const original = proto.resolveRegisteredCommands;
-			if (typeof original !== "function") return;
-
-			proto.resolveRegisteredCommands = function patched() {
-				for (const ext of this.extensions) {
-					const location = ext.resolvedPath ?? ext.path ?? "";
-					if (!/pi-mcp-adapter/i.test(location)) continue;
-					if (!ext.commands.has("mcp") || ext.commands.has("mcp-status")) continue;
-					const originalCmd = ext.commands.get("mcp");
-					if (!originalCmd) continue;
-					ext.commands.delete("mcp");
-					ext.commands.set("mcp-status", { ...originalCmd, name: "mcp-status" });
-				}
-				return (original as (...args: unknown[]) => unknown).call(this);
-			};
-		} catch (err) {
-			console.error("pi-mcp: failed to patch ExtensionRunner for /mcp rename", err);
-		}
-	})();
-	return runnerPatchPromise;
-}
-
-async function runMcpConnectFlow(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-	const selectedName = await showMcpConnectSelector(ctx);
-	if (!selectedName) return;
-
-	if (knownConnectedNames.has(selectedName)) {
-		ctx.ui.notify(`MCP server "${selectedName}" is already connected.`, "info");
-		return;
-	}
-
-	// Ask the LLM to invoke the mcp tool with `connect`. The existing tool_call
-	// interceptor leaves non-generic invocations alone, so this routes straight to
-	// pi-mcp-adapter.
-	pi.sendUserMessage(`Connect to MCP server "${selectedName}".`);
-}
-
 export default function piMcpExtension(pi: ExtensionAPI): void {
-	// Patch ExtensionRunner as early as possible so the adapter's `/mcp` is
-	// already renamed by the time the user types anything.
-	void ensureAdapterCommandRenamed();
-
-	pi.registerCommand("mcp-connect", {
-		description: "Connect to an MCP server",
-		handler: async (_args, ctx) => {
-			await runMcpConnectFlow(pi, ctx);
-		},
-	});
-
 	pi.on("session_start", async (_event, ctx) => {
-		await ensureAdapterCommandRenamed();
 		if (!ctx.hasUI) return;
 
 		installStatusPatch(ctx);
+		lastConnectedNames = [];
 
 		// Ensure a stable status is visible even when all MCP servers are lazy and
-		// pi-mcp-adapter has not emitted its final status yet.
+		// pi-mcp-adapter has not emitted its final status yet. This just routes the
+		// same text pi-mcp-adapter would emit through our formatter.
 		const total = readConfiguredServerCount();
 		if (total > 0) {
 			ctx.ui.setStatus(STATUS_KEY, `MCP: 0/${total} servers`);
 		}
 	});
 
-	pi.on("tool_call", async (event, ctx) => {
-		if (!ctx.hasUI || event.toolName !== "mcp") return;
-		if (!isGenericMcpStatusInput(event.input)) return;
-		if (!latestUserAskedToConnectMcp(ctx)) return;
-
-		const selectedName = await showMcpConnectSelector(ctx);
-		if (!selectedName) {
-			return { block: true, reason: "MCP connect cancelled by user." };
-		}
-
-		(event.input as Record<string, unknown>).connect = selectedName;
-	});
-
+	// Demote an MCP server in the status bar when its transport dies. We never
+	// touch pi-mcp-adapter state — we just re-emit a status string in the same
+	// format the adapter itself uses, which our formatter then renders.
 	pi.on("tool_result", async (event, ctx) => {
-		if (!ctx.hasUI || event.toolName !== "mcp") return;
+		if (!ctx.hasUI) return;
+		if (event.toolName !== "mcp") return;
 
-		const details = getDetailsRecord(event.details);
-		const names = extractConnectedNamesFromDetails(details);
-		if (details?.mode === "status" && names.length === 0) {
-			knownConnectedNames.clear();
-			const total = readConfiguredServerCount();
-			if (total > 0) ctx.ui.setStatus(STATUS_KEY, `MCP: 0/${total} servers`);
+		const text = contentText(event.content);
+		const isConnectionLoss = looksLikeConnectionLoss(text);
+		const affected = identifyAffectedServer(event.input, isConnectionLoss ? text : "");
+		if (!affected) return;
+
+		if (isConnectionLoss) {
+			handleConnectionLoss(ctx, affected);
 			return;
 		}
-		if (names.length === 0) return;
 
-		rememberConnectedNames(names, details?.mode === "status");
-		publishKnownStatus(ctx);
+		// A later MCP result from the same server that is not a connection-loss
+		// failure proves the server/app path is responding again.
+		handleServerRecovered(ctx, affected);
 	});
 }

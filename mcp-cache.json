@@ -6015,7 +6015,7 @@
         }
       ],
       "resources": [],
-      "cachedAt": 1778576429981
+      "cachedAt": 1778580037569
     },
     "unity": {
       "configHash": "ebebf52426597cbbd34a6c2a87bfdf4fede4893d70a4534ffd730deedef7b7b0",
@@ -11758,7 +11758,7 @@
           "description": "All currently open editor windows with their titles, types, positions, and focus state.\n\nURI: mcpforunity://editor/windows"
         }
       ],
-      "cachedAt": 1778576407500
+      "cachedAt": 1778580037573
     }
   }
 }
