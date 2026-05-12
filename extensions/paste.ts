@@ -551,6 +551,194 @@ interface InterceptorState {
   lastProbeResult: boolean;
 }
 
+// ─── Chip backspace handling ────────────────────────────────────────────────
+//
+// When the user presses Backspace and the editor text ends with one of the
+// paste-extension's [emoji ...] chips, we delete the whole chip in one shot
+// so each block behaves like a single character.
+
+const BACKSPACE_CHARS = new Set(["\x7f", "\b"]);
+
+// VT/xterm sequence for the forward-Delete key (Del). Some terminals also emit
+// \x1b[P for the same key.
+const DELETE_KEYS = new Set(["\x1b[3~", "\x1b[P"]);
+
+const CHIP_BODY_RE_SRC =
+  "(?:\\[\\u{1F4F7} clipboard-[a-f0-9]+\\.png\\]|\\[\\u{1F4C1} [^\\]]+\\]|\\[(?:\\u{1F4C4}|\\u{1F5BC}) {1,2}[^\\]]+\\]|\\[\\u{1F517} [^\\]]+\\]|\\[\\u{1F7E7} [^\\]]+\\])";
+
+// Matches any chip produced by this extension at the END of the editor text.
+// Trailing whitespace (the space we insert after a chip) is allowed.
+const CHIP_AT_END_RE = new RegExp(`${CHIP_BODY_RE_SRC}\\s*$`, "u");
+
+// Matches any chip at the START of a string. Leading whitespace is allowed.
+const CHIP_AT_START_RE = new RegExp(`^\\s*${CHIP_BODY_RE_SRC}`, "u");
+
+// Returns a leading space if the text the chip is about to be appended to
+// is non-empty and does not already end with whitespace. The chip insertion
+// happens via the terminal-input data stream, so we check (in order):
+//   1. the prefix from the current input buffer (chars before the paste)
+//   2. the editor's current text (whatever was typed previously)
+function leadingSpaceFor(ui: ExtensionUIContext, prefix: string): string {
+  const tail = prefix.length > 0 ? prefix : safeGetEditorText(ui);
+  if (tail.length === 0) return "";
+  const lastChar = tail.slice(-1);
+  if (/\s/.test(lastChar)) return "";
+  return " ";
+}
+
+function safeGetEditorText(ui: ExtensionUIContext): string {
+  try {
+    if (typeof ui.getEditorText === "function") return ui.getEditorText() ?? "";
+  } catch {}
+  return "";
+}
+
+function tryDeleteTrailingChip(ui: ExtensionUIContext): boolean {
+  return mutateEditor(ui, (text) => {
+    const match = text.match(CHIP_AT_END_RE);
+    if (!match || match.index === undefined) return null;
+    return text.slice(0, match.index).replace(/[ \t]+$/, "");
+  });
+}
+
+// Forward-delete a chip that sits immediately after the cursor.
+//
+// We don't get cursor position from the SDK so we use a shadow cursor tracked
+// from observed keystrokes (arrows / Home / End / printable input). When the
+// shadow is "unknown" we degrade to a no-op rather than guessing.
+function tryForwardDeleteChipAtCursor(
+  ui: ExtensionUIContext,
+  cursor: ShadowCursor,
+): boolean {
+  return mutateEditor(ui, (text) => {
+    if (text.length === 0) return null;
+    const offset = resolveCursorOffset(cursor, text);
+    if (offset === null) return null;
+    const after = text.slice(offset);
+    const match = after.match(CHIP_AT_START_RE);
+    if (!match) return null;
+    const before = text.slice(0, offset).replace(/[ \t]+$/, "");
+    const remainder = after.slice(match[0].length).replace(/^[ \t]+/, "");
+    cursor.mode = "offset";
+    cursor.offset = before.length;
+    const joiner = before.length > 0 && remainder.length > 0 ? " " : "";
+    return before + joiner + remainder;
+  });
+}
+
+function mutateEditor(
+  ui: ExtensionUIContext,
+  transform: (text: string) => string | null,
+): boolean {
+  try {
+    if (typeof ui.getEditorText !== "function" || typeof ui.setEditorText !== "function") {
+      return false;
+    }
+    const text = ui.getEditorText();
+    if (text === undefined || text === null) return false;
+    const next = transform(text);
+    if (next === null || next === text) return false;
+    ui.setEditorText(next);
+    try { ui.setStatus("pi-paste-render", undefined); } catch {}
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Shadow cursor ──────────────────────────────────────────────────────────
+//
+// Tracks a best-effort cursor position so forward Delete can find a chip
+// immediately after the cursor. States:
+//   "end"     → cursor at editor.text.length
+//   "start"   → cursor at 0
+//   "offset"  → cursor at the stored .offset
+//   "unknown" → we lost track; chip-aware Delete is disabled
+type ShadowCursor = {
+  mode: "end" | "start" | "offset" | "unknown";
+  offset: number;
+};
+
+function makeShadowCursor(): ShadowCursor {
+  return { mode: "end", offset: 0 };
+}
+
+function resolveCursorOffset(cursor: ShadowCursor, text: string): number | null {
+  switch (cursor.mode) {
+    case "start":  return 0;
+    case "end":    return text.length;
+    case "offset": return Math.max(0, Math.min(cursor.offset, text.length));
+    default:       return null;
+  }
+}
+
+const ARROW_LEFT  = "\x1b[D";
+const ARROW_RIGHT = "\x1b[C";
+const ARROW_UP    = "\x1b[A";
+const ARROW_DOWN  = "\x1b[B";
+const HOME_KEYS = new Set(["\x1b[H", "\x1b[1~", "\x1b[7~", "\x01"]);
+const END_KEYS  = new Set(["\x1b[F", "\x1b[4~", "\x1b[8~", "\x05"]);
+
+function updateShadowCursorForInput(
+  cursor: ShadowCursor,
+  data: string,
+  ui: ExtensionUIContext,
+): void {
+  if (data.length === 0) return;
+  if (HOME_KEYS.has(data)) { cursor.mode = "start"; cursor.offset = 0; return; }
+  if (END_KEYS.has(data))  { cursor.mode = "end";   cursor.offset = 0; return; }
+  if (BACKSPACE_CHARS.has(data)) {
+    const text = safeGetEditorText(ui);
+    const cur = resolveCursorOffset(cursor, text);
+    if (cur === null) return;
+    const next = Math.max(0, cur - 1);
+    cursor.mode = next === 0 ? "start" : next >= text.length - 1 ? "end" : "offset";
+    cursor.offset = next;
+    return;
+  }
+  if (DELETE_KEYS.has(data)) {
+    // Forward delete: cursor stays put; text shrinks by 1 after editor handles it.
+    const text = safeGetEditorText(ui);
+    const cur = resolveCursorOffset(cursor, text);
+    if (cur === null) return;
+    cursor.mode = cur === 0 ? "start" : cur >= text.length - 1 ? "end" : "offset";
+    cursor.offset = cur;
+    return;
+  }
+  if (data === ARROW_LEFT || data === ARROW_RIGHT) {
+    const text = safeGetEditorText(ui);
+    const cur = resolveCursorOffset(cursor, text);
+    if (cur === null) return;
+    const next = data === ARROW_LEFT ? Math.max(0, cur - 1) : Math.min(text.length, cur + 1);
+    cursor.mode = next === 0 ? "start" : next === text.length ? "end" : "offset";
+    cursor.offset = next;
+    return;
+  }
+  if (data === ARROW_UP || data === ARROW_DOWN) {
+    cursor.mode = "unknown";
+    return;
+  }
+  if (data.startsWith("\x1b")) {
+    cursor.mode = "unknown";
+    return;
+  }
+  if (data.length === 1) {
+    const code = data.charCodeAt(0);
+    if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) {
+      cursor.mode = "unknown";
+      return;
+    }
+  }
+  // Printable / pasted text inserted at the cursor: advance by data length.
+  const text = safeGetEditorText(ui);
+  const cur = resolveCursorOffset(cursor, text);
+  if (cur === null) return;
+  const newLen = text.length + data.length;
+  const next = cur + data.length;
+  cursor.mode = next >= newLen ? "end" : "offset";
+  cursor.offset = next;
+}
+
 function probeClipboardImage(state: InterceptorState): boolean {
   const now = Date.now();
   if (now - state.lastProbeAtMs < CLIPBOARD_CACHE_MS) return state.lastProbeResult;
@@ -573,6 +761,7 @@ function registerPasteInterceptor(
   if (!ui || typeof ui.onTerminalInput !== "function") return () => {};
 
   const state: InterceptorState = { swallowing: false, pendingTail: "", lastProbeAtMs: 0, lastProbeResult: false };
+  const cursor: ShadowCursor = makeShadowCursor();
 
   const triggerImagePaste = (): string => {
     const tag = generateTag();
@@ -581,6 +770,28 @@ function registerPasteInterceptor(
   };
 
   const unsubscribe = ui.onTerminalInput((data: string) => {
+    // Treat each [emoji ...] chip as a single character for Backspace / Delete.
+    // Only handle when we're not in the middle of a paste burst.
+    if (!state.swallowing && state.pendingTail === "") {
+      if (BACKSPACE_CHARS.has(data)) {
+        if (tryDeleteTrailingChip(ui)) {
+          cursor.mode = "end"; cursor.offset = 0;
+          return { consume: true };
+        }
+      } else if (DELETE_KEYS.has(data)) {
+        if (tryForwardDeleteChipAtCursor(ui, cursor)) {
+          return { consume: true };
+        }
+      }
+    }
+
+    // Track cursor for non-paste, non-burst keystrokes so Delete-chip can know
+    // where the cursor is. Paste bursts are handled below; we snap cursor to
+    // "end" when a paste substitution is produced.
+    if (!state.swallowing && state.pendingTail === "" && !data.includes(PASTE_BEGIN)) {
+      updateShadowCursorForInput(cursor, data, ui);
+    }
+
     const buffer = state.pendingTail + data;
     state.pendingTail = "";
 
@@ -610,14 +821,16 @@ function registerPasteInterceptor(
               const tail = rest.slice(endIdx + PASTE_END.length);
               const tag = makeFolderTag(content);
               folderHandler(ctx, content.trim(), tag);
-              return { data: prefix + tag + " " + tail };
+              cursor.mode = "end"; cursor.offset = 0;
+              return { data: prefix + leadingSpaceFor(ui, prefix) + tag + " " + tail };
             }
             if (fileHandler && isFilePath(content)) {
               const prefix = buffer.slice(0, beginIdx);
               const tail = rest.slice(endIdx + PASTE_END.length);
               const tag = makeFileTag(content);
               fileHandler(ctx, content.trim(), tag);
-              return { data: prefix + tag + " " + tail };
+              cursor.mode = "end"; cursor.offset = 0;
+              return { data: prefix + leadingSpaceFor(ui, prefix) + tag + " " + tail };
             }
             if (urlHandler && isUrl(content)) {
               const prefix = buffer.slice(0, beginIdx);
@@ -625,14 +838,17 @@ function registerPasteInterceptor(
               const trimmedUrl = content.trim();
               const tag = makeUrlTag(trimmedUrl);
               urlHandler(ctx, trimmedUrl, tag);
-              return { data: prefix + tag + " " + tail };
+              cursor.mode = "end"; cursor.offset = 0;
+              return { data: prefix + leadingSpaceFor(ui, prefix) + tag + " " + tail };
             }
             if (houdiniPathMap && containsHoudiniPath(content)) {
               const transformed = replaceHoudiniPaths(content, houdiniPathMap);
               if (transformed !== undefined) {
                 const prefix = buffer.slice(0, beginIdx);
                 const tail = rest.slice(endIdx + PASTE_END.length);
-                return { data: prefix + transformed + tail };
+                const lead = transformed.startsWith("[") ? leadingSpaceFor(ui, prefix) : "";
+                cursor.mode = "end"; cursor.offset = 0;
+                return { data: prefix + lead + transformed + tail };
               }
             }
           }
@@ -644,14 +860,17 @@ function registerPasteInterceptor(
       const rest = buffer.slice(beginIdx + PASTE_BEGIN.length);
       state.swallowing = true;
       const tag = triggerImagePaste();
-      const placeholder = `${tag} `;
+      const lead = leadingSpaceFor(ui, prefix);
+      const placeholder = `${lead}${tag} `;
       const endIdx = rest.indexOf(PASTE_END);
       if (endIdx === -1) {
         state.pendingTail = "";
+        cursor.mode = "end"; cursor.offset = 0;
         return { data: prefix + placeholder };
       }
       state.swallowing = false;
       const tail = rest.slice(endIdx + PASTE_END.length);
+      cursor.mode = "end"; cursor.offset = 0;
       return { data: prefix + placeholder + tail };
     }
 
