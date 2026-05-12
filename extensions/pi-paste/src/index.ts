@@ -7,6 +7,7 @@ import { getErrorMessage } from "./errors.js";
 import { resizeClipboardImage } from "./image-resize.js";
 import { assertImageWithinByteLimit } from "./image-size.js";
 import { registerPasteInterceptor } from "./paste-interceptor.js";
+import { HOUDINI_CHIP_RE, expandHoudiniChips } from "./houdini-paths.js";
 import type { ClipboardImage, PasteContext } from "./types.js";
 
 function generateImageTag(): string {
@@ -60,6 +61,8 @@ export default function imageToolsExtension(pi: ExtensionAPI): void {
   const pendingFiles: PendingFile[] = [];
   const pendingUrls: PendingUrl[] = [];
   const inflightReads: Promise<void>[] = [];
+  /** Houdini chip display text → full node path */
+  const houdiniPathMap = new Map<string, string>();
 
   const pasteImageFromClipboard = async (ctx: PasteContext, tag: string): Promise<void> => {
     if (!ctx.hasUI) return;
@@ -104,8 +107,9 @@ export default function imageToolsExtension(pi: ExtensionAPI): void {
     const hasFolderTags = /\[\u{1F4C1} [^\]]+\]/u.test(event.text);
     const hasFileTags = /\[(?:\u{1F4C4}|\u{1F5BC}) {1,2}[^\]]+\]/u.test(event.text);
     const hasUrlTags = /\[\u{1F517} [^\]]+\]/u.test(event.text);
+    const hasHoudiniChips = HOUDINI_CHIP_RE.test(event.text);
 
-    if (!hasImageTags && !hasFolderTags && !hasFileTags && !hasUrlTags && pendingImages.length === 0 && pendingFolders.length === 0 && pendingFiles.length === 0 && pendingUrls.length === 0 && inflightReads.length === 0) {
+    if (!hasImageTags && !hasFolderTags && !hasFileTags && !hasUrlTags && !hasHoudiniChips && pendingImages.length === 0 && pendingFolders.length === 0 && pendingFiles.length === 0 && pendingUrls.length === 0 && inflightReads.length === 0) {
       return { action: "continue" as const };
     }
 
@@ -114,7 +118,7 @@ export default function imageToolsExtension(pi: ExtensionAPI): void {
       await Promise.all([...inflightReads]);
     }
 
-    if (pendingImages.length === 0 && pendingFolders.length === 0 && pendingFiles.length === 0 && pendingUrls.length === 0 && !hasImageTags && !hasFolderTags && !hasFileTags && !hasUrlTags) {
+    if (pendingImages.length === 0 && pendingFolders.length === 0 && pendingFiles.length === 0 && pendingUrls.length === 0 && !hasImageTags && !hasFolderTags && !hasFileTags && !hasUrlTags && !hasHoudiniChips) {
       return { action: "continue" as const };
     }
 
@@ -153,6 +157,14 @@ export default function imageToolsExtension(pi: ExtensionAPI): void {
         return full ?? match;
       });
 
+    // Expand Houdini path chips back to full paths
+    if (houdiniPathMap.size > 0) {
+      const expanded = expandHoudiniChips(cleanedText, houdiniPathMap);
+      if (expanded.changed) {
+        cleanedText = expanded.text;
+      }
+    }
+
     return {
       action: "transform" as const,
       text: cleanedText,
@@ -185,6 +197,7 @@ export default function imageToolsExtension(pi: ExtensionAPI): void {
         (_ctx: PasteContext, url: string, tag: string) => {
           pendingUrls.push({ tag, url });
         },
+        houdiniPathMap,
       );
     } catch {
       // silently fail
@@ -192,6 +205,7 @@ export default function imageToolsExtension(pi: ExtensionAPI): void {
   };
 
   pi.on("session_start", async (_event, ctx) => {
+    houdiniPathMap.clear();
     installPasteInterceptor(ctx);
   });
 

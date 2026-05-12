@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type { ExtensionUIContext } from "@mariozechner/pi-coding-agent";
 
 import { clipboardHasImageSync } from "./clipboard.js";
+import { containsHoudiniPath, replaceHoudiniPaths } from "./houdini-paths.js";
 import type { PasteContext } from "./types.js";
 
 const PASTE_BEGIN = "\x1b[200~";
@@ -94,6 +95,7 @@ export function registerPasteInterceptor(
   folderHandler?: (ctx: PasteContext, fullPath: string, tag: string) => void,
   fileHandler?: (ctx: PasteContext, fullPath: string, tag: string) => void,
   urlHandler?: (ctx: PasteContext, url: string, tag: string) => void,
+  houdiniPathMap?: Map<string, string>,
 ): () => void {
   if (!ui || typeof ui.onTerminalInput !== "function") {
     return () => {};
@@ -163,6 +165,16 @@ export function registerPasteInterceptor(
               const tag = makeUrlTag(trimmedUrl);
               urlHandler(ctx, trimmedUrl, tag);
               return { data: prefix + tag + " " + tail };
+            }
+
+            // Houdini node paths → compact chips
+            if (houdiniPathMap && containsHoudiniPath(content)) {
+              const transformed = replaceHoudiniPaths(content, houdiniPathMap);
+              if (transformed !== undefined) {
+                const prefix = buffer.slice(0, beginIdx);
+                const tail = rest.slice(endIdx + PASTE_END.length);
+                return { data: prefix + transformed + tail };
+              }
             }
           }
         }
