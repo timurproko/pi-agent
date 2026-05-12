@@ -19,6 +19,8 @@ interface FormatterState {
 	connectedNames: string[];
 	lastConnected: number;
 	pendingTarget?: string;
+	pulseFrame: number;
+	pulseTimer?: ReturnType<typeof setInterval>;
 }
 
 interface McpConfig {
@@ -117,19 +119,53 @@ function paintGray(ctx: ExtensionContext, label: string): string {
 	}
 }
 
-function paintAccent(ctx: ExtensionContext, label: string): string {
+function paintMuted(ctx: ExtensionContext, label: string): string {
 	try {
-		return ctx.ui.theme.fg("accent", label);
+		return ctx.ui.theme.fg("muted", label);
 	} catch {
-		return ansi(36, label);
+		return ansi(90, label);
 	}
 }
 
-function paintStatus(ctx: ExtensionContext, connected: number, total: number, names: string[] = []): string {
-	const label = `mcp: ${connected}/${total}`;
-	const connectedNames = names.slice(0, connected);
-	if (connectedNames.length === 0) return paintGray(ctx, label);
-	return `${paintGray(ctx, label + " ")}${paintAccent(ctx, connectedNames.join(", "))}`;
+function paintSuccess(ctx: ExtensionContext, label: string): string {
+	try {
+		return ctx.ui.theme.fg("success", label);
+	} catch {
+		return ansi(32, label);
+	}
+}
+
+function paintCyan(label: string): string {
+	return ansi(36, label);
+}
+
+function paintStatus(
+	ctx: ExtensionContext,
+	_connected: number,
+	_total: number,
+	names: string[] = [],
+	connectingName?: string,
+	pulseFrame = 0,
+): string {
+	const serverNames = readConfiguredServerNames();
+	const displayNames = serverNames.length > 0 ? serverNames : names;
+	const connectedNames = new Set(names);
+	const finalDisplayNames =
+		connectingName && !displayNames.includes(connectingName) ? [...displayNames, connectingName] : displayNames;
+
+	if (finalDisplayNames.length === 0) return paintMuted(ctx, "mcp:");
+
+	const pulseBulbs = ["○", "◌", "●", "◌"];
+	const parts = finalDisplayNames.map((name) => {
+		const bulb = connectedNames.has(name)
+			? paintSuccess(ctx, "●")
+			: name === connectingName
+				? paintCyan(pulseBulbs[pulseFrame % pulseBulbs.length] ?? "◌")
+				: paintMuted(ctx, "○");
+		return `${bulb} ${paintMuted(ctx, name)}`;
+	});
+
+	return `${paintMuted(ctx, "mcp: ")}${parts.join(paintMuted(ctx, " "))}`;
 }
 
 function paintDim(ctx: ExtensionContext, label: string): string {
@@ -281,7 +317,27 @@ async function showMcpConnectSelector(ctx: ExtensionContext): Promise<string | n
 	});
 }
 
+function stopConnectingPulse(state: FormatterState): void {
+	if (!state.pulseTimer) return;
+	clearInterval(state.pulseTimer);
+	state.pulseTimer = undefined;
+	state.pulseFrame = 0;
+}
+
+function startConnectingPulse(ctx: ExtensionContext, state: FormatterState): void {
+	if (state.pulseTimer) return;
+	state.pulseTimer = setInterval(() => {
+		if (!state.pendingTarget) {
+			stopConnectingPulse(state);
+			return;
+		}
+		state.pulseFrame += 1;
+		ctx.ui.setStatus(STATUS_KEY, `MCP: connecting to ${state.pendingTarget}...`);
+	}, 350);
+}
+
 function updateConnectedNames(state: FormatterState, counts: { connected: number; names: string[] }): string[] {
+	stopConnectingPulse(state);
 	if (counts.names.length > 0) {
 		state.connectedNames = counts.names.slice(0, counts.connected);
 		rememberConnectedNames(state.connectedNames, true);
@@ -308,7 +364,7 @@ function updateConnectedNames(state: FormatterState, counts: { connected: number
 }
 
 function makeFormatter(ctx: ExtensionContext) {
-	const state: FormatterState = { connectedNames: [], lastConnected: 0 };
+	const state: FormatterState = { connectedNames: [], lastConnected: 0, pulseFrame: 0 };
 
 	return (key: string, text?: string): string | undefined => {
 		if (key !== STATUS_KEY || text === undefined) return text;
@@ -321,8 +377,18 @@ function makeFormatter(ctx: ExtensionContext) {
 		const connectingTarget = parseConnectingTarget(text);
 		if (connectingTarget) {
 			state.pendingTarget = resolveConnectingTarget(connectingTarget);
-			return paintDim(ctx, `mcp: connecting ${state.pendingTarget}…`);
+			startConnectingPulse(ctx, state);
+			return paintStatus(
+				ctx,
+				state.connectedNames.length,
+				readConfiguredServerCount(),
+				state.connectedNames,
+				state.pendingTarget,
+				state.pulseFrame,
+			);
 		}
+
+		stopConnectingPulse(state);
 
 		// Keep the transient startup/lazy-connect messages, but match the footer's
 		// compact lowercase wording and dim color instead of the old uppercase MCP label.
