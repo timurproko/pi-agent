@@ -44,15 +44,17 @@ const MODE_LABEL_TITLE: Record<Mode, string> = {
 	ask: "Ask",
 };
 
-// Theme color token per mode.
+// Theme color token per mode (status bar label).
 //   Ask     -> green  (success)
-//   Cmd     -> gray   (muted)
+//   Cmd     -> light gray (custom, brighter than muted but not white)
 //   Plan    -> cyan   (accent, which is typically cyan/blue in pi themes)
 const MODE_COLOR: Record<Mode, string> = {
-	command: "muted",
+	command: "piPlanCmdMode",
 	plan: "accent",
 	ask: "success",
 };
+
+
 
 // Tools considered "mutating" - blocked in Ask mode, restricted in Plan mode.
 const MUTATING_TOOLS = new Set(["bash", "write", "edit", "multi_edit"]);
@@ -330,6 +332,8 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	const PI_PLAN_BRIGHTEST_HEX = "#ff79e1"; // bright pink/magenta
 	const PI_PLAN_LOW_TOKEN = "piPlanThinkingLow";
 	const PI_PLAN_LOW_HEX = "#4fb090"; // muted teal - distinct from minimal but dimmer than medium
+	const PI_PLAN_CMD_TOKEN = "piPlanCmdMode";
+	const PI_PLAN_CMD_HEX = "#b8b8b8"; // light gray - brighter than muted but not white
 	const PI_PLAN_BASH_TOKEN = "piPlanBashCommand";
 	const PI_PLAN_BASH_HEX = "#c6a15b"; // muted amber - visible warning without overpowering mode colors
 	const THINKING_LEVEL_TOKEN: Record<string, string> = {
@@ -364,6 +368,8 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 			if (brightest) theme.fgColors.set(PI_PLAN_BRIGHTEST_TOKEN, brightest);
 			const low = toAnsi(PI_PLAN_LOW_HEX, "thinkingMedium");
 			if (low) theme.fgColors.set(PI_PLAN_LOW_TOKEN, low);
+			const cmd = toAnsi(PI_PLAN_CMD_HEX, "dim");
+			if (cmd) theme.fgColors.set(PI_PLAN_CMD_TOKEN, cmd);
 			const bash = toAnsi(PI_PLAN_BASH_HEX, "warning");
 			if (bash) {
 				theme.fgColors.set(PI_PLAN_BASH_TOKEN, bash);
@@ -452,19 +458,21 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	function installEditor(ctx: ExtensionContext): void {
 		if (!ctx.hasUI) return;
 		const theme = ctx.ui.theme;
+		// Same color as the mode label but with ANSI dim (\x1b[2m) to desaturate.
+		const dim = (painted: string): string => `\x1b[2m${painted}\x1b[22m`;
 		const paintBorder = (text: string): string => {
 			try {
-				return theme.fg(MODE_COLOR[mode], text);
+				return dim(theme.fg(MODE_COLOR[mode], text));
 			} catch {
 				return text;
 			}
 		};
 		const paintBashBorder = (text: string): string => {
 			try {
-				return theme.fg(PI_PLAN_BASH_TOKEN, text);
+				return dim(theme.fg(PI_PLAN_BASH_TOKEN, text));
 			} catch {
 				try {
-					return theme.fg("warning", text);
+					return dim(theme.fg("warning", text));
 				} catch {
 					return text;
 				}
