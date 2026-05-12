@@ -11,16 +11,18 @@
       "directTools": false
     },
     "houdini": {
-      "type": "stdio",
-      "command": "C:/Users/tprokopiev/.local/bin/uv.exe",
+      "command": "C:/Users/tprokopiev/.local/bin/uvx.exe",
       "args": [
-        "run",
-        "--project",
-        "D:/Configs/houdini21.0/packages/houdini-mcp",
-        "python",
-        "D:/Configs/houdini21.0/packages/houdini-mcp/python3.11libs/houdinimcp/houdini_mcp_server.py"
+        "--from",
+        "D:/Configs/houdini21.0/packages/fxhoudinimcp",
+        "fxhoudinimcp"
       ],
-      "directTools": false
+      "env": {
+        "HOUDINI_HOST": "localhost",
+        "HOUDINI_PORT": "8100",
+        "MCP_TRANSPORT": "stdio",
+        "LOG_LEVEL": "ERROR"
+      }
     }
   }
 }

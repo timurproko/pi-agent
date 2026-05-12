@@ -5745,11 +5745,11 @@
       "cachedAt": 1778569079472
     },
     "houdini": {
-      "configHash": "0837e441e091293e99bb0bd68b53e72d0e9cbdb4f17e8b1f0a5c53613f888290",
+      "configHash": "00b0bfc520bcbb407418f9cf5a74c6c9fda5a680c8658baacc07af89c5356703",
       "tools": [
         {
           "name": "get_scene_info",
-          "description": "",
+          "description": "Get information about the current Houdini scene.",
           "inputSchema": {
             "type": "object",
             "properties": {},
@@ -5757,13 +5757,72 @@
           }
         },
         {
-          "name": "create_node",
-          "description": "",
+          "name": "new_scene",
+          "description": "Create a new empty Houdini scene.\n\n    Args:\n        save_current: Save the current scene before clearing.\n    ",
           "inputSchema": {
             "type": "object",
             "properties": {
-              "node_type": {
-                "title": "Node Type",
+              "save_current": {
+                "default": false,
+                "title": "Save Current",
+                "type": "boolean"
+              }
+            },
+            "title": "new_sceneArguments"
+          }
+        },
+        {
+          "name": "save_scene",
+          "description": "Save the current Houdini scene to disk.\n\n    Args:\n        file_path: Destination path; defaults to the current hip file.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "File Path"
+              }
+            },
+            "title": "save_sceneArguments"
+          }
+        },
+        {
+          "name": "load_scene",
+          "description": "Open or merge a Houdini hip file.\n\n    Args:\n        file_path: Path to the hip file to open.\n        merge: Merge into the current scene instead of replacing it.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "title": "File Path",
+                "type": "string"
+              },
+              "merge": {
+                "default": false,
+                "title": "Merge",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "file_path"
+            ],
+            "title": "load_sceneArguments"
+          }
+        },
+        {
+          "name": "import_file",
+          "description": "Import a geometry, USD, or Alembic file into the scene.\n\n    Args:\n        file_path: Path to the file to import.\n        parent_path: Network path for the import node.\n        node_name: Name for the created node.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "title": "File Path",
                 "type": "string"
               },
               "parent_path": {
@@ -5771,105 +5830,1763 @@
                 "title": "Parent Path",
                 "type": "string"
               },
-              "name": {
+              "node_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
                 "default": null,
-                "title": "Name",
+                "title": "Node Name"
+              }
+            },
+            "required": [
+              "file_path"
+            ],
+            "title": "import_fileArguments"
+          }
+        },
+        {
+          "name": "export_file",
+          "description": "Export a node's output to a file on disk.\n\n    Args:\n        node_path: Path to the node to export.\n        file_path: Destination file path.\n        frame_range: Frame range as [start, end] or [start, end, step].\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "file_path": {
+                "title": "File Path",
+                "type": "string"
+              },
+              "frame_range": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Frame Range"
+              }
+            },
+            "required": [
+              "node_path",
+              "file_path"
+            ],
+            "title": "export_fileArguments"
+          }
+        },
+        {
+          "name": "get_context_info",
+          "description": "Get information about a Houdini network context.\n\n    Args:\n        context: Context path, e.g. \"/obj\", \"/stage\", \"/out\".\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "context": {
+                "title": "Context",
                 "type": "string"
               }
             },
             "required": [
+              "context"
+            ],
+            "title": "get_context_infoArguments"
+          }
+        },
+        {
+          "name": "create_node",
+          "description": "Create a node inside a parent network.\n\n    Before using this, call list_node_types(context='<context>', filter='<keyword>')\n    to verify a dedicated node exists for the operation. Houdini has thousands of\n    nodes — many common operations (boolean, scatter, copy to points, fracture,\n    ocean, hair, vellum, pyro, etc.) have dedicated nodes that are better than\n    writing VEX or Python.\n\n    Args:\n        ctx: MCP context.\n        parent_path: Parent network path.\n        node_type: Node type (e.g. 'geo', 'box', 'grid').\n        name: Node name.\n        position: [x, y] network editor position.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "parent_path": {
+                "title": "Parent Path",
+                "type": "string"
+              },
+              "node_type": {
+                "title": "Node Type",
+                "type": "string"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              },
+              "position": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Position"
+              }
+            },
+            "required": [
+              "parent_path",
               "node_type"
             ],
             "title": "create_nodeArguments"
           }
         },
         {
-          "name": "execute_houdini_code",
-          "description": "",
+          "name": "delete_node",
+          "description": "Delete a node.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "delete_nodeArguments"
+          }
+        },
+        {
+          "name": "rename_node",
+          "description": "Rename a node.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n        new_name: New node name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "new_name": {
+                "title": "New Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "new_name"
+            ],
+            "title": "rename_nodeArguments"
+          }
+        },
+        {
+          "name": "copy_node",
+          "description": "Copy a node, optionally into a different parent network.\n\n    Args:\n        ctx: MCP context.\n        node_path: Source node path.\n        dest_parent: Destination parent path.\n        new_name: Name for the copy.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "dest_parent": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Dest Parent"
+              },
+              "new_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Name"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "copy_nodeArguments"
+          }
+        },
+        {
+          "name": "move_node",
+          "description": "Move a node to a different parent network.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n        dest_parent: Destination parent path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "dest_parent": {
+                "title": "Dest Parent",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "dest_parent"
+            ],
+            "title": "move_nodeArguments"
+          }
+        },
+        {
+          "name": "get_node_info",
+          "description": "Get type, connections, flags, errors, cook time, and non-default parameters for a node.\n\n    Returns only parameters that differ from their defaults (non_default_parameters)\n    plus a total_param_count. Use get_parameter_schema to inspect the full parameter list.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_node_infoArguments"
+          }
+        },
+        {
+          "name": "list_children",
+          "description": "List children of a network node.\n\n    Avoid `recursive=True` on large networks — it can return hundreds or\n    thousands of nodes. Prefer `find_nodes` with a specific pattern instead.\n\n    Args:\n        ctx: MCP context.\n        parent_path: Parent network path.\n        recursive: Include all descendants (use sparingly on large scenes).\n        filter_type: Node type filter (e.g. 'box', 'merge').\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "parent_path": {
+                "title": "Parent Path",
+                "type": "string"
+              },
+              "recursive": {
+                "default": false,
+                "title": "Recursive",
+                "type": "boolean"
+              },
+              "filter_type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Filter Type"
+              }
+            },
+            "required": [
+              "parent_path"
+            ],
+            "title": "list_childrenArguments"
+          }
+        },
+        {
+          "name": "find_nodes",
+          "description": "Search for nodes by name pattern, type, or context.\n\n    Narrow the search: use `inside` to limit to a specific sub-network and\n    supply at least one of `pattern`, `node_type`, or `context`. Searching\n    from `inside=\"/\"` with no filters scans the entire scene and can return\n    hundreds of nodes.\n\n    Args:\n        ctx: MCP context.\n        pattern: Glob pattern for node names (e.g. 'box*').\n        node_type: Node type filter (e.g. 'box', 'null').\n        context: Category filter (e.g. 'Sop', 'Object').\n        inside: Root path to search within (default '/').\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "pattern": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pattern"
+              },
+              "node_type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Node Type"
+              },
+              "context": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Context"
+              },
+              "inside": {
+                "default": "/",
+                "title": "Inside",
+                "type": "string"
+              }
+            },
+            "title": "find_nodesArguments"
+          }
+        },
+        {
+          "name": "list_node_types",
+          "description": "List available node types for a context category.\n\n    IMPORTANT: Any context can have hundreds of node types (SOPs alone can\n    exceed 800 in a production install). Always pass a `filter` keyword\n    (e.g. 'mountain', 'scatter', 'boolean') instead of dumping the full list\n    — the unfiltered response is capped at `limit` and may still be large.\n\n    Args:\n        ctx: MCP context.\n        context: Category name (e.g. 'Sop', 'Lop', 'Dop', 'Top', 'Cop2').\n        filter: Substring to filter type name or label (case-insensitive).\n        limit: Max entries to return (default 200, max recommended 200).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "context": {
+                "title": "Context",
+                "type": "string"
+              },
+              "filter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Filter"
+              },
+              "limit": {
+                "default": 200,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "context"
+            ],
+            "title": "list_node_typesArguments"
+          }
+        },
+        {
+          "name": "connect_nodes",
+          "description": "Connect two nodes together.\n\n    Args:\n        ctx: MCP context.\n        source_path: Upstream node path.\n        dest_path: Downstream node path.\n        output_index: Source output index.\n        input_index: Destination input index.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "source_path": {
+                "title": "Source Path",
+                "type": "string"
+              },
+              "dest_path": {
+                "title": "Dest Path",
+                "type": "string"
+              },
+              "output_index": {
+                "default": 0,
+                "title": "Output Index",
+                "type": "integer"
+              },
+              "input_index": {
+                "default": 0,
+                "title": "Input Index",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source_path",
+              "dest_path"
+            ],
+            "title": "connect_nodesArguments"
+          }
+        },
+        {
+          "name": "connect_nodes_batch",
+          "description": "Connect multiple node pairs in a single call.\n\n    Args:\n        connections: List of connections. Each dict has keys:\n            source_path (str), dest_path (str),\n            output_index (int, default 0), input_index (int, default 0).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "connections": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Connections",
+                "type": "array"
+              }
+            },
+            "required": [
+              "connections"
+            ],
+            "title": "connect_nodes_batchArguments"
+          }
+        },
+        {
+          "name": "disconnect_node",
+          "description": "Disconnect one or all inputs of a node.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n        input_index: Input index to disconnect.\n        disconnect_all: Disconnect all inputs.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "input_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Input Index"
+              },
+              "disconnect_all": {
+                "default": false,
+                "title": "Disconnect All",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "disconnect_nodeArguments"
+          }
+        },
+        {
+          "name": "reorder_inputs",
+          "description": "Reorder the input connections of a node.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n        new_order: New input ordering (e.g. [1, 0] swaps first two).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "new_order": {
+                "items": {},
+                "title": "New Order",
+                "type": "array"
+              }
+            },
+            "required": [
+              "node_path",
+              "new_order"
+            ],
+            "title": "reorder_inputsArguments"
+          }
+        },
+        {
+          "name": "set_node_flags",
+          "description": "Set flags on a node.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n        display: Display flag.\n        render: Render flag.\n        bypass: Bypass flag.\n        template: Template flag.\n        lock: Lock flag.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "display": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Display"
+              },
+              "render": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Render"
+              },
+              "bypass": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bypass"
+              },
+              "template": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Template"
+              },
+              "lock": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Lock"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "set_node_flagsArguments"
+          }
+        },
+        {
+          "name": "layout_children",
+          "description": "Auto-layout children of a network node.\n\n    Args:\n        ctx: MCP context.\n        parent_path: Parent network path.\n        spacing: Spacing multiplier between nodes.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "parent_path": {
+                "title": "Parent Path",
+                "type": "string"
+              },
+              "spacing": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Spacing"
+              }
+            },
+            "required": [
+              "parent_path"
+            ],
+            "title": "layout_childrenArguments"
+          }
+        },
+        {
+          "name": "set_node_position",
+          "description": "Set a node's position in the network editor.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n        x: Horizontal position.\n        y: Vertical position.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "x": {
+                "title": "X",
+                "type": "number"
+              },
+              "y": {
+                "title": "Y",
+                "type": "number"
+              }
+            },
+            "required": [
+              "node_path",
+              "x",
+              "y"
+            ],
+            "title": "set_node_positionArguments"
+          }
+        },
+        {
+          "name": "set_node_color",
+          "description": "Set a node's color in the network editor.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n        r: Red (0.0-1.0).\n        g: Green (0.0-1.0).\n        b: Blue (0.0-1.0).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "r": {
+                "title": "R",
+                "type": "number"
+              },
+              "g": {
+                "title": "G",
+                "type": "number"
+              },
+              "b": {
+                "title": "B",
+                "type": "number"
+              }
+            },
+            "required": [
+              "node_path",
+              "r",
+              "g",
+              "b"
+            ],
+            "title": "set_node_colorArguments"
+          }
+        },
+        {
+          "name": "get_parameter",
+          "description": "Get the value and metadata of a parameter.\n\n    Args:\n        node_path: Node path.\n        parm_name: Parameter name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "parm_name"
+            ],
+            "title": "get_parameterArguments"
+          }
+        },
+        {
+          "name": "set_parameter",
+          "description": "Set a parameter value.\n\n    Args:\n        node_path: Node path.\n        parm_name: Parameter name.\n        value: New value (int, float, string, bool, or list).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "node_path",
+              "parm_name",
+              "value"
+            ],
+            "title": "set_parameterArguments"
+          }
+        },
+        {
+          "name": "set_parameters",
+          "description": "Batch-set multiple parameters on a node.\n\n    Args:\n        node_path: Node path.\n        params: Mapping of parameter names to values.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "params": {
+                "additionalProperties": true,
+                "title": "Params",
+                "type": "object"
+              }
+            },
+            "required": [
+              "node_path",
+              "params"
+            ],
+            "title": "set_parametersArguments"
+          }
+        },
+        {
+          "name": "get_parameter_schema",
+          "description": "Get the template schema for parameter(s) on a node.\n\n    Most nodes have dozens of parameters; many have 100+. Always use\n    `parm_name` or `filter` unless you genuinely need the full list.\n\n    Args:\n        node_path: Node path.\n        parm_name: Exact parameter name for a single-parameter lookup.\n        filter: Substring to match against parameter name or label\n                (case-insensitive). Use instead of dumping all params.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Parm Name"
+              },
+              "filter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Filter"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_parameter_schemaArguments"
+          }
+        },
+        {
+          "name": "set_expression",
+          "description": "Set an expression on a parameter.\n\n    Args:\n        node_path: Node path.\n        parm_name: Parameter name.\n        expression: Expression string.\n        language: \"hscript\" (default) or \"python\".\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              },
+              "expression": {
+                "title": "Expression",
+                "type": "string"
+              },
+              "language": {
+                "default": "hscript",
+                "title": "Language",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "parm_name",
+              "expression"
+            ],
+            "title": "set_expressionArguments"
+          }
+        },
+        {
+          "name": "get_expression",
+          "description": "Get the expression on a parameter.\n\n    Args:\n        node_path: Node path.\n        parm_name: Parameter name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "parm_name"
+            ],
+            "title": "get_expressionArguments"
+          }
+        },
+        {
+          "name": "revert_parameter",
+          "description": "Revert a parameter to its default value.\n\n    Args:\n        node_path: Node path.\n        parm_name: Parameter name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "parm_name"
+            ],
+            "title": "revert_parameterArguments"
+          }
+        },
+        {
+          "name": "link_parameters",
+          "description": "Create a channel reference from one parameter to another.\n\n    Args:\n        source_path: Source node path.\n        source_parm: Source parameter name.\n        dest_path: Destination node path.\n        dest_parm: Destination parameter name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "source_path": {
+                "title": "Source Path",
+                "type": "string"
+              },
+              "source_parm": {
+                "title": "Source Parm",
+                "type": "string"
+              },
+              "dest_path": {
+                "title": "Dest Path",
+                "type": "string"
+              },
+              "dest_parm": {
+                "title": "Dest Parm",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_path",
+              "source_parm",
+              "dest_path",
+              "dest_parm"
+            ],
+            "title": "link_parametersArguments"
+          }
+        },
+        {
+          "name": "lock_parameter",
+          "description": "Lock or unlock a parameter.\n\n    Args:\n        node_path: Node path.\n        parm_name: Parameter name.\n        locked: True to lock, False to unlock.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              },
+              "locked": {
+                "title": "Locked",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "node_path",
+              "parm_name",
+              "locked"
+            ],
+            "title": "lock_parameterArguments"
+          }
+        },
+        {
+          "name": "create_spare_parameter",
+          "description": "Add a spare parameter to a node.\n\n    Args:\n        node_path: Node path.\n        parm_name: Internal parameter name.\n        parm_type: \"float\", \"int\", \"string\", \"toggle\", or \"menu\".\n        label: UI label.\n        default_value: Default value.\n        min_val: Minimum value (float/int only).\n        max_val: Maximum value (float/int only).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              },
+              "parm_type": {
+                "title": "Parm Type",
+                "type": "string"
+              },
+              "label": {
+                "title": "Label",
+                "type": "string"
+              },
+              "default_value": {
+                "default": null,
+                "title": "Default Value"
+              },
+              "min_val": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Min Val"
+              },
+              "max_val": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Val"
+              }
+            },
+            "required": [
+              "node_path",
+              "parm_name",
+              "parm_type",
+              "label"
+            ],
+            "title": "create_spare_parameterArguments"
+          }
+        },
+        {
+          "name": "create_spare_parameters",
+          "description": "Batch-create multiple spare parameters in one call, optionally in a folder tab.\n\n    Args:\n        node_path: Node path.\n        parameters: List of parameter specs. Each dict has keys:\n            parm_name (str), parm_type (str: \"float\"/\"int\"/\"string\"/\"toggle\"/\"menu\"),\n            label (str), default_value (optional), min_val (optional), max_val (optional).\n        folder_name: If provided, wraps all parameters in a named folder tab.\n        folder_type: Folder style: \"Tabs\", \"Collapsible\", or \"Simple\".\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parameters": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Parameters",
+                "type": "array"
+              },
+              "folder_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Folder Name"
+              },
+              "folder_type": {
+                "default": "Tabs",
+                "title": "Folder Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "parameters"
+            ],
+            "title": "create_spare_parametersArguments"
+          }
+        },
+        {
+          "name": "execute_python",
+          "description": "Execute arbitrary Python code inside Houdini. LAST RESORT only.\n\n    DO NOT use this to:\n    - Create nodes → use create_node or build_sop_chain\n    - Set parameters → use set_parameter or set_parameters\n    - Create wrangles or write Python SOPs → use create_wrangle\n    - Connect nodes → use connect_nodes or connect_nodes_batch\n    - Read geometry → use get_geometry_info, get_points, sample_geometry\n\n    ONLY use this when no dedicated tool exists for the operation — i.e.\n    hou.* API calls or Python-level state that no other tool exposes.\n    If a dedicated tool exists for the operation, always use it instead,\n    even if execute_python could also accomplish it.\n\n    Args:\n        code: Python source code to execute.\n        return_expression: Python expression to evaluate after execution.\n    ",
           "inputSchema": {
             "type": "object",
             "properties": {
               "code": {
                 "title": "Code",
                 "type": "string"
+              },
+              "return_expression": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Return Expression"
               }
             },
             "required": [
               "code"
             ],
-            "title": "execute_houdini_codeArguments"
+            "title": "execute_pythonArguments"
           }
         },
         {
-          "name": "render_single_view",
-          "description": "",
+          "name": "execute_hscript",
+          "description": "Execute an HScript command in Houdini.\n\n    Args:\n        command: HScript command string to execute.\n    ",
           "inputSchema": {
             "type": "object",
             "properties": {
-              "orthographic": {
-                "default": false,
-                "title": "Orthographic",
-                "type": "boolean"
+              "command": {
+                "title": "Command",
+                "type": "string"
+              }
+            },
+            "required": [
+              "command"
+            ],
+            "title": "execute_hscriptArguments"
+          }
+        },
+        {
+          "name": "evaluate_expression",
+          "description": "Evaluate an expression in Houdini and return its result.\n\n    Args:\n        expression: Expression string to evaluate.\n        language: Expression language, \"hscript\" or \"python\".\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "expression": {
+                "title": "Expression",
+                "type": "string"
               },
-              "rotation": {
-                "default": [
-                  0,
-                  90,
-                  0
+              "language": {
+                "default": "hscript",
+                "title": "Language",
+                "type": "string"
+              }
+            },
+            "required": [
+              "expression"
+            ],
+            "title": "evaluate_expressionArguments"
+          }
+        },
+        {
+          "name": "get_env_variable",
+          "description": "Get a Houdini environment variable value.\n\n    Args:\n        var_name: Name of the environment variable.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "var_name": {
+                "title": "Var Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "var_name"
+            ],
+            "title": "get_env_variableArguments"
+          }
+        },
+        {
+          "name": "get_simulation_info",
+          "description": "Get DOP network simulation state.\n\n    Args:\n        node_path: DOP network node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_simulation_infoArguments"
+          }
+        },
+        {
+          "name": "list_dop_objects",
+          "description": "List all DOP objects in a simulation.\n\n    Args:\n        node_path: DOP network node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "list_dop_objectsArguments"
+          }
+        },
+        {
+          "name": "get_dop_object",
+          "description": "Get detailed data for a specific DOP object.\n\n    Args:\n        node_path: DOP network node path.\n        object_name: DOP object name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "object_name": {
+                "title": "Object Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "object_name"
+            ],
+            "title": "get_dop_objectArguments"
+          }
+        },
+        {
+          "name": "get_dop_field",
+          "description": "Read a specific field value from a DOP record.\n\n    Args:\n        node_path: DOP network node path.\n        object_name: DOP object name.\n        data_path: Dot-separated subdata path (e.g. \"Geometry\", \"Forces/Gravity\").\n        field_name: Field name to read.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "object_name": {
+                "title": "Object Name",
+                "type": "string"
+              },
+              "data_path": {
+                "title": "Data Path",
+                "type": "string"
+              },
+              "field_name": {
+                "title": "Field Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "object_name",
+              "data_path",
+              "field_name"
+            ],
+            "title": "get_dop_fieldArguments"
+          }
+        },
+        {
+          "name": "get_dop_relationships",
+          "description": "List all relationships between DOP objects.\n\n    Args:\n        node_path: DOP network node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_dop_relationshipsArguments"
+          }
+        },
+        {
+          "name": "step_simulation",
+          "description": "Advance the simulation by a number of frames.\n\n    Args:\n        node_path: DOP network node path.\n        steps: Number of frames to advance.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "steps": {
+                "default": 1,
+                "title": "Steps",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "step_simulationArguments"
+          }
+        },
+        {
+          "name": "reset_simulation",
+          "description": "Reset the simulation to its initial state.\n\n    Args:\n        node_path: DOP network node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "reset_simulationArguments"
+          }
+        },
+        {
+          "name": "get_sim_memory_usage",
+          "description": "Get detailed memory breakdown for the simulation.\n\n    Args:\n        node_path: DOP network node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_sim_memory_usageArguments"
+          }
+        },
+        {
+          "name": "set_keyframe",
+          "description": "Set a single keyframe on a parameter.\n\n    Args:\n        node_path: Node path.\n        parm_name: Parameter name.\n        frame: Frame number.\n        value: Value at this keyframe.\n        slope: Tangent slope.\n        accel: Acceleration.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              },
+              "frame": {
+                "title": "Frame",
+                "type": "number"
+              },
+              "value": {
+                "title": "Value",
+                "type": "number"
+              },
+              "slope": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ],
-                "items": {
-                  "type": "number"
-                },
-                "title": "Rotation",
-                "type": "array"
+                "default": null,
+                "title": "Slope"
               },
-              "render_path": {
-                "default": "C:/temp/",
-                "title": "Render Path",
-                "type": "string"
-              },
-              "render_engine": {
-                "default": "opengl",
-                "title": "Render Engine",
-                "type": "string"
-              },
-              "karma_engine": {
-                "default": "cpu",
-                "title": "Karma Engine",
-                "type": "string"
+              "accel": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Accel"
               }
             },
-            "title": "render_single_viewArguments"
+            "required": [
+              "node_path",
+              "parm_name",
+              "frame",
+              "value"
+            ],
+            "title": "set_keyframeArguments"
           }
         },
         {
-          "name": "render_quad_views",
-          "description": "",
+          "name": "set_keyframes",
+          "description": "Batch-set multiple keyframes on a parameter.\n\n    Args:\n        node_path: Node path.\n        parm_name: Parameter name.\n        keyframes: List of dicts with \"frame\", \"value\", and optionally \"slope\"/\"accel\".\n    ",
           "inputSchema": {
             "type": "object",
             "properties": {
-              "render_path": {
-                "default": "C:/temp/",
-                "title": "Render Path",
+              "node_path": {
+                "title": "Node Path",
                 "type": "string"
               },
-              "render_engine": {
-                "default": "opengl",
-                "title": "Render Engine",
+              "parm_name": {
+                "title": "Parm Name",
                 "type": "string"
               },
-              "karma_engine": {
-                "default": "cpu",
-                "title": "Karma Engine",
-                "type": "string"
+              "keyframes": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Keyframes",
+                "type": "array"
               }
             },
-            "title": "render_quad_viewsArguments"
+            "required": [
+              "node_path",
+              "parm_name",
+              "keyframes"
+            ],
+            "title": "set_keyframesArguments"
           }
         },
         {
-          "name": "render_specific_camera",
-          "description": "",
+          "name": "delete_keyframe",
+          "description": "Delete a keyframe at a specific frame.\n\n    Args:\n        node_path: Node path.\n        parm_name: Parameter name.\n        frame: Frame number to delete.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              },
+              "frame": {
+                "title": "Frame",
+                "type": "number"
+              }
+            },
+            "required": [
+              "node_path",
+              "parm_name",
+              "frame"
+            ],
+            "title": "delete_keyframeArguments"
+          }
+        },
+        {
+          "name": "get_keyframes",
+          "description": "Get all keyframes on a parameter.\n\n    Args:\n        node_path: Node path.\n        parm_name: Parameter name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "parm_name"
+            ],
+            "title": "get_keyframesArguments"
+          }
+        },
+        {
+          "name": "set_frame",
+          "description": "Set the current frame in the timeline.\n\n    Args:\n        frame: Frame number.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "frame": {
+                "title": "Frame",
+                "type": "number"
+              }
+            },
+            "required": [
+              "frame"
+            ],
+            "title": "set_frameArguments"
+          }
+        },
+        {
+          "name": "get_frame",
+          "description": "Get the current frame and FPS.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "title": "get_frameArguments"
+          }
+        },
+        {
+          "name": "set_frame_range",
+          "description": "Set the global frame range.\n\n    Args:\n        start: Start frame.\n        end: End frame.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "title": "Start",
+                "type": "number"
+              },
+              "end": {
+                "title": "End",
+                "type": "number"
+              }
+            },
+            "required": [
+              "start",
+              "end"
+            ],
+            "title": "set_frame_rangeArguments"
+          }
+        },
+        {
+          "name": "set_playback_range",
+          "description": "Set the playback range (green bar in the timeline).\n\n    Args:\n        start: Start frame.\n        end: End frame.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "title": "Start",
+                "type": "number"
+              },
+              "end": {
+                "title": "End",
+                "type": "number"
+              }
+            },
+            "required": [
+              "start",
+              "end"
+            ],
+            "title": "set_playback_rangeArguments"
+          }
+        },
+        {
+          "name": "playbar_control",
+          "description": "Control playback: play, stop, or reverse.\n\n    Args:\n        action: One of \"play\", \"stop\", or \"reverse\".\n        real_time: Enable or disable real-time playback.\n        fps: Frames per second.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "title": "Action",
+                "type": "string"
+              },
+              "real_time": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Real Time"
+              },
+              "fps": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Fps"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "title": "playbar_controlArguments"
+          }
+        },
+        {
+          "name": "render_viewport",
+          "description": "Capture the current 3D viewport to an image file.\n\n    Args:\n        output_path: Image file path.\n        resolution: [width, height] in pixels.\n        camera: Camera node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "output_path": {
+                "title": "Output Path",
+                "type": "string"
+              },
+              "resolution": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resolution"
+              },
+              "camera": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Camera"
+              }
+            },
+            "required": [
+              "output_path"
+            ],
+            "title": "render_viewportArguments"
+          }
+        },
+        {
+          "name": "render_quad_view",
+          "description": "Capture all four viewport panes to separate images.\n\n    Args:\n        output_path: Base image path; viewport names are appended.\n        resolution: [width, height] in pixels.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "output_path": {
+                "title": "Output Path",
+                "type": "string"
+              },
+              "resolution": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resolution"
+              }
+            },
+            "required": [
+              "output_path"
+            ],
+            "title": "render_quad_viewArguments"
+          }
+        },
+        {
+          "name": "list_render_nodes",
+          "description": "List all render (ROP/Driver) nodes in the scene.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "title": "list_render_nodesArguments"
+          }
+        },
+        {
+          "name": "get_render_settings",
+          "description": "Get render settings from a ROP node.\n\n    Args:\n        node_path: ROP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_render_settingsArguments"
+          }
+        },
+        {
+          "name": "set_render_settings",
+          "description": "Set render parameters on a ROP node.\n\n    Args:\n        node_path: ROP node path.\n        settings: Parameter name-value pairs.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "settings": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Settings",
+                "type": "object"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "set_render_settingsArguments"
+          }
+        },
+        {
+          "name": "create_render_node",
+          "description": "Create a new render (ROP) node in /out.\n\n    Args:\n        renderer: Renderer type ('karma', 'opengl', 'mantra', 'rop_geometry', 'rop_alembic', 'usdrender', 'fetch', 'merge', 'rop_fbx', 'rop_gltf').\n        name: Node name.\n        camera: Camera node path.\n        output_path: Output file path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "renderer": {
+                "title": "Renderer",
+                "type": "string"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              },
+              "camera": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Camera"
+              },
+              "output_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Output Path"
+              }
+            },
+            "required": [
+              "renderer"
+            ],
+            "title": "create_render_nodeArguments"
+          }
+        },
+        {
+          "name": "start_render",
+          "description": "Render a ROP node.\n\n    Args:\n        node_path: ROP node path.\n        frame_range: [start, end] or [start, end, increment].\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "frame_range": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Frame Range"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "start_renderArguments"
+          }
+        },
+        {
+          "name": "render_node_network",
+          "description": "Capture a screenshot of a node's network editor view.\n\n    Args:\n        node_path: Node path to focus on.\n        output_path: Image file path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "output_path": {
+                "title": "Output Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "output_path"
+            ],
+            "title": "render_node_networkArguments"
+          }
+        },
+        {
+          "name": "get_render_progress",
+          "description": "Get render progress and status of a ROP node.\n\n    Args:\n        node_path: ROP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_render_progressArguments"
+          }
+        },
+        {
+          "name": "list_panes",
+          "description": "List all visible pane tabs in the Houdini UI.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "title": "list_panesArguments"
+          }
+        },
+        {
+          "name": "get_viewport_info",
+          "description": "Get viewport settings for a pane tab.\n\n    Args:\n        pane_name: Pane tab name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "pane_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pane Name"
+              }
+            },
+            "title": "get_viewport_infoArguments"
+          }
+        },
+        {
+          "name": "set_viewport_camera",
+          "description": "Set the viewport to look through a specific camera.\n\n    Args:\n        camera_path: Camera node path.\n        pane_name: Pane tab name.\n    ",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -5877,145 +7594,2707 @@
                 "title": "Camera Path",
                 "type": "string"
               },
-              "render_path": {
-                "default": "C:/temp/",
-                "title": "Render Path",
-                "type": "string"
-              },
-              "render_engine": {
-                "default": "opengl",
-                "title": "Render Engine",
-                "type": "string"
-              },
-              "karma_engine": {
-                "default": "cpu",
-                "title": "Karma Engine",
-                "type": "string"
+              "pane_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pane Name"
               }
             },
             "required": [
               "camera_path"
             ],
-            "title": "render_specific_cameraArguments"
+            "title": "set_viewport_cameraArguments"
           }
         },
         {
-          "name": "opus_get_model_names",
-          "description": "",
+          "name": "set_viewport_display",
+          "description": "Set the viewport shading mode.\n\n    Args:\n        display_mode: One of 'wireframe', 'shaded', 'smooth', 'smooth_wire',\n            'hidden_line', 'flat', 'flat_wire', 'matcap', 'matcap_wire'.\n        pane_name: Pane tab name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "display_mode": {
+                "title": "Display Mode",
+                "type": "string"
+              },
+              "pane_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pane Name"
+              }
+            },
+            "required": [
+              "display_mode"
+            ],
+            "title": "set_viewport_displayArguments"
+          }
+        },
+        {
+          "name": "set_viewport_renderer",
+          "description": "Set the viewport's Hydra rendering delegate for live preview.\n\n    Use this during lookdev to preview materials and lighting directly in the\n    viewport instead of writing full renders to disk.\n\n    Args:\n        renderer: Renderer name — \"GL\", \"Storm\", \"Karma CPU\", \"Karma XPU\", etc. Case-insensitive partial match.\n        pane_name: Pane tab name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "renderer": {
+                "title": "Renderer",
+                "type": "string"
+              },
+              "pane_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pane Name"
+              }
+            },
+            "required": [
+              "renderer"
+            ],
+            "title": "set_viewport_rendererArguments"
+          }
+        },
+        {
+          "name": "frame_selection",
+          "description": "Frame the current selection in the viewport.\n\n    Args:\n        pane_name: Pane tab name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "pane_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pane Name"
+              }
+            },
+            "title": "frame_selectionArguments"
+          }
+        },
+        {
+          "name": "frame_all",
+          "description": "Frame all geometry in the viewport.\n\n    Args:\n        pane_name: Pane tab name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "pane_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pane Name"
+              }
+            },
+            "title": "frame_allArguments"
+          }
+        },
+        {
+          "name": "set_viewport_direction",
+          "description": "Set the viewport to a standard viewing direction.\n\n    Args:\n        direction: \"front\", \"back\", \"top\", \"bottom\", \"left\", \"right\", or \"perspective\".\n        pane_name: Pane tab name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "title": "Direction",
+                "type": "string"
+              },
+              "pane_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pane Name"
+              }
+            },
+            "required": [
+              "direction"
+            ],
+            "title": "set_viewport_directionArguments"
+          }
+        },
+        {
+          "name": "capture_screenshot",
+          "description": "Capture a screenshot of the viewport or a specific pane tab.\n\n    Screenshots consume significant context tokens. Only take one when visual\n    confirmation is genuinely needed — prefer get_geometry_info, get_node_info,\n    or get_scene_summary for most inspection tasks.\n\n    Args:\n        output_path: Image file path.\n        pane_name: Pane tab name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "output_path": {
+                "title": "Output Path",
+                "type": "string"
+              },
+              "pane_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pane Name"
+              }
+            },
+            "required": [
+              "output_path"
+            ],
+            "title": "capture_screenshotArguments"
+          }
+        },
+        {
+          "name": "capture_network_editor",
+          "description": "Capture a screenshot of the network editor.\n\n    Screenshots consume significant context tokens. Only take one when visual\n    confirmation of wiring is genuinely needed — prefer get_node_info or\n    list_children for inspecting node connections.\n\n    Args:\n        output_path: Image file path.\n        node_path: Node path to navigate to before capture.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "output_path": {
+                "title": "Output Path",
+                "type": "string"
+              },
+              "node_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Node Path"
+              }
+            },
+            "required": [
+              "output_path"
+            ],
+            "title": "capture_network_editorArguments"
+          }
+        },
+        {
+          "name": "set_current_network",
+          "description": "Navigate the network editor to a specific network path.\n\n    Args:\n        network_path: Network path to navigate to.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "network_path": {
+                "title": "Network Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "network_path"
+            ],
+            "title": "set_current_networkArguments"
+          }
+        },
+        {
+          "name": "find_error_nodes",
+          "description": "Find all nodes with errors or warnings in the scene.\n\n    Args:\n        root_path: Root node path to search from.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "root_path": {
+                "default": "/",
+                "title": "Root Path",
+                "type": "string"
+              }
+            },
+            "title": "find_error_nodesArguments"
+          }
+        },
+        {
+          "name": "log_status",
+          "description": "Display a status message in Houdini's status bar.\n\n    Call this at the START of every major step so the user can follow\n    along in real time without having to inspect tool call logs.\n    Examples: \"Creating base geometry...\", \"Wiring SOP chain...\",\n    \"Setting up pyro simulation...\", \"Assigning materials...\".\n\n    Args:\n        message: Status message to display (keep it short and human-readable).\n        severity: \"message\" (default), \"important\", \"warning\", or \"error\".\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "severity": {
+                "default": "message",
+                "title": "Severity",
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "title": "log_statusArguments"
+          }
+        },
+        {
+          "name": "get_top_network_info",
+          "description": "Get an overview of a TOP network.\n\n    Args:\n        ctx: MCP context.\n        node_path: TOPnet or TOP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_top_network_infoArguments"
+          }
+        },
+        {
+          "name": "cook_top_node",
+          "description": "Cook a TOP node to execute its work items.\n\n    Args:\n        ctx: MCP context.\n        node_path: TOP node path.\n        block: Wait for cooking to complete.\n        generate_only: Only generate work items, do not cook.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "block": {
+                "default": true,
+                "title": "Block",
+                "type": "boolean"
+              },
+              "generate_only": {
+                "default": false,
+                "title": "Generate Only",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "cook_top_nodeArguments"
+          }
+        },
+        {
+          "name": "cancel_top_cook",
+          "description": "Cancel active cooking on a TOP network.\n\n    Args:\n        ctx: MCP context.\n        node_path: TOP node or TOPnet path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "cancel_top_cookArguments"
+          }
+        },
+        {
+          "name": "pause_top_cook",
+          "description": "Pause cooking on a TOP network.\n\n    Args:\n        ctx: MCP context.\n        node_path: TOP node or TOPnet path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "pause_top_cookArguments"
+          }
+        },
+        {
+          "name": "dirty_work_items",
+          "description": "Dirty work items on a TOP node so they can be regenerated.\n\n    Args:\n        ctx: MCP context.\n        node_path: TOP node path.\n        remove_outputs: Also remove output files from disk.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "remove_outputs": {
+                "default": false,
+                "title": "Remove Outputs",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "dirty_work_itemsArguments"
+          }
+        },
+        {
+          "name": "get_work_item_states",
+          "description": "Get work item state counts for a TOP node.\n\n    Args:\n        ctx: MCP context.\n        node_path: TOP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_work_item_statesArguments"
+          }
+        },
+        {
+          "name": "get_work_item_info",
+          "description": "Get detailed information about a specific work item.\n\n    Args:\n        ctx: MCP context.\n        node_path: TOP node path.\n        work_item_index: Work item index within the node.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "work_item_index": {
+                "title": "Work Item Index",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_path",
+              "work_item_index"
+            ],
+            "title": "get_work_item_infoArguments"
+          }
+        },
+        {
+          "name": "get_pdg_graph",
+          "description": "Get the PDG dependency graph structure for a TOP network.\n\n    Args:\n        ctx: MCP context.\n        node_path: TOPnet or TOP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_pdg_graphArguments"
+          }
+        },
+        {
+          "name": "generate_static_items",
+          "description": "Generate static work items on a TOP node without cooking.\n\n    Args:\n        ctx: MCP context.\n        node_path: TOP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "generate_static_itemsArguments"
+          }
+        },
+        {
+          "name": "get_top_scheduler_info",
+          "description": "Get information about TOP scheduler nodes in a network.\n\n    Args:\n        ctx: MCP context.\n        node_path: TOP scheduler or TOPnet path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_top_scheduler_infoArguments"
+          }
+        },
+        {
+          "name": "get_cop_info",
+          "description": "Get information about a COP node.\n\n    Args:\n        node_path: Path to the COP node.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_cop_infoArguments"
+          }
+        },
+        {
+          "name": "get_cop_geometry",
+          "description": "Get geometry representation from a COP node.\n\n    Args:\n        node_path: Path to the COP node.\n        output_index: Output connector index.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "output_index": {
+                "default": 0,
+                "title": "Output Index",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_cop_geometryArguments"
+          }
+        },
+        {
+          "name": "get_cop_layer",
+          "description": "Get image layer data from a COP node.\n\n    Args:\n        node_path: Path to the COP node.\n        output_index: Output connector index.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "output_index": {
+                "default": 0,
+                "title": "Output Index",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_cop_layerArguments"
+          }
+        },
+        {
+          "name": "create_cop_node",
+          "description": "Create a COP node in the specified network.\n\n    Before using this, call list_node_types(context='Cop', filter='<keyword>')\n    for Copernicus nodes (Houdini 20+), or context='Cop2' for legacy COPs.\n    Copernicus is the modern image processing system and is preferred over COP2\n    (deprecated as of Houdini 20.5). COPs has many dedicated image-processing\n    nodes — blur, sharpen, levels, contrast, over, multiply, luminance,\n    premultiply, channelcopy, noise, ramp, fractalnoise, worleynoise,\n    rasterizegeo, heighttonormal, sdfshape — that may cover the operation\n    without needing a VEX COP or Python.\n\n    Args:\n        parent_path: Path to the parent COP network.\n        cop_type: COP node type to create.\n        name: Override node name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "parent_path": {
+                "title": "Parent Path",
+                "type": "string"
+              },
+              "cop_type": {
+                "title": "Cop Type",
+                "type": "string"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              }
+            },
+            "required": [
+              "parent_path",
+              "cop_type"
+            ],
+            "title": "create_cop_nodeArguments"
+          }
+        },
+        {
+          "name": "set_cop_flags",
+          "description": "Set flags on a COP node.\n\n    Args:\n        node_path: Path to the COP node.\n        display: Display flag state.\n        export_flag: Render/export flag state.\n        compress: Compress flag state.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "display": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Display"
+              },
+              "export_flag": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Export Flag"
+              },
+              "compress": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Compress"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "set_cop_flagsArguments"
+          }
+        },
+        {
+          "name": "list_cop_node_types",
+          "description": "List available COP node types.\n\n    Args:\n        filter: Substring filter for node type names.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Filter"
+              }
+            },
+            "title": "list_cop_node_typesArguments"
+          }
+        },
+        {
+          "name": "get_cop_vdb",
+          "description": "Get VDB volumetric data from a COP node.\n\n    Args:\n        node_path: Path to the COP node.\n        output_index: Output connector index.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "output_index": {
+                "default": 0,
+                "title": "Output Index",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_cop_vdbArguments"
+          }
+        },
+        {
+          "name": "list_installed_hdas",
+          "description": "List all installed HDA files and their definitions.\n\n    Args:\n        ctx: MCP context.\n        filter: Substring filter for type names or file paths.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Filter"
+              }
+            },
+            "title": "list_installed_hdasArguments"
+          }
+        },
+        {
+          "name": "get_hda_info",
+          "description": "Get detailed information about an HDA definition.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n        hda_file: HDA file path.\n        type_name: HDA type name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Node Path"
+              },
+              "hda_file": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Hda File"
+              },
+              "type_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Type Name"
+              }
+            },
+            "title": "get_hda_infoArguments"
+          }
+        },
+        {
+          "name": "install_hda",
+          "description": "Install an HDA file into the current session.\n\n    Args:\n        ctx: MCP context.\n        file_path: HDA file path.\n        force: Force reinstall even if already loaded.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "title": "File Path",
+                "type": "string"
+              },
+              "force": {
+                "default": false,
+                "title": "Force",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "file_path"
+            ],
+            "title": "install_hdaArguments"
+          }
+        },
+        {
+          "name": "uninstall_hda",
+          "description": "Uninstall an HDA file from the current session.\n\n    Args:\n        ctx: MCP context.\n        file_path: HDA file path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "title": "File Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "file_path"
+            ],
+            "title": "uninstall_hdaArguments"
+          }
+        },
+        {
+          "name": "reload_hda",
+          "description": "Reload an HDA file from disk.\n\n    Args:\n        ctx: MCP context.\n        file_path: HDA file path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "title": "File Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "file_path"
+            ],
+            "title": "reload_hdaArguments"
+          }
+        },
+        {
+          "name": "create_hda",
+          "description": "Create a new HDA from an existing subnet node.\n\n    Args:\n        ctx: MCP context.\n        node_path: Subnet node path.\n        hda_file: Destination HDA file path.\n        type_name: Operator type name.\n        label: Human-readable label.\n        version: Version string.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "hda_file": {
+                "title": "Hda File",
+                "type": "string"
+              },
+              "type_name": {
+                "title": "Type Name",
+                "type": "string"
+              },
+              "label": {
+                "title": "Label",
+                "type": "string"
+              },
+              "version": {
+                "default": "1.0",
+                "title": "Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "hda_file",
+              "type_name",
+              "label"
+            ],
+            "title": "create_hdaArguments"
+          }
+        },
+        {
+          "name": "update_hda",
+          "description": "Save the current node contents back to its HDA definition.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "update_hdaArguments"
+          }
+        },
+        {
+          "name": "get_hda_sections",
+          "description": "List all sections in an HDA definition.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_hda_sectionsArguments"
+          }
+        },
+        {
+          "name": "get_hda_section_content",
+          "description": "Read the content of a specific section in an HDA definition.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n        section_name: Section name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "section_name": {
+                "title": "Section Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "section_name"
+            ],
+            "title": "get_hda_section_contentArguments"
+          }
+        },
+        {
+          "name": "set_hda_section_content",
+          "description": "Write content to a specific section in an HDA definition.\n\n    Args:\n        ctx: MCP context.\n        node_path: Node path.\n        section_name: Section name.\n        content: Section content.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "section_name": {
+                "title": "Section Name",
+                "type": "string"
+              },
+              "content": {
+                "title": "Content",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "section_name",
+              "content"
+            ],
+            "title": "set_hda_section_contentArguments"
+          }
+        },
+        {
+          "name": "create_wrangle",
+          "description": "Create an Attribute Wrangle node with VEX code.\n\n    LAST RESORT — calling this without first checking for a built-in node is\n    a mistake. You MUST call list_node_types(context='<context>', filter='<keyword>')\n    before using this tool and confirm no node covers the operation. Do not skip\n    this check even when you think you know what's available — Houdini ships\n    hundreds of nodes and HDAs that may not be in your training data. Only create\n    a wrangle when the logic genuinely cannot be expressed with any built-in node.\n\n    Args:\n        parent_path: Parent SOP network path.\n        vex_code: VEX snippet to set.\n        run_over: Element to run over (\"Points\", \"Vertices\", \"Primitives\", \"Detail\", \"Numbers\").\n        name: Node name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "parent_path": {
+                "title": "Parent Path",
+                "type": "string"
+              },
+              "vex_code": {
+                "title": "Vex Code",
+                "type": "string"
+              },
+              "run_over": {
+                "default": "Points",
+                "title": "Run Over",
+                "type": "string"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              }
+            },
+            "required": [
+              "parent_path",
+              "vex_code"
+            ],
+            "title": "create_wrangleArguments"
+          }
+        },
+        {
+          "name": "set_wrangle_code",
+          "description": "Set VEX code on an existing Attribute Wrangle node.\n\n    Args:\n        node_path: Path to the wrangle node.\n        vex_code: VEX snippet to set.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "vex_code": {
+                "title": "Vex Code",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "vex_code"
+            ],
+            "title": "set_wrangle_codeArguments"
+          }
+        },
+        {
+          "name": "get_wrangle_code",
+          "description": "Read the VEX code from an Attribute Wrangle node.\n\n    Args:\n        node_path: Path to the wrangle node.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_wrangle_codeArguments"
+          }
+        },
+        {
+          "name": "create_vex_expression",
+          "description": "Set a VEX expression on a parameter.\n\n    Args:\n        node_path: Path to the node.\n        parm_name: Parameter name.\n        vex_code: VEX expression code.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "parm_name": {
+                "title": "Parm Name",
+                "type": "string"
+              },
+              "vex_code": {
+                "title": "Vex Code",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "parm_name",
+              "vex_code"
+            ],
+            "title": "create_vex_expressionArguments"
+          }
+        },
+        {
+          "name": "validate_vex",
+          "description": "Validate VEX code by cooking the node and checking for errors.\n\n    Args:\n        node_path: Path to the wrangle node.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "validate_vexArguments"
+          }
+        },
+        {
+          "name": "get_geometry_info",
+          "description": "Get geometry summary for a SOP node.\n\n    Args:\n        node_path: Node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_geometry_infoArguments"
+          }
+        },
+        {
+          "name": "get_points",
+          "description": "Read point positions and attributes with pagination.\n\n    Args:\n        node_path: Node path.\n        attributes: Attribute names to read.\n        start: Start index.\n        count: Max points per page.\n        group: Point group filter.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "attributes": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Attributes"
+              },
+              "start": {
+                "default": 0,
+                "title": "Start",
+                "type": "integer"
+              },
+              "count": {
+                "default": 1000,
+                "title": "Count",
+                "type": "integer"
+              },
+              "group": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Group"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_pointsArguments"
+          }
+        },
+        {
+          "name": "get_prims",
+          "description": "Read primitive data and attributes with pagination.\n\n    Args:\n        node_path: Node path.\n        attributes: Attribute names to read.\n        start: Start index.\n        count: Max prims per page.\n        group: Prim group filter.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "attributes": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Attributes"
+              },
+              "start": {
+                "default": 0,
+                "title": "Start",
+                "type": "integer"
+              },
+              "count": {
+                "default": 1000,
+                "title": "Count",
+                "type": "integer"
+              },
+              "group": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Group"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_primsArguments"
+          }
+        },
+        {
+          "name": "get_attrib_values",
+          "description": "Read attribute values as a flat array with pagination.\n\n    For spot-checking a few values prefer sample_geometry — it returns a\n    representative spread of points with all their attributes in one call.\n    Use get_attrib_values when you need a specific slice of one attribute.\n\n    Values are element-major: for a float3 attribute every 3 consecutive\n    values belong to one element. Check has_more and increment start to\n    read subsequent pages.\n\n    Args:\n        node_path: Node path.\n        attrib_name: Attribute name.\n        attrib_class: \"point\", \"prim\", \"vertex\", or \"detail\".\n        start: First element index to return.\n        count: Max elements per page (default 200).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "attrib_name": {
+                "title": "Attrib Name",
+                "type": "string"
+              },
+              "attrib_class": {
+                "default": "point",
+                "title": "Attrib Class",
+                "type": "string"
+              },
+              "start": {
+                "default": 0,
+                "title": "Start",
+                "type": "integer"
+              },
+              "count": {
+                "default": 200,
+                "title": "Count",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_path",
+              "attrib_name"
+            ],
+            "title": "get_attrib_valuesArguments"
+          }
+        },
+        {
+          "name": "set_detail_attrib",
+          "description": "Set a detail attribute on a SOP node.\n\n    Args:\n        node_path: Node path.\n        attrib_name: Attribute name.\n        value: Value to set.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "attrib_name": {
+                "title": "Attrib Name",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "node_path",
+              "attrib_name",
+              "value"
+            ],
+            "title": "set_detail_attribArguments"
+          }
+        },
+        {
+          "name": "get_groups",
+          "description": "List all geometry groups on a SOP node.\n\n    Args:\n        node_path: Node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_groupsArguments"
+          }
+        },
+        {
+          "name": "get_group_members",
+          "description": "Get element indices in a geometry group, with pagination.\n\n    Check has_more and increment start to read subsequent pages.\n\n    Args:\n        node_path: Node path.\n        group_name: Group name.\n        group_type: \"point\", \"prim\", or \"edge\".\n        start: First element index to return.\n        count: Max elements per page (default 5 000).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "group_name": {
+                "title": "Group Name",
+                "type": "string"
+              },
+              "group_type": {
+                "default": "point",
+                "title": "Group Type",
+                "type": "string"
+              },
+              "start": {
+                "default": 0,
+                "title": "Start",
+                "type": "integer"
+              },
+              "count": {
+                "default": 5000,
+                "title": "Count",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_path",
+              "group_name"
+            ],
+            "title": "get_group_membersArguments"
+          }
+        },
+        {
+          "name": "get_bounding_box",
+          "description": "Get the bounding box of a SOP node's geometry.\n\n    Args:\n        node_path: Node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_bounding_boxArguments"
+          }
+        },
+        {
+          "name": "get_attribute_info",
+          "description": "Get metadata for a geometry attribute.\n\n    Args:\n        node_path: Node path.\n        attrib_name: Attribute name.\n        attrib_class: \"point\", \"prim\", \"vertex\", or \"detail\".\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "attrib_name": {
+                "title": "Attrib Name",
+                "type": "string"
+              },
+              "attrib_class": {
+                "default": "point",
+                "title": "Attrib Class",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "attrib_name"
+            ],
+            "title": "get_attribute_infoArguments"
+          }
+        },
+        {
+          "name": "sample_geometry",
+          "description": "Sample evenly distributed points from a SOP node's geometry.\n\n    Args:\n        node_path: Node path.\n        sample_count: Number of points to sample.\n        seed: Random seed.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "sample_count": {
+                "default": 100,
+                "title": "Sample Count",
+                "type": "integer"
+              },
+              "seed": {
+                "default": 0,
+                "title": "Seed",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "sample_geometryArguments"
+          }
+        },
+        {
+          "name": "get_prim_intrinsics",
+          "description": "Get intrinsic values for primitives.\n\n    Args:\n        node_path: Node path.\n        prim_index: Primitive index, or None for a summary.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "prim_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Prim Index"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_prim_intrinsicsArguments"
+          }
+        },
+        {
+          "name": "find_nearest_point",
+          "description": "Find the nearest point(s) to a given position.\n\n    Args:\n        node_path: Node path.\n        position: Query position as [x, y, z].\n        max_results: Max nearest points to return.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "position": {
+                "items": {
+                  "type": "number"
+                },
+                "title": "Position",
+                "type": "array"
+              },
+              "max_results": {
+                "default": 1,
+                "title": "Max Results",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_path",
+              "position"
+            ],
+            "title": "find_nearest_pointArguments"
+          }
+        },
+        {
+          "name": "get_stage_info",
+          "description": "Get USD stage info from a LOP node.\n\n    Args:\n        node_path: LOP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_stage_infoArguments"
+          }
+        },
+        {
+          "name": "get_usd_prim",
+          "description": "Get detailed info about a USD prim.\n\n    Args:\n        node_path: LOP node path.\n        prim_path: USD prim path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "prim_path": {
+                "title": "Prim Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "prim_path"
+            ],
+            "title": "get_usd_primArguments"
+          }
+        },
+        {
+          "name": "list_usd_prims",
+          "description": "List USD prims on a stage with filtering.\n\n    Args:\n        node_path: LOP node path.\n        root_path: Root prim path to list from.\n        prim_type: USD type filter (e.g. \"Mesh\", \"Xform\").\n        kind: Kind filter (e.g. \"component\", \"group\").\n        depth: Max traversal depth.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "root_path": {
+                "default": "/",
+                "title": "Root Path",
+                "type": "string"
+              },
+              "prim_type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Prim Type"
+              },
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kind"
+              },
+              "depth": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Depth"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "list_usd_primsArguments"
+          }
+        },
+        {
+          "name": "get_usd_attribute",
+          "description": "Read a USD attribute value from a prim.\n\n    Args:\n        node_path: LOP node path.\n        prim_path: USD prim path.\n        attr_name: Attribute name.\n        time: Time code (frame number).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "prim_path": {
+                "title": "Prim Path",
+                "type": "string"
+              },
+              "attr_name": {
+                "title": "Attr Name",
+                "type": "string"
+              },
+              "time": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Time"
+              }
+            },
+            "required": [
+              "node_path",
+              "prim_path",
+              "attr_name"
+            ],
+            "title": "get_usd_attributeArguments"
+          }
+        },
+        {
+          "name": "get_usd_layers",
+          "description": "List all layers in a USD stage.\n\n    Args:\n        node_path: LOP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_usd_layersArguments"
+          }
+        },
+        {
+          "name": "get_usd_prim_stats",
+          "description": "Get prim counts by USD type under a root path.\n\n    Args:\n        node_path: LOP node path.\n        prim_path: Root prim path to gather stats from.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "prim_path": {
+                "default": "/",
+                "title": "Prim Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_usd_prim_statsArguments"
+          }
+        },
+        {
+          "name": "get_last_modified_prims",
+          "description": "Get prims modified by the last LOP node cook.\n\n    Args:\n        node_path: LOP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_last_modified_primsArguments"
+          }
+        },
+        {
+          "name": "create_lop_node",
+          "description": "Create a new LOP node.\n\n    Before using this, call list_node_types(context='Lop', filter='<keyword>')\n    to verify the correct node type. Solaris ships many specialized LOPs —\n    sublayer, reference, materiallibrary, assignmaterial, karmarendersettings,\n    editproperties, xform, prune, configurelayer, collection, addvariant —\n    that may not be obvious from their names.\n\n    Args:\n        parent_path: Parent node path.\n        lop_type: LOP node type (e.g. \"sphere\", \"sublayer\", \"merge\").\n        name: Node name.\n        prim_path: USD prim path to set on the node.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "parent_path": {
+                "title": "Parent Path",
+                "type": "string"
+              },
+              "lop_type": {
+                "title": "Lop Type",
+                "type": "string"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              },
+              "prim_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Prim Path"
+              }
+            },
+            "required": [
+              "parent_path",
+              "lop_type"
+            ],
+            "title": "create_lop_nodeArguments"
+          }
+        },
+        {
+          "name": "set_usd_attribute",
+          "description": "Set a USD attribute value via an inline Python LOP.\n\n    Args:\n        node_path: LOP node path to connect after.\n        prim_path: USD prim path.\n        attr_name: Attribute name.\n        value: Value to set.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "prim_path": {
+                "title": "Prim Path",
+                "type": "string"
+              },
+              "attr_name": {
+                "title": "Attr Name",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "node_path",
+              "prim_path",
+              "attr_name",
+              "value"
+            ],
+            "title": "set_usd_attributeArguments"
+          }
+        },
+        {
+          "name": "get_usd_materials",
+          "description": "List all USD materials on a stage.\n\n    Args:\n        node_path: LOP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_usd_materialsArguments"
+          }
+        },
+        {
+          "name": "find_usd_prims",
+          "description": "Search USD prims by path pattern.\n\n    Args:\n        node_path: LOP node path.\n        pattern: Glob pattern (supports *, **) or substring.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "pattern": {
+                "title": "Pattern",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "pattern"
+            ],
+            "title": "find_usd_primsArguments"
+          }
+        },
+        {
+          "name": "get_usd_composition",
+          "description": "Get composition arcs for a USD prim.\n\n    Args:\n        node_path: LOP node path.\n        prim_path: USD prim path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "prim_path": {
+                "title": "Prim Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "prim_path"
+            ],
+            "title": "get_usd_compositionArguments"
+          }
+        },
+        {
+          "name": "get_usd_variants",
+          "description": "Get variant sets and selections for a USD prim.\n\n    Args:\n        node_path: LOP node path.\n        prim_path: USD prim path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "prim_path": {
+                "title": "Prim Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path",
+              "prim_path"
+            ],
+            "title": "get_usd_variantsArguments"
+          }
+        },
+        {
+          "name": "inspect_usd_layer",
+          "description": "Inspect a USD layer by index.\n\n    Args:\n        node_path: LOP node path.\n        layer_index: Layer index (0 = root layer).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "layer_index": {
+                "default": 0,
+                "title": "Layer Index",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "inspect_usd_layerArguments"
+          }
+        },
+        {
+          "name": "create_light",
+          "description": "Create a USD light in a LOP network.\n\n    Args:\n        parent_path: Parent LOP network path.\n        light_type: \"dome\", \"distant\", \"rect\", \"sphere\", \"disk\", or \"cylinder\".\n        name: Light node name.\n        intensity: Light intensity.\n        color: [r, g, b] color values.\n        position: [x, y, z] world position.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "parent_path": {
+                "default": "/stage",
+                "title": "Parent Path",
+                "type": "string"
+              },
+              "light_type": {
+                "default": "dome",
+                "title": "Light Type",
+                "type": "string"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              },
+              "intensity": {
+                "default": 1,
+                "title": "Intensity",
+                "type": "number"
+              },
+              "color": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Color"
+              },
+              "position": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Position"
+              }
+            },
+            "title": "create_lightArguments"
+          }
+        },
+        {
+          "name": "list_lights",
+          "description": "List all USD lights on a LOP stage.\n\n    Args:\n        node_path: LOP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "list_lightsArguments"
+          }
+        },
+        {
+          "name": "set_light_properties",
+          "description": "Set properties on a USD light prim via an inline Python LOP.\n\n    Args:\n        node_path: LOP node path to connect after.\n        prim_path: USD light prim path.\n        properties: Property name-value pairs to set.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "prim_path": {
+                "title": "Prim Path",
+                "type": "string"
+              },
+              "properties": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Properties"
+              }
+            },
+            "required": [
+              "node_path",
+              "prim_path",
+              "properties"
+            ],
+            "title": "set_light_propertiesArguments"
+          }
+        },
+        {
+          "name": "create_light_rig",
+          "description": "Create a preset lighting rig in a LOP network.\n\n    Args:\n        parent_path: Parent LOP network path.\n        preset: \"three_point\", \"studio\", \"outdoor\", or \"hdri\".\n        intensity_mult: Multiplier for all light intensities.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "parent_path": {
+                "default": "/stage",
+                "title": "Parent Path",
+                "type": "string"
+              },
+              "preset": {
+                "default": "three_point",
+                "title": "Preset",
+                "type": "string"
+              },
+              "intensity_mult": {
+                "default": 1,
+                "title": "Intensity Mult",
+                "type": "number"
+              }
+            },
+            "title": "create_light_rigArguments"
+          }
+        },
+        {
+          "name": "get_network_overview",
+          "description": "Get a compact overview of a network.\n\n    Keep `depth` low (1–2). Larger values on complex scenes return thousands\n    of nodes and can overflow the context window.\n\n    Args:\n        path: Network path.\n        depth: Recursion depth (default 2, keep ≤ 3).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "default": "/obj",
+                "title": "Path",
+                "type": "string"
+              },
+              "depth": {
+                "default": 2,
+                "title": "Depth",
+                "type": "integer"
+              }
+            },
+            "title": "get_network_overviewArguments"
+          }
+        },
+        {
+          "name": "get_cook_chain",
+          "description": "Trace the cook dependency chain for a node.\n\n    Args:\n        node_path: Node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_cook_chainArguments"
+          }
+        },
+        {
+          "name": "explain_node",
+          "description": "Explain a node in human-readable form.\n\n    Args:\n        node_path: Node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "explain_nodeArguments"
+          }
+        },
+        {
+          "name": "get_selection",
+          "description": "Get the current node selection.",
           "inputSchema": {
             "type": "object",
             "properties": {},
-            "title": "opus_get_model_namesArguments"
+            "title": "get_selectionArguments"
           }
         },
         {
-          "name": "opus_get_model_params_schema",
-          "description": "",
+          "name": "set_selection",
+          "description": "Set the node selection.\n\n    Args:\n        node_paths: Node paths to select.\n    ",
           "inputSchema": {
             "type": "object",
             "properties": {
-              "structure": {
-                "title": "Structure",
-                "type": "string"
-              }
-            },
-            "required": [
-              "structure"
-            ],
-            "title": "opus_get_model_params_schemaArguments"
-          }
-        },
-        {
-          "name": "opus_create_model",
-          "description": "",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "structure": {
-                "title": "Structure",
-                "type": "string"
-              },
-              "parameters": {
-                "title": "Parameters",
-                "type": "object"
-              },
-              "count": {
-                "default": 1,
-                "title": "Count",
-                "type": "integer"
-              }
-            },
-            "required": [
-              "structure",
-              "parameters"
-            ],
-            "title": "opus_create_modelArguments"
-          }
-        },
-        {
-          "name": "opus_variate_model",
-          "description": "",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "result_id": {
-                "title": "Result Id",
-                "type": "string"
-              },
-              "count": {
-                "default": 12,
-                "title": "Count",
-                "type": "integer"
-              }
-            },
-            "required": [
-              "result_id"
-            ],
-            "title": "opus_variate_modelArguments"
-          }
-        },
-        {
-          "name": "opus_check_job_status",
-          "description": "",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "batch_id": {
-                "title": "Batch Id",
-                "type": "string"
-              }
-            },
-            "required": [
-              "batch_id"
-            ],
-            "title": "opus_check_job_statusArguments"
-          }
-        },
-        {
-          "name": "opus_import_model_url",
-          "description": "\n    Requests Houdini to import a model by URL (Houdini plugin must implement 'import_opus_url').\n    ",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "download_url": {
-                "title": "Download Url",
-                "type": "string"
-              },
-              "node_name": {
+              "node_paths": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
                 "default": null,
-                "title": "Node Name",
+                "title": "Node Paths"
+              }
+            },
+            "title": "set_selectionArguments"
+          }
+        },
+        {
+          "name": "get_scene_summary",
+          "description": "Get a high-level summary of the scene.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "title": "get_scene_summaryArguments"
+          }
+        },
+        {
+          "name": "compare_snapshots",
+          "description": "Take or compare scene state snapshots.\n\n    Args:\n        action: \"take\" or \"compare\".\n        snapshot_name: Snapshot name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "default": "take",
+                "title": "Action",
+                "type": "string"
+              },
+              "snapshot_name": {
+                "default": "default",
+                "title": "Snapshot Name",
+                "type": "string"
+              }
+            },
+            "title": "compare_snapshotsArguments"
+          }
+        },
+        {
+          "name": "get_node_errors_detailed",
+          "description": "Get detailed error analysis for nodes.\n\n    Args:\n        node_path: Node to analyze, or scan from root_path if omitted.\n        root_path: Root path to scan.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Node Path"
+              },
+              "root_path": {
+                "default": "/",
+                "title": "Root Path",
+                "type": "string"
+              }
+            },
+            "title": "get_node_errors_detailedArguments"
+          }
+        },
+        {
+          "name": "setup_pyro_sim",
+          "description": "Build a Pyro smoke/fire simulation network from source geometry.\n\n    Preferred over manual DOP wiring — builds the entire pyro network in one call.\n    For custom setups beyond what this provides, use create_node with DOP nodes\n    (pyrosolver, smokeobject, volumesource, etc.).\n\n    Args:\n        source_geo: Source SOP path.\n        container: Container type.\n        res_scale: Resolution scale multiplier.\n        substeps: DOP substeps.\n        name: Top-level geo node name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "source_geo": {
+                "default": "/obj/geo1/sphere1",
+                "title": "Source Geo",
+                "type": "string"
+              },
+              "container": {
+                "default": "box",
+                "title": "Container",
+                "type": "string"
+              },
+              "res_scale": {
+                "default": 1,
+                "title": "Res Scale",
+                "type": "number"
+              },
+              "substeps": {
+                "default": 1,
+                "title": "Substeps",
+                "type": "integer"
+              },
+              "name": {
+                "default": "pyro_sim",
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "title": "setup_pyro_simArguments"
+          }
+        },
+        {
+          "name": "setup_rbd_sim",
+          "description": "Build an RBD rigid-body simulation network with fracture and solver.\n\n    Preferred over manual DOP wiring — builds the entire RBD network in one call.\n    For source geometry, build SOP chains with native nodes (voronoifracture,\n    booleanfracture, rbdmaterialfracture) instead of VEX.\n\n    Args:\n        geo_path: Source geometry object path.\n        ground: Add a ground plane.\n        pieces_type: Fracture method (\"voronoi\").\n        name: Top-level geo node name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "geo_path": {
+                "default": "/obj/geo1",
+                "title": "Geo Path",
+                "type": "string"
+              },
+              "ground": {
+                "default": true,
+                "title": "Ground",
+                "type": "boolean"
+              },
+              "pieces_type": {
+                "default": "voronoi",
+                "title": "Pieces Type",
+                "type": "string"
+              },
+              "name": {
+                "default": "rbd_sim",
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "title": "setup_rbd_simArguments"
+          }
+        },
+        {
+          "name": "setup_flip_sim",
+          "description": "Build a FLIP fluid simulation network from source geometry.\n\n    Preferred over manual DOP wiring — builds the entire FLIP network in one call.\n    Use FLIP Source SOP or Volume Source DOP for custom sourcing.\n\n    Args:\n        source_geo: Source SOP path.\n        domain: Domain type.\n        particle_sep: Particle separation distance.\n        name: Top-level geo node name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "source_geo": {
+                "default": "/obj/geo1/sphere1",
+                "title": "Source Geo",
+                "type": "string"
+              },
+              "domain": {
+                "default": "box",
+                "title": "Domain",
+                "type": "string"
+              },
+              "particle_sep": {
+                "default": 0.05,
+                "title": "Particle Sep",
+                "type": "number"
+              },
+              "name": {
+                "default": "flip_sim",
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "title": "setup_flip_simArguments"
+          }
+        },
+        {
+          "name": "setup_vellum_sim",
+          "description": "Build a Vellum simulation network with configure node and solver.\n\n    Preferred over manual DOP wiring — builds the entire Vellum network in one call.\n    Use Vellum Drape SOP to let cloth settle before the main simulation.\n\n    Args:\n        geo_path: Source geometry object path.\n        sim_type: Simulation type (\"cloth\", \"hair\", \"grain\", \"softbody\").\n        substeps: Solver substeps.\n        name: Top-level geo node name.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "geo_path": {
+                "default": "/obj/geo1",
+                "title": "Geo Path",
+                "type": "string"
+              },
+              "sim_type": {
+                "default": "cloth",
+                "title": "Sim Type",
+                "type": "string"
+              },
+              "substeps": {
+                "default": 5,
+                "title": "Substeps",
+                "type": "integer"
+              },
+              "name": {
+                "default": "vellum_sim",
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "title": "setup_vellum_simArguments"
+          }
+        },
+        {
+          "name": "create_material",
+          "description": "Create a material in /mat with configurable surface properties.\n\n    Args:\n        name: Material node name.\n        mat_type: Material type (\"principled\", \"materialx\").\n        base_color: [R, G, B] base color, 0-1 per channel.\n        roughness: Surface roughness, 0-1.\n        metallic: Metallic factor, 0-1.\n        opacity: Opacity, 0-1.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "default": "material1",
+                "title": "Name",
+                "type": "string"
+              },
+              "mat_type": {
+                "default": "principled",
+                "title": "Mat Type",
+                "type": "string"
+              },
+              "base_color": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Base Color"
+              },
+              "roughness": {
+                "default": 0.5,
+                "title": "Roughness",
+                "type": "number"
+              },
+              "metallic": {
+                "default": 0,
+                "title": "Metallic",
+                "type": "number"
+              },
+              "opacity": {
+                "default": 1,
+                "title": "Opacity",
+                "type": "number"
+              }
+            },
+            "title": "create_materialArguments"
+          }
+        },
+        {
+          "name": "assign_material",
+          "description": "Assign a material to a geometry node via a Material SOP.\n\n    Args:\n        geo_path: Target geometry node path.\n        material_path: Material to assign.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "geo_path": {
+                "title": "Geo Path",
+                "type": "string"
+              },
+              "material_path": {
+                "title": "Material Path",
                 "type": "string"
               }
             },
             "required": [
-              "download_url"
+              "geo_path",
+              "material_path"
             ],
-            "title": "opus_import_model_urlArguments"
+            "title": "assign_materialArguments"
+          }
+        },
+        {
+          "name": "build_sop_chain",
+          "description": "Build a sequential chain of SOP nodes wired together in a single call.\n\n    PREFERRED over individual create_node calls for linear SOP chains — builds\n    and wires the entire chain in one round-trip, which is significantly faster.\n\n    Each step dict: {\"type\": str, \"name\": str (optional), \"params\": dict (optional)}.\n    Nodes are created in order and each is automatically connected to the previous.\n\n    Example:\n        steps=[\n            {\"type\": \"box\"},\n            {\"type\": \"polybevel\", \"params\": {\"offset\": 0.05}},\n            {\"type\": \"scatter\", \"params\": {\"npts\": 200}},\n            {\"type\": \"copy_to_points\", \"name\": \"copy1\"},\n        ]\n\n    Args:\n        parent_path: Parent SOP network path.\n        steps: List of step dicts defining the chain.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "parent_path": {
+                "default": "/obj/geo1",
+                "title": "Parent Path",
+                "type": "string"
+              },
+              "steps": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Steps"
+              }
+            },
+            "title": "build_sop_chainArguments"
+          }
+        },
+        {
+          "name": "setup_render",
+          "description": "Set up a render configuration with camera and ROP node.\n\n    Args:\n        renderer: Renderer type (\"karma\", \"mantra\").\n        camera: Camera node path; creates one if omitted.\n        output_path: Output image path (supports Houdini variables).\n        resolution: [width, height] resolution.\n        samples: Render sample count.\n        name: ROP node name in /out.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "renderer": {
+                "default": "karma",
+                "title": "Renderer",
+                "type": "string"
+              },
+              "camera": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Camera"
+              },
+              "output_path": {
+                "default": "$HIP/render/output.$F4.exr",
+                "title": "Output Path",
+                "type": "string"
+              },
+              "resolution": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resolution"
+              },
+              "samples": {
+                "default": 64,
+                "title": "Samples",
+                "type": "integer"
+              },
+              "name": {
+                "default": "render1",
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "title": "setup_renderArguments"
+          }
+        },
+        {
+          "name": "list_materials",
+          "description": "List all material nodes under a root path.\n\n    Args:\n        ctx: MCP context.\n        root_path: Root path to search for materials.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "root_path": {
+                "default": "/mat",
+                "title": "Root Path",
+                "type": "string"
+              }
+            },
+            "title": "list_materialsArguments"
+          }
+        },
+        {
+          "name": "get_material_info",
+          "description": "Get detailed information about a material node.\n\n    Args:\n        ctx: MCP context.\n        node_path: Absolute path to the material node.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_material_infoArguments"
+          }
+        },
+        {
+          "name": "create_material_network",
+          "description": "Create a new material network in /mat.\n\n    Args:\n        ctx: MCP context.\n        name: Name for the new material node.\n        shader_type: Shader type name (\"principled\", \"materialx\", etc.).\n        params: Parameter name-value pairs to set on the shader.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "shader_type": {
+                "default": "principled",
+                "title": "Shader Type",
+                "type": "string"
+              },
+              "params": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Params"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "create_material_networkArguments"
+          }
+        },
+        {
+          "name": "list_material_types",
+          "description": "List available VOP/material node types.\n\n    Args:\n        ctx: MCP context.\n        filter: Substring to filter type names and labels by.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Filter"
+              }
+            },
+            "title": "list_material_typesArguments"
+          }
+        },
+        {
+          "name": "get_chop_data",
+          "description": "Get CHOP node track data.\n\n    Args:\n        node_path: CHOP node path.\n        channel_name: Specific channel to retrieve.\n        start: Start sample index.\n        end: End sample index.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "channel_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Channel Name"
+              },
+              "start": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Start"
+              },
+              "end": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "End"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_chop_dataArguments"
+          }
+        },
+        {
+          "name": "create_chop_node",
+          "description": "Create a new CHOP node.\n\n    Before using this, call list_node_types(context='Chop', filter='<keyword>')\n    to verify the correct node type. CHOPs has many dedicated nodes for motion\n    and timing — noise, wave, spring, jiggle, lag, limit, filter, math,\n    function, blend, shift, stretch, trim, cycle, speed, constraintlookatat,\n    constraintpath — that may already do what you need.\n\n    Args:\n        parent_path: Parent network path.\n        chop_type: CHOP node type to create.\n        name: Node name override.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "parent_path": {
+                "title": "Parent Path",
+                "type": "string"
+              },
+              "chop_type": {
+                "title": "Chop Type",
+                "type": "string"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              }
+            },
+            "required": [
+              "parent_path",
+              "chop_type"
+            ],
+            "title": "create_chop_nodeArguments"
+          }
+        },
+        {
+          "name": "list_chop_channels",
+          "description": "List all channels on a CHOP node.\n\n    Args:\n        node_path: CHOP node path.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "list_chop_channelsArguments"
+          }
+        },
+        {
+          "name": "export_chop_to_parm",
+          "description": "Export a CHOP channel to a parameter via a chop() expression.\n\n    Args:\n        chop_path: CHOP node path.\n        channel_name: Channel to export.\n        target_node_path: Target node path.\n        target_parm_name: Parameter to receive the export.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "chop_path": {
+                "title": "Chop Path",
+                "type": "string"
+              },
+              "channel_name": {
+                "title": "Channel Name",
+                "type": "string"
+              },
+              "target_node_path": {
+                "title": "Target Node Path",
+                "type": "string"
+              },
+              "target_parm_name": {
+                "title": "Target Parm Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "chop_path",
+              "channel_name",
+              "target_node_path",
+              "target_parm_name"
+            ],
+            "title": "export_chop_to_parmArguments"
+          }
+        },
+        {
+          "name": "list_caches",
+          "description": "List all cache-type nodes under a root path.\n\n    Args:\n        ctx: MCP context.\n        root_path: Root path to search from.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "root_path": {
+                "default": "/",
+                "title": "Root Path",
+                "type": "string"
+              }
+            },
+            "title": "list_cachesArguments"
+          }
+        },
+        {
+          "name": "get_cache_status",
+          "description": "Get the detailed status of a cache node.\n\n    Args:\n        ctx: MCP context.\n        node_path: Path to the cache node.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "get_cache_statusArguments"
+          }
+        },
+        {
+          "name": "clear_cache",
+          "description": "Delete cached files on disk for a cache node.\n\n    Args:\n        ctx: MCP context.\n        node_path: Path to the cache node.\n        frame_range: [start, end] frame range to limit deletion.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "frame_range": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Frame Range"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "clear_cacheArguments"
+          }
+        },
+        {
+          "name": "write_cache",
+          "description": "Execute a cache node to write files to disk.\n\n    Args:\n        ctx: MCP context.\n        node_path: Path to the cache node.\n        frame_range: [start, end] frame range to render.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "node_path": {
+                "title": "Node Path",
+                "type": "string"
+              },
+              "frame_range": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Frame Range"
+              }
+            },
+            "required": [
+              "node_path"
+            ],
+            "title": "write_cacheArguments"
+          }
+        },
+        {
+          "name": "list_takes",
+          "description": "List all takes in the scene with their hierarchy.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "title": "list_takesArguments"
+          }
+        },
+        {
+          "name": "get_current_take",
+          "description": "Get the current take and its overridden parameters.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "title": "get_current_takeArguments"
+          }
+        },
+        {
+          "name": "set_current_take",
+          "description": "Set the current take by name.\n\n    Args:\n        name: Take name to make current.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "set_current_takeArguments"
+          }
+        },
+        {
+          "name": "create_take",
+          "description": "Create a new take, optionally under a parent take.\n\n    Args:\n        name: Name for the new take.\n        parent_name: Parent take name (defaults to current take).\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "parent_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Parent Name"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "create_takeArguments"
           }
         }
       ],
       "resources": [],
-      "cachedAt": 1778580037569
+      "cachedAt": 1778582766113
     },
     "unity": {
       "configHash": "ebebf52426597cbbd34a6c2a87bfdf4fede4893d70a4534ffd730deedef7b7b0",
