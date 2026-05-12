@@ -2,10 +2,10 @@
  * pi-plan extension
  *
  * Adds three operating modes to pi:
- *   - Command (default): pi works normally - user asks, ai executes.
+ *   - Cmd (default): pi works normally - user asks, ai executes.
  *   - Plan: ai writes a markdown plan into `~/.pi/agent/plans/` (the plan folder).
  *           No bash / write / edit outside of `~/.pi/agent/plans/` is allowed.
- *           pi can later read & execute that plan in Command mode.
+ *           pi can later read & execute that plan in Cmd mode.
  *   - Ask:  ai just answers. No bash. No edits. No writes. Pure chat.
  *
  * Cycle modes with: Shift+Tab
@@ -14,7 +14,7 @@
  *
  * Commands:
  *   /mode            -> show current mode
- *   /mode command    -> switch to Command mode
+ *   /mode cmd        -> switch to Cmd mode
  *   /mode plan       -> switch to Plan mode
  *   /mode ask        -> switch to Ask mode
  *   /plans           -> list existing plans in ~/.pi/agent/plans/
@@ -33,20 +33,20 @@ type Mode = "command" | "plan" | "ask";
 const MODES: Mode[] = ["command", "plan", "ask"];
 
 const MODE_LABEL: Record<Mode, string> = {
-	command: "command",
+	command: "cmd",
 	plan: "plan",
 	ask: "ask",
 };
 
 const MODE_LABEL_TITLE: Record<Mode, string> = {
-	command: "Command",
+	command: "Cmd",
 	plan: "Plan",
 	ask: "Ask",
 };
 
 // Theme color token per mode.
 //   Ask     -> green  (success)
-//   Command -> gray   (muted)
+//   Cmd     -> gray   (muted)
 //   Plan    -> cyan   (accent, which is typically cyan/blue in pi themes)
 const MODE_COLOR: Record<Mode, string> = {
 	command: "muted",
@@ -132,15 +132,15 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	// Note: also unbind `app.thinking.cycle` in ~/.pi/agent/keybindings.json
 	// so Shift+Tab doesn't double-fire the built-in thinking-level cycler.
 	pi.registerShortcut("shift+tab", {
-		description: "Cycle pi-plan mode (Command / Plan / Ask)",
+		description: "Cycle pi-plan mode (Cmd / Plan / Ask)",
 		handler: async (ctx) => cycleMode(ctx),
 	});
 
-	// ---- /mode command ----
+	// ---- /mode cmd ----
 	pi.registerCommand("mode", {
-		description: "Show or switch pi-plan mode (command | plan | ask)",
+		description: "Show or switch pi-plan mode (cmd | plan | ask)",
 		getArgumentCompletions: (prefix: string) => {
-			const items = MODES.map((m) => ({ value: m, label: m }));
+			const items = MODES.map((m) => ({ value: MODE_LABEL[m], label: MODE_LABEL[m] }));
 			const filtered = items.filter((i) => i.value.startsWith(prefix));
 			return filtered.length > 0 ? filtered : null;
 		},
@@ -150,11 +150,12 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify(`Current mode: ${MODE_LABEL[mode]}`, "info");
 				return;
 			}
-			if (!MODES.includes(arg as Mode)) {
-				ctx.ui.notify(`Unknown mode '${arg}'. Use: ${MODES.join(", ")}`, "error");
+			const next = arg === "cmd" ? "command" : arg;
+			if (!MODES.includes(next as Mode)) {
+				ctx.ui.notify(`Unknown mode '${arg}'. Use: cmd, plan, ask`, "error");
 				return;
 			}
-			setMode(arg as Mode, ctx);
+			setMode(next as Mode, ctx);
 		},
 	});
 
@@ -184,7 +185,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 			if (MUTATING_TOOLS.has(toolName)) {
 				return {
 					block: true,
-					reason: `Ask mode is active - the assistant must answer without running '${toolName}'. Switch modes with Shift+Tab (or /mode command) to allow it.`,
+					reason: `Ask mode is active - the assistant must answer without running '${toolName}'. Switch modes with Shift+Tab (or /mode cmd) to allow it.`,
 				};
 			}
 			return;
@@ -300,9 +301,9 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 				planList,
 			].join("\n");
 		} else {
-			// command mode
+			// cmd mode
 			directive = [
-				"[PI-PLAN MODE: COMMAND]",
+				"[PI-PLAN MODE: CMD]",
 				"You have full tool access. Execute the user's request normally.",
 				"",
 				"If the user refers to 'the plan' or 'my plan', look under `~/.pi/agent/plans/`:",
@@ -638,7 +639,6 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 							: theme.fg("dim", `${modelId} • `) + levelPainted;
 
 					// --- left side: extension statuses (mode badge etc.) and git branch ---
-					const statuses = Array.from(footerData.getExtensionStatuses().values()).filter(Boolean);
 					const branch = footerData.getGitBranch();
 
 					const line = (left: string, right: string) => {
@@ -667,7 +667,11 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 					const cwdWithBranch = cwdPart + branchPart;
 					// statuses already includes the mode badge from renderStatus(),
 					// so use statuses alone to avoid duplicating the mode label.
-					const statusLeft = statuses.length > 0 ? statuses.join("  ") : modePainted;
+					const statusEntries = Array.from(footerData.getExtensionStatuses().entries())
+						.filter(([, text]) => Boolean(text))
+						.sort(([a], [b]) => a.localeCompare(b))
+						.map(([, text]) => text);
+					const statusLeft = statusEntries.length > 0 ? statusEntries.join(theme.fg("dim", " • ")) : modePainted;
 
 					return [
 						line(statusLeft, modelRight),

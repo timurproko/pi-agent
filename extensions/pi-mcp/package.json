@@ -1,0 +1,13 @@
+{
+  "name": "pi-mcp",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Format pi-mcp-adapter status bar text",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "license": "MIT"
+}
