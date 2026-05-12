@@ -18,6 +18,7 @@ import type {
   ExtensionContext,
   ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
+import { CustomEditor } from "@earendil-works/pi-coding-agent";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -739,6 +740,106 @@ function updateShadowCursorForInput(
   cursor.offset = next;
 }
 
+// ─── ChipAwareEditor ─────────────────────────────────────────────────────────
+//
+// Replaces the default editor with one that treats each `[…]` chip as a
+// single character for left/right arrow navigation. Implemented by extending
+// `CustomEditor` and recursing into `super.handleInput` with repeated arrow
+// escapes when the real cursor is adjacent to a chip. All other behaviour
+// (typing, paste, autocomplete, app keybindings) is inherited unchanged.
+class ChipAwareEditor extends (CustomEditor as any) {
+  handleInput(data: string): void {
+    const kb = (this as any).keybindings;
+    const isWordLeft  = kb && kb.matches(data, "tui.editor.cursorWordLeft");
+    const isWordRight = kb && kb.matches(data, "tui.editor.cursorWordRight");
+
+    // Left arrow → jump over preceding chip in one keystroke.
+    if (data === "\x1b[D" || data === "\x1bOD") {
+      const span = this.chipSpanBeforeCursor();
+      if (span > 1) {
+        for (let i = 0; i < span; i++) (super.handleInput as any)("\x1b[D");
+        return;
+      }
+    }
+    // Right arrow → jump over following chip in one keystroke.
+    else if (data === "\x1b[C" || data === "\x1bOC") {
+      const span = this.chipSpanAfterCursor();
+      if (span > 1) {
+        for (let i = 0; i < span; i++) (super.handleInput as any)("\x1b[C");
+        return;
+      }
+    }
+    // Ctrl/Alt+Left (word-left) → if a chip is immediately before the cursor,
+    // treat the whole chip as one word and jump past it in one keystroke.
+    else if (isWordLeft) {
+      const span = this.chipSpanBeforeCursor();
+      if (span > 1) {
+        for (let i = 0; i < span; i++) (super.handleInput as any)("\x1b[D");
+        return;
+      }
+    }
+    // Ctrl/Alt+Right (word-right) → same but jumping forward.
+    else if (isWordRight) {
+      const span = this.chipSpanAfterCursor();
+      if (span > 1) {
+        for (let i = 0; i < span; i++) (super.handleInput as any)("\x1b[C");
+        return;
+      }
+    }
+    // Backspace → if a chip sits immediately before the cursor, delete it whole.
+    else if (data === "\x7f" || data === "\b") {
+      const span = this.chipSpanBeforeCursor();
+      if (span > 1) {
+        for (let i = 0; i < span; i++) (super.handleInput as any)("\x7f");
+        return;
+      }
+    }
+    // Delete (forward) → if a chip sits immediately after the cursor, delete it whole.
+    else if (data === "\x1b[3~" || data === "\x1b[P") {
+      const span = this.chipSpanAfterCursor();
+      if (span > 1) {
+        for (let i = 0; i < span; i++) (super.handleInput as any)("\x1b[3~");
+        return;
+      }
+    }
+    (super.handleInput as any)(data);
+  }
+
+  /** Length of chip (+ optional trailing whitespace) immediately before cursor. */
+  private chipSpanBeforeCursor(): number {
+    const head = this.textBeforeCursor();
+    if (head.length === 0) return 0;
+    const match = head.match(CHIP_AT_END_RE);
+    if (!match || match.index === undefined) return 0;
+    return head.length - match.index;
+  }
+
+  /** Length of chip (+ optional leading whitespace) immediately after cursor. */
+  private chipSpanAfterCursor(): number {
+    const tail = this.textAfterCursor();
+    if (tail.length === 0) return 0;
+    const match = tail.match(CHIP_AT_START_RE);
+    if (!match) return 0;
+    return match[0].length;
+  }
+
+  private textBeforeCursor(): string {
+    const cursor = (this as any).getCursor() as { line: number; col: number };
+    const lines = (this as any).getLines() as string[];
+    const curHead = (lines[cursor.line] ?? "").slice(0, cursor.col);
+    if (cursor.line === 0) return curHead;
+    return lines.slice(0, cursor.line).join("\n") + "\n" + curHead;
+  }
+
+  private textAfterCursor(): string {
+    const cursor = (this as any).getCursor() as { line: number; col: number };
+    const lines = (this as any).getLines() as string[];
+    const curTail = (lines[cursor.line] ?? "").slice(cursor.col);
+    if (cursor.line === lines.length - 1) return curTail;
+    return curTail + "\n" + lines.slice(cursor.line + 1).join("\n");
+  }
+}
+
 function probeClipboardImage(state: InterceptorState): boolean {
   const now = Date.now();
   if (now - state.lastProbeAtMs < CLIPBOARD_CACHE_MS) return state.lastProbeResult;
@@ -761,7 +862,6 @@ function registerPasteInterceptor(
   if (!ui || typeof ui.onTerminalInput !== "function") return () => {};
 
   const state: InterceptorState = { swallowing: false, pendingTail: "", lastProbeAtMs: 0, lastProbeResult: false };
-  const cursor: ShadowCursor = makeShadowCursor();
 
   const triggerImagePaste = (): string => {
     const tag = generateTag();
@@ -770,27 +870,9 @@ function registerPasteInterceptor(
   };
 
   const unsubscribe = ui.onTerminalInput((data: string) => {
-    // Treat each [emoji ...] chip as a single character for Backspace / Delete.
-    // Only handle when we're not in the middle of a paste burst.
-    if (!state.swallowing && state.pendingTail === "") {
-      if (BACKSPACE_CHARS.has(data)) {
-        if (tryDeleteTrailingChip(ui)) {
-          cursor.mode = "end"; cursor.offset = 0;
-          return { consume: true };
-        }
-      } else if (DELETE_KEYS.has(data)) {
-        if (tryForwardDeleteChipAtCursor(ui, cursor)) {
-          return { consume: true };
-        }
-      }
-    }
-
-    // Track cursor for non-paste, non-burst keystrokes so Delete-chip can know
-    // where the cursor is. Paste bursts are handled below; we snap cursor to
-    // "end" when a paste substitution is produced.
-    if (!state.swallowing && state.pendingTail === "" && !data.includes(PASTE_BEGIN)) {
-      updateShadowCursorForInput(cursor, data, ui);
-    }
+    // Backspace / Delete / arrow chip-as-one-char behaviour now lives in
+    // ChipAwareEditor (installed via setEditorComponent). This listener only
+    // needs to handle paste bursts.
 
     const buffer = state.pendingTail + data;
     state.pendingTail = "";
@@ -821,7 +903,6 @@ function registerPasteInterceptor(
               const tail = rest.slice(endIdx + PASTE_END.length);
               const tag = makeFolderTag(content);
               folderHandler(ctx, content.trim(), tag);
-              cursor.mode = "end"; cursor.offset = 0;
               return { data: prefix + leadingSpaceFor(ui, prefix) + tag + " " + tail };
             }
             if (fileHandler && isFilePath(content)) {
@@ -829,7 +910,6 @@ function registerPasteInterceptor(
               const tail = rest.slice(endIdx + PASTE_END.length);
               const tag = makeFileTag(content);
               fileHandler(ctx, content.trim(), tag);
-              cursor.mode = "end"; cursor.offset = 0;
               return { data: prefix + leadingSpaceFor(ui, prefix) + tag + " " + tail };
             }
             if (urlHandler && isUrl(content)) {
@@ -838,7 +918,6 @@ function registerPasteInterceptor(
               const trimmedUrl = content.trim();
               const tag = makeUrlTag(trimmedUrl);
               urlHandler(ctx, trimmedUrl, tag);
-              cursor.mode = "end"; cursor.offset = 0;
               return { data: prefix + leadingSpaceFor(ui, prefix) + tag + " " + tail };
             }
             if (houdiniPathMap && containsHoudiniPath(content)) {
@@ -847,8 +926,16 @@ function registerPasteInterceptor(
                 const prefix = buffer.slice(0, beginIdx);
                 const tail = rest.slice(endIdx + PASTE_END.length);
                 const lead = transformed.startsWith("[") ? leadingSpaceFor(ui, prefix) : "";
-                cursor.mode = "end"; cursor.offset = 0;
-                return { data: prefix + lead + transformed + tail };
+                // Trailing space after the final chip (only if the transformed
+                // content ends with one and the next char isn't already
+                // whitespace) so chips stay visually separated from whatever
+                // the user types next — matches behaviour of folder/file/url/image.
+                const endsWithChip = /\]$/u.test(transformed);
+                const nextChar = tail.charAt(0);
+                const trail = endsWithChip && nextChar !== "" && !/\s/.test(nextChar) ? " "
+                            : endsWithChip && nextChar === "" ? " "
+                            : "";
+                return { data: prefix + lead + transformed + trail + tail };
               }
             }
           }
@@ -865,12 +952,10 @@ function registerPasteInterceptor(
       const endIdx = rest.indexOf(PASTE_END);
       if (endIdx === -1) {
         state.pendingTail = "";
-        cursor.mode = "end"; cursor.offset = 0;
         return { data: prefix + placeholder };
       }
       state.swallowing = false;
       const tail = rest.slice(endIdx + PASTE_END.length);
-      cursor.mode = "end"; cursor.offset = 0;
       return { data: prefix + placeholder + tail };
     }
 
@@ -990,8 +1075,22 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
   });
 
   let pasteInterceptorUnsubscribe: (() => void) | undefined;
+  let chipEditorInstalled = false;
+
+  const installChipEditor = (ctx: PasteContext): void => {
+    if (chipEditorInstalled) return;
+    if (!ctx.hasUI) return;
+    if (typeof ctx.ui.setEditorComponent !== "function") return;
+    try {
+      ctx.ui.setEditorComponent((tui: any, theme: any, keybindings: any) =>
+        new (ChipAwareEditor as any)(tui, theme, keybindings)
+      );
+      chipEditorInstalled = true;
+    } catch {}
+  };
 
   const installPasteInterceptor = (ctx: PasteContext): void => {
+    installChipEditor(ctx);
     if (pasteInterceptorUnsubscribe) return;
     if (!ctx.hasUI) return;
     try {
