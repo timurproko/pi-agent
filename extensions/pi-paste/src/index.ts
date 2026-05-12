@@ -4,6 +4,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 import { readClipboardImage } from "./clipboard.js";
 import { getErrorMessage } from "./errors.js";
+import { resizeClipboardImage } from "./image-resize.js";
 import { assertImageWithinByteLimit } from "./image-size.js";
 import { registerPasteInterceptor } from "./paste-interceptor.js";
 import type { ClipboardImage, PasteContext } from "./types.js";
@@ -36,9 +37,21 @@ interface PendingUrl {
 }
 
 
-function imageToBase64(image: ClipboardImage): string {
+async function prepareImageForAttachment(
+  image: ClipboardImage,
+): Promise<{ data: string; mimeType: string }> {
   assertImageWithinByteLimit(image.bytes.length, "Image attachment");
-  return Buffer.from(image.bytes).toString("base64");
+  // Anthropic rejects images whose base64 payload exceeds 5 MB. Resize down
+  // to stay safely below that limit before attaching to the message.
+  const resized = await resizeClipboardImage(image.bytes, image.mimeType);
+  if (resized) {
+    return { data: resized.data, mimeType: resized.mimeType };
+  }
+  // Fallback: ship the original bytes and let the API surface any error.
+  return {
+    data: Buffer.from(image.bytes).toString("base64"),
+    mimeType: image.mimeType,
+  };
 }
 
 export default function imageToolsExtension(pi: ExtensionAPI): void {
@@ -58,11 +71,12 @@ export default function imageToolsExtension(pi: ExtensionAPI): void {
         return;
       }
 
+      const prepared = await prepareImageForAttachment(image);
       pendingImages.push({
         type: "image",
         tag,
-        data: imageToBase64(image),
-        mimeType: image.mimeType,
+        data: prepared.data,
+        mimeType: prepared.mimeType,
       });
     } catch (error) {
       ctx.ui.notify(`Image paste failed: ${getErrorMessage(error)}`, "warning");

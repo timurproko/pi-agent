@@ -5745,7 +5745,7 @@
       "cachedAt": 1778569079472
     },
     "houdini": {
-      "configHash": "00b0bfc520bcbb407418f9cf5a74c6c9fda5a680c8658baacc07af89c5356703",
+      "configHash": "c6e820ca71691a1c88d786f2c89d4e1d22ce66bb15380d50098de9b74a9a39e4",
       "tools": [
         {
           "name": "get_scene_info",
@@ -10294,7 +10294,7 @@
         }
       ],
       "resources": [],
-      "cachedAt": 1778582766113
+      "cachedAt": 1778585176271
     },
     "unity": {
       "configHash": "ebebf52426597cbbd34a6c2a87bfdf4fede4893d70a4534ffd730deedef7b7b0",
