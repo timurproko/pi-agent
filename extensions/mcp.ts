@@ -336,6 +336,18 @@ function installStatusPatch(ctx: ExtensionContext): void {
 	}) as typeof ui.setStatus;
 }
 
+function restoreTerminalTitle(ctx: ExtensionContext): void {
+	if (process.platform !== "win32") return;
+
+	const cwdBasename = path.basename(ctx.cwd);
+	const sessionName = ctx.sessionManager.getSessionName();
+	const title = sessionName ? `pi • ${sessionName} • ${cwdBasename}` : `pi • ${cwdBasename}`;
+	ctx.ui.setTitle(title);
+	if (typeof globalThis.__piDesiredTitle !== "undefined") {
+		globalThis.__piDesiredTitle = title;
+	}
+}
+
 export default function piMcpExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
@@ -350,6 +362,9 @@ export default function piMcpExtension(pi: ExtensionAPI): void {
 		if (total > 0) {
 			ctx.ui.setStatus(STATUS_KEY, `MCP: 0/${total} servers`);
 		}
+
+		// Fix Windows terminal title after npm subprocess overwrites it.
+		restoreTerminalTitle(ctx);
 	});
 
 	// Demote an MCP server in the status bar when its transport dies. We never

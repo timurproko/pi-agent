@@ -1,7 +1,0 @@
-{
-  "debug": true,
-  "shortcuts": {
-    "avoidBuiltinConflicts": false,
-    "suppressBuiltinConflictWarnings": false
-  }
-}
