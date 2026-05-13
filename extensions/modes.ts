@@ -23,6 +23,14 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { CustomEditor, type ExtensionAPI, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
+
+// Try to import ChipAwareEditor from paste extension; fall back to CustomEditor
+// when paste is disabled (file renamed to .disabled).
+let EditorBase: typeof CustomEditor = CustomEditor;
+try {
+	const paste = await import("./paste.ts");
+	if (paste?.ChipAwareEditor) EditorBase = paste.ChipAwareEditor;
+} catch {}
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -484,7 +492,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 			return /^─+$/.test(plain) || /^─── [↑↓] \d+ more ─*$/.test(plain);
 		};
 
-		class ModeBorderEditor extends CustomEditor {
+		class ModeBorderEditor extends EditorBase {
 			private syncBashDraftStatus(): void {
 				const next = this.getText().startsWith("!");
 				if (next === editorDraftIsBash) return;

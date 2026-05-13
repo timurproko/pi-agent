@@ -747,7 +747,7 @@ function updateShadowCursorForInput(
 // `CustomEditor` and recursing into `super.handleInput` with repeated arrow
 // escapes when the real cursor is adjacent to a chip. All other behaviour
 // (typing, paste, autocomplete, app keybindings) is inherited unchanged.
-class ChipAwareEditor extends (CustomEditor as any) {
+export class ChipAwareEditor extends (CustomEditor as any) {
   handleInput(data: string): void {
     const kb = (this as any).keybindings;
     const isWordLeft  = kb && kb.matches(data, "tui.editor.cursorWordLeft");
@@ -871,8 +871,8 @@ function registerPasteInterceptor(
 
   const unsubscribe = ui.onTerminalInput((data: string) => {
     // Backspace / Delete / arrow chip-as-one-char behaviour now lives in
-    // ChipAwareEditor (installed via setEditorComponent). This listener only
-    // needs to handle paste bursts.
+    // ChipAwareEditor (used by modes extension's ModeBorderEditor via
+    // setEditorComponent). This listener only needs to handle paste bursts.
 
     const buffer = state.pendingTail + data;
     state.pendingTail = "";
