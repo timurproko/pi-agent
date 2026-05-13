@@ -5745,7 +5745,7 @@
       "cachedAt": 1778569079472
     },
     "houdini": {
-      "configHash": "c6e820ca71691a1c88d786f2c89d4e1d22ce66bb15380d50098de9b74a9a39e4",
+      "configHash": "d64b6db7b333563542b474515ea517d6af529c9ef9158c840c1a89c86836c7e3",
       "tools": [
         {
           "name": "get_scene_info",
@@ -10291,10 +10291,74 @@
             ],
             "title": "create_takeArguments"
           }
+        },
+        {
+          "name": "capture_viewport_screenshot",
+          "description": "Capture a screenshot of the Houdini viewport using native window capture.\n\n    Unlike capture_screenshot (which uses flipbook), this captures the actual\n    viewport widget pixels including overlays, gizmos, and handles exactly as\n    the user sees them. Saves to ~/Pictures/Houdini/ with a timestamped name.\n\n    Defaults are optimized for AI context: JPG format, quality 70, max 1024px,\n    grid hidden. This keeps images ~50-150KB instead of ~1MB PNG.\n\n    Screenshots consume significant context tokens. Only take one when visual\n    confirmation is genuinely needed.\n\n    Args:\n        resolution: Optional [width, height] to scale the capture to.\n        label: Optional label for the filename (defaults to hip file name).\n        hide_grid: Hide the viewport grid before capture (default True).\n        format: Image format - 'jpg' (default, smaller) or 'png'.\n        quality: JPEG quality 1-100 (default 70). Ignored for PNG.\n        max_resolution: Max dimension cap in pixels (default 1024). Set to None to disable.\n    ",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "resolution": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resolution"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "hide_grid": {
+                "default": true,
+                "title": "Hide Grid",
+                "type": "boolean"
+              },
+              "format": {
+                "default": "jpg",
+                "title": "Format",
+                "type": "string"
+              },
+              "quality": {
+                "default": 70,
+                "title": "Quality",
+                "type": "integer"
+              },
+              "max_resolution": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": 1024,
+                "title": "Max Resolution"
+              }
+            },
+            "title": "capture_viewport_screenshotArguments"
+          }
         }
       ],
       "resources": [],
-      "cachedAt": 1778653713164
+      "cachedAt": 1778665457262
     },
     "unity": {
       "configHash": "ebebf52426597cbbd34a6c2a87bfdf4fede4893d70a4534ffd730deedef7b7b0",
@@ -16037,7 +16101,7 @@
           "description": "All currently open editor windows with their titles, types, positions, and focus state.\n\nURI: mcpforunity://editor/windows"
         }
       ],
-      "cachedAt": 1778652823810
+      "cachedAt": 1778669002226
     }
   }
 }

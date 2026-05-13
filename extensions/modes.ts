@@ -245,8 +245,8 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 
 		const choice = await ctx.ui.select("Plan saved! What would you like to do?", [
 			"Accept and build",
-			"Exit plan mode",
 			"Suggest changes",
+			"Exit plan mode",
 		]);
 
 		if (choice === "Accept and build") {

@@ -938,10 +938,93 @@ function generateImageTag(): string {
   return `[📷 clipboard-${hash}.png]`;
 }
 
+const API_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+function resizeImageViaPowerShell(
+  bytes: Uint8Array,
+  maxBytes: number = API_MAX_IMAGE_BYTES,
+): { data: string; mimeType: string } | null {
+  if (process.platform !== "win32") return null;
+  // Write raw bytes to a temp file to avoid PowerShell command-line size limits
+  const os = requireFromHere("os") as typeof import("node:os");
+  const tmpDir = os.tmpdir();
+  const tmpIn = path.join(tmpDir, `pi-paste-in-${randomBytes(4).toString("hex")}.bin`);
+  const tmpOut = path.join(tmpDir, `pi-paste-out-${randomBytes(4).toString("hex")}.txt`);
+  try {
+    fs.writeFileSync(tmpIn, bytes);
+    const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+$maxBytes = ${maxBytes}
+$bytes = [System.IO.File]::ReadAllBytes('${tmpIn.replace(/\\/g, "\\\\")}')
+$ms = New-Object System.IO.MemoryStream(,$bytes)
+$img = [System.Drawing.Image]::FromStream($ms)
+$w = $img.Width; $h = $img.Height
+$maxDim = 2000
+if ($w -gt $maxDim -or $h -gt $maxDim) {
+  if ($w -ge $h) { $h = [Math]::Max(1, [int]($h * $maxDim / $w)); $w = $maxDim }
+  else { $w = [Math]::Max(1, [int]($w * $maxDim / $h)); $h = $maxDim }
+}
+$qualities = @(85,70,55,40,25)
+$scale = 1.0
+for ($attempt = 0; $attempt -lt 10; $attempt++) {
+  $nw = [Math]::Max(1, [int]($w * $scale))
+  $nh = [Math]::Max(1, [int]($h * $scale))
+  $bmp = New-Object System.Drawing.Bitmap($nw, $nh)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $g.DrawImage($img, 0, 0, $nw, $nh)
+  $g.Dispose()
+  $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+  foreach ($q in $qualities) {
+    $ep = New-Object System.Drawing.Imaging.EncoderParameters(1)
+    $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]$q)
+    $out = New-Object System.IO.MemoryStream
+    $bmp.Save($out, $codec, $ep)
+    if ($out.Length -le $maxBytes) {
+      $result = [System.Convert]::ToBase64String($out.ToArray())
+      [System.IO.File]::WriteAllText('${tmpOut.replace(/\\/g, "\\\\")}', $result)
+      $out.Dispose(); $bmp.Dispose(); $img.Dispose(); $ms.Dispose()
+      return
+    }
+    $out.Dispose()
+  }
+  $bmp.Dispose()
+  $scale *= 0.7
+}
+$img.Dispose(); $ms.Dispose()
+Write-Error 'Could not compress image below limit'
+`;
+    const result = runPowerShellCommand(script, {
+      encoded: true, sta: true, timeout: 15000, maxBuffer: 1024 * 64,
+    });
+    if (!result.ok) return null;
+    // Read result from output temp file
+    if (!fs.existsSync(tmpOut)) return null;
+    const b64 = fs.readFileSync(tmpOut, "utf8").trim();
+    if (!b64) return null;
+    return { data: b64, mimeType: "image/jpeg" };
+  } catch {
+    return null;
+  } finally {
+    try { fs.unlinkSync(tmpIn); } catch {}
+    try { fs.unlinkSync(tmpOut); } catch {}
+  }
+}
+
 async function prepareImageForAttachment(image: ClipboardImage): Promise<{ data: string; mimeType: string }> {
   assertImageWithinByteLimit(image.bytes.length, "Image attachment");
   const resized = await resizeClipboardImage(image.bytes, image.mimeType);
   if (resized) return { data: resized.data, mimeType: resized.mimeType };
+  // Photon unavailable — if image exceeds API limit, try PowerShell fallback
+  if (image.bytes.length > API_MAX_IMAGE_BYTES) {
+    const psResult = resizeImageViaPowerShell(image.bytes);
+    if (psResult) return psResult;
+    throw new Error(
+      `Image is ${formatByteLimit(image.bytes.length)} but the API limit is ${formatByteLimit(API_MAX_IMAGE_BYTES)}. ` +
+      `Install @silvia-odwyer/photon-node for automatic resizing.`,
+    );
+  }
   return { data: Buffer.from(image.bytes).toString("base64"), mimeType: image.mimeType };
 }
 
@@ -1025,10 +1108,30 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
       if (expanded.changed) cleanedText = expanded.text;
     }
 
+    // Final safety: ensure no image exceeds the API byte limit (5MB decoded)
+    const safeImages = await Promise.all(
+      [...(event.images ?? []), ...images].map(async (img) => {
+        const rawBytes = Buffer.from(img.data, "base64").length;
+        if (rawBytes <= API_MAX_IMAGE_BYTES) return img;
+        // Image is too large — attempt PowerShell resize
+        const bytes = Buffer.from(img.data, "base64");
+        const resized = await resizeClipboardImage(new Uint8Array(bytes), img.mimeType);
+        if (resized && Buffer.from(resized.data, "base64").length <= API_MAX_IMAGE_BYTES) {
+          return { ...img, data: resized.data, mimeType: resized.mimeType };
+        }
+        const psResult = resizeImageViaPowerShell(new Uint8Array(bytes));
+        if (psResult && Buffer.from(psResult.data, "base64").length <= API_MAX_IMAGE_BYTES) {
+          return { ...img, data: psResult.data, mimeType: psResult.mimeType };
+        }
+        return null; // Drop image that can't be resized
+      }),
+    );
+    const filteredImages = safeImages.filter((img): img is NonNullable<typeof img> => img !== null);
+
     return {
       action: "transform" as const,
       text: cleanedText,
-      images: [...(event.images ?? []), ...images],
+      images: filteredImages,
     };
   });
 
