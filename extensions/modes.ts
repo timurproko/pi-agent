@@ -21,16 +21,9 @@
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { CustomEditor, type ExtensionAPI, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-
-// Try to import ChipAwareEditor from paste extension; fall back to CustomEditor
-// when paste is disabled (file renamed to .disabled).
-let EditorBase: typeof CustomEditor = CustomEditor;
-try {
-	const paste = await import("./paste.ts");
-	if (paste?.ChipAwareEditor) EditorBase = paste.ChipAwareEditor;
-} catch {}
+import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { chainEditor } from "./_editor-chain.ts";
+import type { TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -492,60 +485,64 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 			return /^─+$/.test(plain) || /^─── [↑↓] \d+ more ─*$/.test(plain);
 		};
 
-		class ModeBorderEditor extends EditorBase {
-			private syncBashDraftStatus(): void {
-				const next = this.getText().startsWith("!");
+		// Decorate whatever editor is currently installed: paint the border with
+		// the active mode's colour (or amber when the draft is a `!bash` line) and
+		// keep the bash-draft status bar in sync. We monkey-patch instead of
+		// subclassing so this composes with other extensions (e.g. paste's chip
+		// navigation) regardless of load order.
+		chainEditor(ctx.ui, (editor: any, tui: any) => {
+			if (editor.__modeBorderPatched) return editor;
+			activeTui = tui ?? activeTui;
+
+			const syncBashDraftStatus = (): void => {
+				const next = (editor.getText() as string).startsWith("!");
 				if (next === editorDraftIsBash) return;
 				editorDraftIsBash = next;
 				renderStatus(ctx);
 				activeTui?.requestRender();
-			}
+			};
 
-			constructor(tui: TUI, edTheme: EditorTheme, kb: KeybindingsManager) {
-				super(tui, edTheme, kb);
-				activeTui = tui;
-				// Lock borderColor: ignore external assignments (e.g. pi resetting
-				// it on thinking-level / bash-mode changes). Normally render with
-				// the current pi-plan mode color, but use yellow warning borders
-				// while the draft starts with `!` because that will run local bash.
-				Object.defineProperty(this, "borderColor", {
-					configurable: true,
-					enumerable: true,
-					get: () => this.getText().startsWith("!") ? paintBashBorder : paintBorder,
-					set: () => { /* ignore */ },
-				});
-			}
+			// Lock borderColor: ignore external assignments (e.g. pi resetting it
+			// on thinking-level / bash-mode changes).
+			Object.defineProperty(editor, "borderColor", {
+				configurable: true,
+				enumerable: true,
+				get: () => ((editor.getText() as string).startsWith("!") ? paintBashBorder : paintBorder),
+				set: () => { /* ignore */ },
+			});
 
-			render(width: number): string[] {
+			const origRender = editor.render.bind(editor);
+			editor.render = function (width: number): string[] {
 				const gutterWidth = 2;
-				if (width <= gutterWidth + 1) return super.render(width);
-
-				const border = this.borderColor;
+				if (width <= gutterWidth + 1) return origRender(width);
+				const border = editor.borderColor;
 				let contentLineSeen = false;
-				return super.render(width - gutterWidth).map((line) => {
+				return (origRender(width - gutterWidth) as string[]).map((line) => {
 					if (isEditorBorderLine(line)) {
 						const pad = Math.max(0, width - visibleWidth(line));
 						return line + border("─".repeat(pad));
 					}
-
 					const prefix = contentLineSeen ? "  " : `${border("❯")} `;
 					contentLineSeen = true;
 					return prefix + line;
 				});
-			}
+			};
 
-			handleInput(data: string): void {
-				super.handleInput(data);
-				this.syncBashDraftStatus();
-			}
+			const origHandle = editor.handleInput.bind(editor);
+			editor.handleInput = function (data: string): void {
+				origHandle(data);
+				syncBashDraftStatus();
+			};
 
-			setText(text: string): void {
-				super.setText(text);
-				this.syncBashDraftStatus();
-			}
-		}
+			const origSetText = editor.setText.bind(editor);
+			editor.setText = function (text: string): void {
+				origSetText(text);
+				syncBashDraftStatus();
+			};
 
-		ctx.ui.setEditorComponent((tui, edTheme, kb) => new ModeBorderEditor(tui, edTheme, kb));
+			editor.__modeBorderPatched = true;
+			return editor;
+		});
 	}
 
 	function shortenUserPath(p: string): string {

@@ -77,6 +77,17 @@ function isDisabledExtensionFileName(name: string): boolean {
 	return name.endsWith(".ts.disabled") || name.endsWith(".js.disabled");
 }
 
+/**
+ * Files / directories whose name starts with `_` are treated as internal
+ * helpers (e.g. shared utility modules imported by other extensions). They
+ * are still loaded by pi's extension loader (which doesn't filter them), but
+ * we hide them from the extension manager UI so the user can't accidentally
+ * disable them.
+ */
+function isInternalHelperName(name: string): boolean {
+	return name.startsWith("_");
+}
+
 function stripDisabled(name: string): string {
 	return name.replace(/\.disabled$/, "");
 }
@@ -248,6 +259,12 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 		const entryPath = path.join(dir, entry.name);
 		const isFile = entry.isFile() || entry.isSymbolicLink();
 		const isDir = entry.isDirectory() || entry.isSymbolicLink();
+
+		// Hide internal helper modules (names starting with `_`) from the manager.
+		const displayName = isFile && isDisabledExtensionFileName(entry.name)
+			? stripDisabled(entry.name)
+			: entry.name;
+		if (isInternalHelperName(displayName)) continue;
 
 		// Single-file extensions: foo.ts / foo.ts.disabled
 		if (isFile && isExtensionFileName(entry.name)) {

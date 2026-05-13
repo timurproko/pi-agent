@@ -348,9 +348,26 @@ function restoreTerminalTitle(ctx: ExtensionContext): void {
 	}
 }
 
+function uninstallStatusPatch(ctx: ExtensionContext): void {
+	const ui = ctx.ui as PatchableUi;
+	const patch = ui[PATCH_KEY];
+	if (!patch) return;
+	ui.setStatus = patch.originalSetStatus as typeof ui.setStatus;
+	delete ui[PATCH_KEY];
+}
+
 export default function piMcpExtension(pi: ExtensionAPI): void {
+	pi.on("session_shutdown", async (_event, ctx) => {
+		if (!ctx.hasUI) return;
+		uninstallStatusPatch(ctx);
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
+
+		// If pi-mcp-adapter is not loaded (no "mcp" tool), skip status bar entirely.
+		const hasMcpAdapter = pi.getAllTools().some((t) => t.name === "mcp");
+		if (!hasMcpAdapter) return;
 
 		installStatusPatch(ctx);
 		lastConnectedNames = [];

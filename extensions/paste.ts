@@ -19,6 +19,7 @@ import type {
   ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
+import { chainEditor } from "./_editor-chain.ts";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -740,104 +741,61 @@ function updateShadowCursorForInput(
   cursor.offset = next;
 }
 
-// ─── ChipAwareEditor ─────────────────────────────────────────────────────────
+// ─── Chip navigation editor patch ─────────────────────────────────────
 //
-// Replaces the default editor with one that treats each `[…]` chip as a
-// single character for left/right arrow navigation. Implemented by extending
-// `CustomEditor` and recursing into `super.handleInput` with repeated arrow
-// escapes when the real cursor is adjacent to a chip. All other behaviour
-// (typing, paste, autocomplete, app keybindings) is inherited unchanged.
-export class ChipAwareEditor extends (CustomEditor as any) {
-  handleInput(data: string): void {
-    const kb = (this as any).keybindings;
-    const isWordLeft  = kb && kb.matches(data, "tui.editor.cursorWordLeft");
-    const isWordRight = kb && kb.matches(data, "tui.editor.cursorWordRight");
+// Decorates any editor instance so each `[…]` chip behaves as a single
+// character for arrow nav / word-jumps / backspace / delete. We monkey-patch
+// the instance's `handleInput` instead of subclassing, so it composes cleanly
+// with whatever editor another extension (e.g. modes) installed.
+function patchChipNavigation(editor: any): any {
+  if (!editor || editor.__chipNavPatched) return editor;
+  const origHandle = editor.handleInput.bind(editor);
 
-    // Left arrow → jump over preceding chip in one keystroke.
-    if (data === "\x1b[D" || data === "\x1bOD") {
-      const span = this.chipSpanBeforeCursor();
-      if (span > 1) {
-        for (let i = 0; i < span; i++) (super.handleInput as any)("\x1b[D");
-        return;
-      }
-    }
-    // Right arrow → jump over following chip in one keystroke.
-    else if (data === "\x1b[C" || data === "\x1bOC") {
-      const span = this.chipSpanAfterCursor();
-      if (span > 1) {
-        for (let i = 0; i < span; i++) (super.handleInput as any)("\x1b[C");
-        return;
-      }
-    }
-    // Ctrl/Alt+Left (word-left) → if a chip is immediately before the cursor,
-    // treat the whole chip as one word and jump past it in one keystroke.
-    else if (isWordLeft) {
-      const span = this.chipSpanBeforeCursor();
-      if (span > 1) {
-        for (let i = 0; i < span; i++) (super.handleInput as any)("\x1b[D");
-        return;
-      }
-    }
-    // Ctrl/Alt+Right (word-right) → same but jumping forward.
-    else if (isWordRight) {
-      const span = this.chipSpanAfterCursor();
-      if (span > 1) {
-        for (let i = 0; i < span; i++) (super.handleInput as any)("\x1b[C");
-        return;
-      }
-    }
-    // Backspace → if a chip sits immediately before the cursor, delete it whole.
-    else if (data === "\x7f" || data === "\b") {
-      const span = this.chipSpanBeforeCursor();
-      if (span > 1) {
-        for (let i = 0; i < span; i++) (super.handleInput as any)("\x7f");
-        return;
-      }
-    }
-    // Delete (forward) → if a chip sits immediately after the cursor, delete it whole.
-    else if (data === "\x1b[3~" || data === "\x1b[P") {
-      const span = this.chipSpanAfterCursor();
-      if (span > 1) {
-        for (let i = 0; i < span; i++) (super.handleInput as any)("\x1b[3~");
-        return;
-      }
-    }
-    (super.handleInput as any)(data);
-  }
-
-  /** Length of chip (+ optional trailing whitespace) immediately before cursor. */
-  private chipSpanBeforeCursor(): number {
-    const head = this.textBeforeCursor();
+  const chipSpanBeforeCursor = (): number => {
+    const cursor = editor.getCursor() as { line: number; col: number };
+    const lines = editor.getLines() as string[];
+    const curHead = (lines[cursor.line] ?? "").slice(0, cursor.col);
+    const head = cursor.line === 0 ? curHead
+      : lines.slice(0, cursor.line).join("\n") + "\n" + curHead;
     if (head.length === 0) return 0;
     const match = head.match(CHIP_AT_END_RE);
     if (!match || match.index === undefined) return 0;
     return head.length - match.index;
-  }
-
-  /** Length of chip (+ optional leading whitespace) immediately after cursor. */
-  private chipSpanAfterCursor(): number {
-    const tail = this.textAfterCursor();
+  };
+  const chipSpanAfterCursor = (): number => {
+    const cursor = editor.getCursor() as { line: number; col: number };
+    const lines = editor.getLines() as string[];
+    const curTail = (lines[cursor.line] ?? "").slice(cursor.col);
+    const tail = cursor.line === lines.length - 1 ? curTail
+      : curTail + "\n" + lines.slice(cursor.line + 1).join("\n");
     if (tail.length === 0) return 0;
     const match = tail.match(CHIP_AT_START_RE);
     if (!match) return 0;
     return match[0].length;
-  }
+  };
 
-  private textBeforeCursor(): string {
-    const cursor = (this as any).getCursor() as { line: number; col: number };
-    const lines = (this as any).getLines() as string[];
-    const curHead = (lines[cursor.line] ?? "").slice(0, cursor.col);
-    if (cursor.line === 0) return curHead;
-    return lines.slice(0, cursor.line).join("\n") + "\n" + curHead;
-  }
+  editor.handleInput = function (data: string): void {
+    const kb = editor.keybindings;
+    const isWordLeft  = kb && kb.matches(data, "tui.editor.cursorWordLeft");
+    const isWordRight = kb && kb.matches(data, "tui.editor.cursorWordRight");
 
-  private textAfterCursor(): string {
-    const cursor = (this as any).getCursor() as { line: number; col: number };
-    const lines = (this as any).getLines() as string[];
-    const curTail = (lines[cursor.line] ?? "").slice(cursor.col);
-    if (cursor.line === lines.length - 1) return curTail;
-    return curTail + "\n" + lines.slice(cursor.line + 1).join("\n");
-  }
+    if (data === "\x1b[D" || data === "\x1bOD" || isWordLeft) {
+      const span = chipSpanBeforeCursor();
+      if (span > 1) { for (let i = 0; i < span; i++) origHandle("\x1b[D"); return; }
+    } else if (data === "\x1b[C" || data === "\x1bOC" || isWordRight) {
+      const span = chipSpanAfterCursor();
+      if (span > 1) { for (let i = 0; i < span; i++) origHandle("\x1b[C"); return; }
+    } else if (data === "\x7f" || data === "\b") {
+      const span = chipSpanBeforeCursor();
+      if (span > 1) { for (let i = 0; i < span; i++) origHandle("\x7f"); return; }
+    } else if (data === "\x1b[3~" || data === "\x1b[P") {
+      const span = chipSpanAfterCursor();
+      if (span > 1) { for (let i = 0; i < span; i++) origHandle("\x1b[3~"); return; }
+    }
+    origHandle(data);
+  };
+  editor.__chipNavPatched = true;
+  return editor;
 }
 
 function probeClipboardImage(state: InterceptorState): boolean {
@@ -870,9 +828,9 @@ function registerPasteInterceptor(
   };
 
   const unsubscribe = ui.onTerminalInput((data: string) => {
-    // Backspace / Delete / arrow chip-as-one-char behaviour now lives in
-    // ChipAwareEditor (used by modes extension's ModeBorderEditor via
-    // setEditorComponent). This listener only needs to handle paste bursts.
+    // Backspace / Delete / arrow chip-as-one-char behaviour is added by
+    // patchChipNavigation() via chainEditor() in installChipEditor(). This
+    // listener only needs to handle paste bursts.
 
     const buffer = state.pendingTail + data;
     state.pendingTail = "";
@@ -1077,16 +1035,15 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
   let pasteInterceptorUnsubscribe: (() => void) | undefined;
   let chipEditorInstalled = false;
 
+  // Install chip-nav by decorating whatever editor is currently installed.
+  // chainEditor() composes cleanly with other extensions (e.g. modes' border
+  // editor) regardless of load order.
   const installChipEditor = (ctx: PasteContext): void => {
     if (chipEditorInstalled) return;
     if (!ctx.hasUI) return;
-    if (typeof ctx.ui.setEditorComponent !== "function") return;
-    try {
-      ctx.ui.setEditorComponent((tui: any, theme: any, keybindings: any) =>
-        new (ChipAwareEditor as any)(tui, theme, keybindings)
-      );
+    if (chainEditor(ctx.ui, (editor) => patchChipNavigation(editor))) {
       chipEditorInstalled = true;
-    } catch {}
+    }
   };
 
   const installPasteInterceptor = (ctx: PasteContext): void => {
