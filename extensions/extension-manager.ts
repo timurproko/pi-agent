@@ -59,6 +59,7 @@ interface ExtensionInfo {
 }
 
 const SELF_DIRNAME = "pi-extensions";
+const SELF_FILENAME = "extension-manager.ts";
 const PI_MCP_DIRNAME = "pi-mcp";
 const PI_MCP_STATUS_PATCH_KEY = "__piMcpStatusPatch";
 
@@ -255,7 +256,7 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 				scope,
 				entryFile: entryPath,
 				enabled: true,
-				isSelf: false,
+				isSelf: entry.name === SELF_FILENAME,
 			});
 			continue;
 		}
@@ -267,7 +268,7 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 				scope,
 				entryFile: enabledPath,
 				enabled: false,
-				isSelf: false,
+				isSelf: originalName === SELF_FILENAME,
 			});
 			continue;
 		}
@@ -407,7 +408,14 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 	pi.registerCommand("extensions", {
 		description: "Enable/disable extensions on the fly",
 		handler: async (_args, ctx: ExtensionCommandContext) => {
-			const exts = discoverAll(ctx.cwd).filter((e) => !e.isSelf);
+			const exts = discoverAll(ctx.cwd);
+			// Sort so extension-manager itself is always at the bottom
+			exts.sort((a, b) => {
+				if (a.isSelf !== b.isSelf) return a.isSelf ? 1 : -1;
+				const scopeDiff = SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope];
+				if (scopeDiff !== 0) return scopeDiff;
+				return a.name.localeCompare(b.name);
+			});
 
 			if (exts.length === 0) {
 				ctx.ui.notify("No extensions discovered.", "info");
