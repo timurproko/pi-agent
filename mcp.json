@@ -11,11 +11,14 @@
       "directTools": false
     },
     "houdini": {
-      "command": "C:/Users/tprokopiev/.local/bin/uvx.exe",
+      "command": "C:/Users/tprokopiev/.local/bin/uv.exe",
       "args": [
-        "--from",
+        "run",
+        "--with",
         "D:/Configs/houdini21.0/packages/fxhoudinimcp",
-        "fxhoudinimcp"
+        "--no-project",
+        "python",
+        "E:/Git/MyHoudiniPackages/MyHoudiniTools/mcp_tools/__main__.py"
       ],
       "env": {
         "HOUDINI_HOST": "localhost",

@@ -160,7 +160,7 @@ function paintStatus(
 	const pulseBulbs = ["◌", "○"];
 	const parts = finalDisplayNames.map((name) => {
 		const bulb = connectedNames.has(name)
-			? paintSuccess(ctx, "●")
+			? paintCyan("●")
 			: name === connectingName
 				? paintCyan(pulseBulbs[pulseFrame % pulseBulbs.length] ?? "◌")
 				: paintMuted(ctx, "○");
