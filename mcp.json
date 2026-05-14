@@ -1,14 +1,22 @@
 {
   "mcpServers": {
     "unity": {
+      "url": "http://127.0.0.1:8080/mcp",
+      "type": "http",
+      "directTools": false
+    },
+    "unity-stdio": {
       "command": "uvx",
       "args": [
         "--from",
         "mcpforunityserver",
-        "mcp-for-unity"
+        "mcp-for-unity",
+        "--transport",
+        "stdio"
       ],
       "env": {},
-      "directTools": false
+      "directTools": false,
+      "disabled": true
     },
     "houdini": {
       "command": "C:/Users/tprokopiev/.local/bin/uv.exe",
