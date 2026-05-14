@@ -59,6 +59,27 @@ const MODE_COLOR: Record<Mode, string> = {
 
 // Tools considered "mutating" - blocked in Ask mode, restricted in Plan mode.
 const MUTATING_TOOLS = new Set(["bash", "write", "edit", "multi_edit"]);
+// Tools that only write/modify - always blocked in Ask mode.
+const WRITE_ONLY_TOOLS = new Set(["write", "edit", "multi_edit"]);
+
+// Bash commands considered safe (read-only) in Ask mode.
+const SAFE_BASH_PREFIXES = [
+	"grep", "rg", "find", "ls", "cat", "head", "tail", "wc",
+	"file", "which", "where", "type", "dir", "tree", "echo",
+	"pwd", "realpath", "stat", "du", "df", "env", "printenv",
+	"git log", "git show", "git diff", "git status", "git branch",
+	"git rev-parse", "git ls-files", "git blame",
+];
+
+function isSafeBashCommand(command: string): boolean {
+	const trimmed = command.trim();
+	return SAFE_BASH_PREFIXES.some((prefix) => {
+		if (trimmed === prefix) return true;
+		if (trimmed.startsWith(prefix + " ")) return true;
+		if (trimmed.startsWith(prefix + "\t")) return true;
+		return false;
+	});
+}
 
 function plansDir(): string {
 	return path.join(os.homedir(), ".pi", "agent", "plans");
@@ -184,12 +205,22 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		const toolName = event.toolName;
 
 		if (mode === "ask") {
-			// Pure Q&A: block any tool that can change the world.
-			if (MUTATING_TOOLS.has(toolName)) {
+			// Always block write/edit tools.
+			if (WRITE_ONLY_TOOLS.has(toolName)) {
 				return {
 					block: true,
 					reason: `Ask mode is active - the assistant must answer without running '${toolName}'. Switch modes with Shift+Tab (or /mode cmd) to allow it.`,
 				};
+			}
+			// Allow bash only for read-only/search commands.
+			if (toolName === "bash") {
+				const cmd = (event.input as { command?: string }).command ?? "";
+				if (!isSafeBashCommand(cmd)) {
+					return {
+						block: true,
+						reason: `Ask mode is active - only read-only commands (grep, find, ls, git log, etc.) are allowed. Switch modes with Shift+Tab (or /mode cmd) to run '${cmd.split(" ")[0]}'.`,
+					};
+				}
 			}
 			return;
 		}
@@ -276,9 +307,12 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 			directive = [
 				"[PI-PLAN MODE: ASK]",
 				"You are in Ask mode. Answer the user's question conversationally.",
-				"Do NOT call bash, write, edit, or any other tool that modifies the system.",
-				"Read-only tools (read, grep, find, ls) are fine if truly needed to answer accurately,",
-				"but prefer answering from your own knowledge first.",
+				"Do NOT call write, edit, or any tool that modifies the system.",
+				"You MAY use read-only tools to search and gather information:",
+				"  - read (to view files)",
+				"  - bash with: grep, rg, find, ls, cat, head, tail, wc, tree, git log/diff/status/show/branch/blame",
+				"Do NOT use bash for anything that writes, creates, deletes, or modifies files.",
+				"Prefer answering from your own knowledge first; search only when needed for accuracy.",
 			].join("\n");
 		} else if (mode === "plan") {
 			directive = [
