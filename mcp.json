@@ -1,10 +1,5 @@
 {
   "mcpServers": {
-    "unity": {
-      "url": "http://127.0.0.1:8080/mcp",
-      "type": "http",
-      "directTools": false
-    },
     "unity-stdio": {
       "command": "uvx",
       "args": [
@@ -15,8 +10,17 @@
         "stdio"
       ],
       "env": {},
-      "directTools": false,
-      "disabled": true
+      "directTools": true
+    },
+    "unity-http": {
+      "url": "http://127.0.0.1:8080/mcp",
+      "type": "http",
+      "directTools": false
+    },
+    "ai-game-developer": {
+      "url": "http://localhost:26493",
+      "type": "http",
+      "directTools": false
     },
     "houdini": {
       "command": "C:/Users/tprokopiev/.local/bin/uv.exe",
