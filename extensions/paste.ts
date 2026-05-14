@@ -325,7 +325,26 @@ function isWaylandSession(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.WAYLAND_DISPLAY) || env.XDG_SESSION_TYPE === "wayland";
 }
 
-const piRequire = createRequire(import.meta.url);
+// Build a list of plausible base URLs to resolve `@mariozechner/clipboard` from.
+// The native module is bundled inside pi's installed package, NOT next to this
+// extension file. createRequire(import.meta.url) (the extension path) cannot
+// see it, so we also try the SDK package's location and process.execPath.
+function collectClipboardRequireBases(): string[] {
+  const bases = new Set<string>();
+  bases.add(import.meta.url);
+  try {
+    // Node 20.6+: import.meta.resolve is sync and returns a file:// URL.
+    const resolveFn = (import.meta as { resolve?: (s: string) => string }).resolve;
+    if (typeof resolveFn === "function") {
+      const sdkUrl = resolveFn("@earendil-works/pi-coding-agent");
+      if (sdkUrl) bases.add(sdkUrl);
+    }
+  } catch {}
+  try {
+    if (process.execPath) bases.add(process.execPath);
+  } catch {}
+  return [...bases];
+}
 
 function loadClipboardModule(
   platform: NodeJS.Platform = process.platform,
@@ -335,8 +354,17 @@ function loadClipboardModule(
   if (environment.TERMUX_VERSION || !hasGraphicalSession(platform, environment)) {
     cachedClipboardModule = null; return null;
   }
-  try { cachedClipboardModule = piRequire("@mariozechner/clipboard") as ClipboardModule; }
-  catch { cachedClipboardModule = null; }
+  for (const base of collectClipboardRequireBases()) {
+    try {
+      const req = createRequire(base);
+      const mod = req("@mariozechner/clipboard") as ClipboardModule;
+      if (mod && typeof mod.hasImage === "function") {
+        cachedClipboardModule = mod;
+        return mod;
+      }
+    } catch {}
+  }
+  cachedClipboardModule = null;
   return cachedClipboardModule;
 }
 
@@ -823,7 +851,13 @@ function registerPasteInterceptor(
 
   const triggerImagePaste = (): string => {
     const tag = generateTag();
-    handler(ctx, tag);
+    // Defer the actual clipboard read off the input-handler tick. The async
+    // body of pasteImageFromClipboard runs synchronously up to its first
+    // await — that prelude includes loadClipboardModule(), clipboard.hasImage()
+    // (Win32 OpenClipboard can block briefly), and the sync prologue of the
+    // native getImageBinary(). Punting to setImmediate lets the editor paint
+    // the chip placeholder we just returned before any clipboard I/O runs.
+    setImmediate(() => handler(ctx, tag));
     return tag;
   };
 
@@ -849,7 +883,17 @@ function registerPasteInterceptor(
         return passthrough === data ? undefined : { data: passthrough };
       }
 
-      const hasImage = probeClipboardImage(state);
+      // Empty bracketed paste => assume image. We do NOT probe the clipboard
+      // here: any sync probe (native or PowerShell) blocks the keystroke,
+      // making Ctrl+V feel laggy. Instead, optimistically insert the chip
+      // placeholder immediately and kick off the real clipboard read fully
+      // async via startImageRead(). If the read finds no image, the input
+      // hook strips the unmatched tag at send time and we already notify
+      // the user via pasteImageFromClipboard().
+      const restForProbe = buffer.slice(beginIdx + PASTE_BEGIN.length);
+      const endForProbe = restForProbe.indexOf(PASTE_END);
+      const seenContent = endForProbe === -1 ? restForProbe : restForProbe.slice(0, endForProbe);
+      const hasImage = seenContent.length === 0;
       if (!hasImage) {
         if (folderHandler) {
           const rest = buffer.slice(beginIdx + PASTE_BEGIN.length);
@@ -1029,6 +1073,12 @@ async function prepareImageForAttachment(image: ClipboardImage): Promise<{ data:
 }
 
 export default function piPasteExtension(pi: ExtensionAPI): void {
+  // Pre-warm clipboard module + photon WASM at extension load so the first
+  // image paste in a session never pays native-module init cost. Both are
+  // best-effort; failures are silent.
+  try { loadClipboardModule(); } catch {}
+  setImmediate(() => { void loadPhoton().catch(() => {}); });
+
   const pendingImages: PendingImage[] = [];
   const pendingFolders: PendingFolder[] = [];
   const pendingFiles: PendingFile[] = [];
@@ -1167,6 +1217,10 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     houdiniPathMap.clear();
     installPasteInterceptor(ctx);
+    // Pre-warm clipboard module + photon WASM so the first paste doesn't pay
+    // first-load cost. Both are best-effort and run off the hot path.
+    try { loadClipboardModule(); } catch {}
+    void loadPhoton().catch(() => {});
   });
 
   pi.on("before_agent_start", async (_event, ctx) => {
