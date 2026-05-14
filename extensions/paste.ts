@@ -772,56 +772,163 @@ function updateShadowCursorForInput(
 // ─── Chip navigation editor patch ─────────────────────────────────────
 //
 // Decorates any editor instance so each `[…]` chip behaves as a single
-// character for arrow nav / word-jumps / backspace / delete. We monkey-patch
-// the instance's `handleInput` instead of subclassing, so it composes cleanly
-// with whatever editor another extension (e.g. modes) installed.
+// atomic grapheme. We do this by wrapping `editor.segment(text)` so that
+// complete chip matches collapse into one merged segment — the same trick
+// pi-tui uses internally for its built-in `[paste #N …]` markers.
+//
+// Because pi-tui's editor routes every cursor / word / wrap / delete /
+// vertical-snap / cursor-highlight code path through `this.segment()`, this
+// single patch gives us, for free:
+//   • Left/Right arrows step over the entire chip in one move
+//   • Word-jump (Ctrl+←/→) treats the chip as one word
+//   • Backspace / Delete at a chip boundary remove the whole chip
+//   • Vertical movement snaps the cursor onto the chip's start column
+//   • The inverse-video cursor highlight covers the *whole* chip text
+//     (matching the look of pi-tui's built-in `[paste #1 +13 lines]` chip)
+//   • Word-wrap never breaks a chip across visual lines
+//
+// We monkey-patch the instance method (not the prototype) so it composes
+// cleanly with whatever editor another extension installed.
 function patchChipNavigation(editor: any): any {
   if (!editor || editor.__chipNavPatched) return editor;
-  const origHandle = editor.handleInput.bind(editor);
 
-  const chipSpanBeforeCursor = (): number => {
-    const cursor = editor.getCursor() as { line: number; col: number };
-    const lines = editor.getLines() as string[];
-    const curHead = (lines[cursor.line] ?? "").slice(0, cursor.col);
-    const head = cursor.line === 0 ? curHead
-      : lines.slice(0, cursor.line).join("\n") + "\n" + curHead;
-    if (head.length === 0) return 0;
-    const match = head.match(CHIP_AT_END_RE);
-    if (!match || match.index === undefined) return 0;
-    return head.length - match.index;
-  };
-  const chipSpanAfterCursor = (): number => {
-    const cursor = editor.getCursor() as { line: number; col: number };
-    const lines = editor.getLines() as string[];
-    const curTail = (lines[cursor.line] ?? "").slice(cursor.col);
-    const tail = cursor.line === lines.length - 1 ? curTail
-      : curTail + "\n" + lines.slice(cursor.line + 1).join("\n");
-    if (tail.length === 0) return 0;
-    const match = tail.match(CHIP_AT_START_RE);
-    if (!match) return 0;
-    return match[0].length;
-  };
+  const origSegment = editor.segment.bind(editor);
+  // Match a complete chip anywhere in the text. New regex per call to avoid
+  // sharing `lastIndex` state across re-entrant calls.
+  const buildChipRegex = () => new RegExp(CHIP_BODY_RE_SRC, "gu");
 
-  editor.handleInput = function (data: string): void {
-    const kb = editor.keybindings;
-    const isWordLeft  = kb && kb.matches(data, "tui.editor.cursorWordLeft");
-    const isWordRight = kb && kb.matches(data, "tui.editor.cursorWordRight");
+  editor.segment = function (text: string): Iterable<{ segment: string; index: number; input?: string }> {
+    // Fast paths: nothing to do for empty text or text with no `[`.
+    if (!text || text.length < 4 || text.indexOf("[") === -1) return origSegment(text);
 
-    if (data === "\x1b[D" || data === "\x1bOD" || isWordLeft) {
-      const span = chipSpanBeforeCursor();
-      if (span > 1) { for (let i = 0; i < span; i++) origHandle("\x1b[D"); return; }
-    } else if (data === "\x1b[C" || data === "\x1bOC" || isWordRight) {
-      const span = chipSpanAfterCursor();
-      if (span > 1) { for (let i = 0; i < span; i++) origHandle("\x1b[C"); return; }
-    } else if (data === "\x7f" || data === "\b") {
-      const span = chipSpanBeforeCursor();
-      if (span > 1) { for (let i = 0; i < span; i++) origHandle("\x7f"); return; }
-    } else if (data === "\x1b[3~" || data === "\x1b[P") {
-      const span = chipSpanAfterCursor();
-      if (span > 1) { for (let i = 0; i < span; i++) origHandle("\x1b[3~"); return; }
+    const matches: Array<{ start: number; end: number; text: string }> = [];
+    const re = buildChipRegex();
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      matches.push({ start: m.index, end: m.index + m[0].length, text: m[0] });
+      // Guard against zero-length matches (shouldn't happen with our regex,
+      // but defensive).
+      if (m.index === re.lastIndex) re.lastIndex++;
     }
-    origHandle(data);
+    if (matches.length === 0) return origSegment(text);
+
+    // Walk the base segmenter and collapse anything that lives inside a chip
+    // span into the chip's single merged segment.
+    const merged: Array<{ segment: string; index: number; input?: string }> = [];
+    let mi = 0;
+    for (const seg of origSegment(text) as Iterable<{ segment: string; index: number; input?: string }>) {
+      while (mi < matches.length && matches[mi].end <= seg.index) mi++;
+      const cur = mi < matches.length ? matches[mi] : null;
+      if (cur && seg.index >= cur.start && seg.index < cur.end) {
+        if (seg.index === cur.start) {
+          merged.push({ segment: cur.text, index: cur.start, input: text });
+        }
+        // else: this base grapheme is interior to the chip — already merged.
+      } else {
+        merged.push(seg);
+      }
+    }
+    return merged;
   };
+
+  // ── Wrap moveWordForwards / moveWordBackwards so chip segments are
+  //    treated as atomic words (like paste markers) for Ctrl+Delete /
+  //    Ctrl+Backspace / Ctrl+→ / Ctrl+←. Without this, the chip's merged
+  //    segment is classified as "punctuation" (because it starts with `[`)
+  //    and Ctrl+Delete eats *all* adjacent chips in one shot. ──────────
+  const isChipSegment = (seg: string): boolean =>
+    seg.length > 2 && seg.startsWith("[") && seg.endsWith("]");
+
+  if (typeof editor.moveWordForwards === "function") {
+    const origMoveWordForwards = editor.moveWordForwards.bind(editor);
+    editor.moveWordForwards = function (): void {
+      const line = (editor.state.lines[editor.state.cursorLine] ?? "") as string;
+      const afterCursor = line.slice(editor.state.cursorCol);
+      // Check if the very first segment(s) after cursor start with a chip.
+      // Skip leading whitespace first (mirroring pi-tui's logic).
+      let offset = 0;
+      for (const seg of editor.segment(afterCursor)) {
+        const s = seg.segment as string;
+        if (/^\s+$/.test(s)) { offset += s.length; continue; }
+        if (isChipSegment(s)) {
+          // Jump past whitespace + chip
+          editor.state.cursorCol = editor.state.cursorCol + offset + s.length;
+          // Also consume trailing space after the chip (so cursor lands on
+          // the next token, not the space separator).
+          const rest = line.slice(editor.state.cursorCol);
+          const trailingWs = rest.match(/^\s+/);
+          if (trailingWs) editor.state.cursorCol += trailingWs[0].length;
+          return;
+        }
+        break;
+      }
+      origMoveWordForwards();
+    };
+  }
+
+  if (typeof editor.moveWordBackwards === "function") {
+    const origMoveWordBackwards = editor.moveWordBackwards.bind(editor);
+    editor.moveWordBackwards = function (): void {
+      const line = (editor.state.lines[editor.state.cursorLine] ?? "") as string;
+      const beforeCursor = line.slice(0, editor.state.cursorCol);
+      // Check if the segment(s) immediately before cursor end with a chip.
+      // Skip trailing whitespace first.
+      const segs = [...editor.segment(beforeCursor)];
+      let idx = segs.length - 1;
+      while (idx >= 0 && /^\s+$/.test(segs[idx].segment)) idx--;
+      if (idx >= 0 && isChipSegment(segs[idx].segment as string)) {
+        const chip = segs[idx];
+        editor.state.cursorCol = chip.index as number;
+        return;
+      }
+      origMoveWordBackwards();
+    };
+  }
+
+  // ── Wrap handlePaste so [paste #N …] markers get a leading/trailing
+  //    space, matching the behaviour of other [emoji …] chips. ──────────
+  if (typeof editor.handlePaste === "function") {
+    const origHandlePaste = editor.handlePaste.bind(editor);
+    editor.handlePaste = function (pastedText: string): void {
+      // Snapshot cursor position BEFORE the paste inserts anything.
+      const lineBefore = (editor.state?.lines?.[editor.state?.cursorLine] ?? "") as string;
+      const colBefore  = (editor.state?.cursorCol ?? 0) as number;
+      const charBefore = colBefore > 0 ? lineBefore[colBefore - 1] : "";
+
+      // Let pi-tui do its thing (may or may not create a marker).
+      origHandlePaste(pastedText);
+
+      // Detect whether a paste marker was just inserted by checking the
+      // editor text *after* the paste for a marker that wasn't there before.
+      const lineAfter = (editor.state?.lines?.[editor.state?.cursorLine] ?? "") as string;
+      const PASTE_RE = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/;
+      const match = lineAfter.match(PASTE_RE);
+      if (!match || match.index === undefined) return; // no marker → nothing to do
+
+      // Add leading space if text precedes the marker and isn't whitespace.
+      let patched = lineAfter;
+      const idx = match.index;
+      if (idx > 0 && !/\s/.test(patched[idx - 1]!)) {
+        patched = patched.slice(0, idx) + " " + patched.slice(idx);
+      }
+
+      // Add trailing space after the marker (if not already there).
+      const markerEnd = patched.indexOf(match[0]) + match[0].length;
+      if (markerEnd < patched.length && !/\s/.test(patched[markerEnd]!)) {
+        patched = patched.slice(0, markerEnd) + " " + patched.slice(markerEnd);
+      } else if (markerEnd === patched.length) {
+        patched = patched + " ";
+      }
+
+      if (patched !== lineAfter) {
+        editor.state.lines[editor.state.cursorLine] = patched;
+        // Place cursor after the trailing space.
+        const newMarkerEnd = patched.indexOf(match[0]) + match[0].length + 1;
+        editor.state.cursorCol = Math.min(newMarkerEnd, patched.length);
+      }
+    };
+  }
+
   editor.__chipNavPatched = true;
   return editor;
 }
@@ -862,9 +969,10 @@ function registerPasteInterceptor(
   };
 
   const unsubscribe = ui.onTerminalInput((data: string) => {
-    // Backspace / Delete / arrow chip-as-one-char behaviour is added by
-    // patchChipNavigation() via chainEditor() in installChipEditor(). This
-    // listener only needs to handle paste bursts.
+    // Chip-as-one-grapheme behaviour (arrow nav, word jumps, backspace,
+    // delete, vertical snap, full-width cursor highlight, atomic word-wrap)
+    // is added by patchChipNavigation() via chainEditor() in
+    // installChipEditor(). This listener only needs to handle paste bursts.
 
     const buffer = state.pendingTail + data;
     state.pendingTail = "";

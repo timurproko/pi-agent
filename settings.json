@@ -5,11 +5,13 @@
   "defaultModel": "claude-opus-4.6",
   "defaultThinkingLevel": "medium",
   "packages": [
-    "npm:pi-mcp-adapter"
+    "npm:pi-mcp-adapter",
+    "npm:context-mode"
   ],
   "enabledModels": [
     "github-copilot/claude-opus-4.7",
     "github-copilot/claude-opus-4.6",
     "github-copilot/gpt-5.5"
-  ]
+  ],
+  "doubleEscapeAction": "none"
 }

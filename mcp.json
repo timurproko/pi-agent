@@ -38,6 +38,10 @@
         "MCP_TRANSPORT": "stdio",
         "LOG_LEVEL": "ERROR"
       }
+    },
+    "context-mode": {
+      "command": "context-mode",
+      "env": {}
     }
   }
 }
