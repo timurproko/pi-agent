@@ -444,6 +444,9 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 			for (const e of exts) desired.set(e.entryFile, e.enabled);
 
 			const result = await ctx.ui.custom((tui, theme, kb, done) => {
+				// Match pi's scoped-models look: green ✓ for enabled, dim ✗ for disabled.
+				const CHECK = theme.fg("success", "✓");
+				const CROSS = theme.fg("dim", "✗");
 				const items: SettingItem[] = exts.map((ext) => {
 					const rawTag =
 						ext.scope === "global" ? "[global]" : ext.scope === "local" ? "[local]" : "[project]";
@@ -453,8 +456,8 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 					return {
 						id: ext.entryFile,
 						label: `${scopeTag} ${ext.name}`,
-						currentValue: desired.get(ext.entryFile) ? "enabled" : "disabled",
-						values: ["enabled", "disabled"],
+						currentValue: desired.get(ext.entryFile) ? CHECK : CROSS,
+						values: [CHECK, CROSS],
 					};
 				});
 
@@ -473,7 +476,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 					Math.min(items.length + 2, 20),
 					getSettingsListTheme(),
 					(id, newValue) => {
-						desired.set(id, newValue === "enabled");
+						desired.set(id, newValue === CHECK);
 					},
 					() => done("cancel"),
 				);
