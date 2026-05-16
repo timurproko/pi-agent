@@ -269,8 +269,10 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			await ctx.ui.custom((tui, theme, _kb, done) => {
+			const result = await ctx.ui.custom((tui, theme, _kb, done) => {
 				let selectedIndex = 0;
+				const toggled = new Set<string>();
+				const deselected = new Set<string>();
 
 				const component = {
 					render(width: number): string[] {
@@ -290,9 +292,14 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 							const paddedName = server.name.padEnd(nameWidth);
 							const toolsBadge = `(${server.toolCount})`;
 
+							const isToggled = toggled.has(server.name);
+
+							const isDeselected = deselected.has(server.name);
 							const bulb = server.connected
-								? theme.fg("success", "●")
-								: theme.fg("dim", "○");
+								? (isDeselected ? theme.fg("dim", "○") : theme.fg("success", "●"))
+								: isToggled
+									? theme.fg("dim", "◉")
+									: theme.fg("dim", "○");
 
 							if (isSelected) {
 								lines.push(theme.fg("accent", cursor) + bulb + theme.fg("accent", ` ${paddedName} ${toolsBadge}`));
@@ -302,7 +309,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 						}
 
 						lines.push("");
-						lines.push(theme.fg("dim", "↑↓ navigate · esc close"));
+						lines.push(theme.fg("dim", "↑↓ navigate · space toggle · enter apply · esc close"));
 						lines.push(theme.fg("border", "─".repeat(width)));
 
 						return lines;
@@ -316,6 +323,32 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 						} else if (data === "\x1B" || data === "q") {
 							done(undefined);
 							return;
+						} else if (data === " ") {
+							// Space: toggle selection in dialog (no connect yet)
+							const server = servers[selectedIndex];
+							if (server.connected) {
+								// Toggle deselect for connected servers (mark for disconnect)
+								if (deselected.has(server.name)) {
+									deselected.delete(server.name);
+								} else {
+									deselected.add(server.name);
+								}
+							} else {
+								if (toggled.has(server.name)) {
+									toggled.delete(server.name);
+								} else {
+									toggled.add(server.name);
+								}
+							}
+						} else if (data === "\r" || data === "\n") {
+							// Enter: connect toggled servers and/or disconnect deselected servers
+							const toConnect = toggled.size > 0
+								? Array.from(toggled)
+								: (servers[selectedIndex].connected ? [] : [servers[selectedIndex].name]);
+							const toDisconnect = Array.from(deselected);
+							if (toConnect.length === 0 && toDisconnect.length === 0) return;
+							done({ action: "apply", serverNames: toConnect, disconnectNames: toDisconnect });
+							return;
 						}
 						tui.requestRender();
 					},
@@ -325,6 +358,32 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 
 				return component;
 			});
+
+			// After panel closes, handle connect/disconnect actions
+			if (result && typeof result === "object" && (result as any).action === "apply") {
+				const serverNames: string[] = (result as any).serverNames ?? [];
+				const disconnectNames: string[] = (result as any).disconnectNames ?? [];
+
+				// Disconnect deselected servers
+				for (const serverName of disconnectNames) {
+					connectedServers.delete(serverName);
+				}
+				if (disconnectNames.length > 0 && activeCtx) {
+					updateStatus(activeCtx);
+				}
+
+				// Connect toggled servers
+				for (const serverName of serverNames) {
+					pi.sendMessage(
+						{
+							customType: "mcp-connect",
+							content: `Connect to the "${serverName}" MCP server. Use: mcp({ connect: "${serverName}" })`,
+							display: false,
+						},
+						{ triggerTurn: true, deliverAs: "steer" },
+					);
+				}
+			}
 		},
 	});
 
