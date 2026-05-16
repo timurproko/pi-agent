@@ -125,10 +125,14 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 	const connectedServers = new Set<string>();
 	let toolToServer = buildToolToServerMap();
 	let connectingTarget: string | undefined;
+	let connectingStartedAt = 0;
+	let minDisplayTimer: ReturnType<typeof setTimeout> | undefined;
 	let pulseFrame = 0;
 	let pulseTimer: ReturnType<typeof setInterval> | undefined;
 	let activeCtx: ExtensionContext | null = null;
 	let originalSetStatus: ((key: string, text?: string) => void) | null = null;
+
+	const MIN_CONNECTING_DISPLAY_MS = 600; // minimum time "connecting..." stays visible
 
 	// ─── Status Bar Logic ───────────────────────────────────────────
 
@@ -141,6 +145,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 
 	function startPulse(ctx: ExtensionContext): void {
 		if (pulseTimer) return;
+		connectingStartedAt = Date.now();
 		pulseTimer = setInterval(() => {
 			if (!connectingTarget) { stopPulse(); return; }
 			pulseFrame += 1;
@@ -165,6 +170,21 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 		connectedServers.add(serverName);
 
 		if (connectingTarget === serverName) {
+			const elapsed = Date.now() - connectingStartedAt;
+			const remaining = MIN_CONNECTING_DISPLAY_MS - elapsed;
+
+			if (remaining > 0) {
+				// Keep showing "connecting..." for the minimum duration
+				if (minDisplayTimer) clearTimeout(minDisplayTimer);
+				minDisplayTimer = setTimeout(() => {
+					minDisplayTimer = undefined;
+					connectingTarget = undefined;
+					stopPulse();
+					updateStatus(ctx);
+				}, remaining);
+				return;
+			}
+
 			connectingTarget = undefined;
 			stopPulse();
 		}
@@ -238,7 +258,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 		});
 	}
 
-	pi.registerCommand("mcp-list", {
+	pi.registerCommand("mcp-status", {
 		description: "Show MCP server connection status",
 		handler: async (_args, ctx) => {
 			toolToServer = buildToolToServerMap();
@@ -396,6 +416,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (!ctx.hasUI || !originalSetStatus) return;
 		stopPulse();
+		if (minDisplayTimer) { clearTimeout(minDisplayTimer); minDisplayTimer = undefined; }
 		ctx.ui.setStatus = originalSetStatus as typeof ctx.ui.setStatus;
 		originalSetStatus = null;
 		activeCtx = null;
