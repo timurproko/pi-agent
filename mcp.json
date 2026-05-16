@@ -10,7 +10,7 @@
         "stdio"
       ],
       "env": {},
-      "directTools": true
+      "directTools": false
     },
     "unity-http": {
       "url": "http://127.0.0.1:8080/mcp",
@@ -18,9 +18,9 @@
       "directTools": false
     },
     "ai-game-developer": {
-      "url": "http://localhost:26493",
+      "url": "http://localhost:25454",
       "type": "http",
-      "directTools": false
+      "directTools": true
     },
     "houdini": {
       "command": "C:/Users/tprokopiev/.local/bin/uv.exe",
