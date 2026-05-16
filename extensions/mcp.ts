@@ -157,18 +157,6 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
-		// Sync connectedServers from actual active tools
-		const activeToolNames = new Set(pi.getActiveTools().map(t => t.name).filter(Boolean));
-		const configured = readConfiguredServers();
-		connectedServers.clear();
-		for (const [name] of Object.entries(configured)) {
-			const normalized = name.replace(/-/g, "_");
-			const prefix = `${normalized}_`;
-			const hasActiveTools = [...activeToolNames].some(tn =>
-				tn === name || tn === normalized || tn.startsWith(prefix)
-			);
-			if (hasActiveTools) connectedServers.add(name);
-		}
 
 		const text = formatStatusBar(
 			ctx,
@@ -463,6 +451,12 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 
 		const alreadyConnected = detectAlreadyConnected(pi);
 		for (const name of alreadyConnected) connectedServers.add(name);
+
+		// Also mark directTools servers as connected (their tools are always active)
+		const allConfigured = readConfiguredServers();
+		for (const [name, cfg] of Object.entries(allConfigured)) {
+			if ((cfg as any)?.directTools) connectedServers.add(name);
+		}
 
 		ctx.ui.setStatus = ((key: string, text?: string) => {
 			interceptSetStatus(ctx, key, text);

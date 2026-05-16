@@ -5742,7 +5742,7 @@
           "description": "All currently open editor windows with their titles, types, positions, and focus state.\n\nURI: mcpforunity://editor/windows"
         }
       ],
-      "cachedAt": 1778777996769
+      "cachedAt": 1778954640058
     },
     "houdini": {
       "configHash": "d64b6db7b333563542b474515ea517d6af529c9ef9158c840c1a89c86836c7e3",
@@ -10734,7 +10734,7 @@
         }
       ],
       "resources": [],
-      "cachedAt": 1778954016857
+      "cachedAt": 1778954249504
     },
     "ai-game-developer": {
       "configHash": "43c89ea26642120b51a42adc2f1f96386b91c3caaff8b16d076fb9c42264fbfd",
@@ -13132,7 +13132,7 @@
         }
       ],
       "resources": [],
-      "cachedAt": 1778953983818
+      "cachedAt": 1778954653571
     }
   }
 }
