@@ -52,12 +52,18 @@ export default function mcpListExtension(pi: ExtensionAPI) {
   function rebuildToolIndex(): void {
     toolToServer.clear();
     const cache = readCache();
+    const configured = Object.keys(readConfiguredServers());
     for (const [serverName, serverData] of Object.entries(cache)) {
       const tools = serverData?.tools ?? [];
       for (const tool of tools) {
         const toolName = typeof tool === "string" ? tool : tool?.name;
         if (toolName) {
+          // Store both raw name and prefixed variants
           toolToServer.set(toolName, serverName);
+          // MCP gateway prefixes tools with servername_
+          const normalized = serverName.replace(/-/g, "_");
+          toolToServer.set(`${normalized}_${toolName}`, serverName);
+          toolToServer.set(`${serverName}_${toolName}`, serverName);
         }
       }
     }
@@ -91,15 +97,40 @@ export default function mcpListExtension(pi: ExtensionAPI) {
   pi.on("tool_result", async (event, _ctx) => {
     if (event.isError) return;
 
-    // Direct tool match from cache
+    // Direct tool match from cache (e.g. ctx_execute_file → context-mode)
     const server = toolToServer.get(event.toolName);
     if (server) {
       connectedServers.add(server);
       return;
     }
 
-    // Rebuild index if cache might have updated (new server connected)
-    // and retry lookup
+    // MCP gateway tool: check the inner tool name from input args
+    if (event.toolName === "mcp" && (event as any).input) {
+      const input = (event as any).input;
+      const innerTool = input.tool || input.name;
+      if (innerTool) {
+        const innerServer = toolToServer.get(innerTool);
+        if (innerServer) {
+          connectedServers.add(innerServer);
+          return;
+        }
+        // Retry with rebuilt index
+        rebuildToolIndex();
+        const retry = toolToServer.get(innerTool);
+        if (retry) {
+          connectedServers.add(retry);
+          return;
+        }
+      }
+      // Also check the server/connect arg directly
+      const connectTarget = input.connect || input.server;
+      if (connectTarget && readConfiguredServers()[connectTarget]) {
+        connectedServers.add(connectTarget);
+        return;
+      }
+    }
+
+    // Rebuild index and retry for unknown tools
     rebuildToolIndex();
     const retryServer = toolToServer.get(event.toolName);
     if (retryServer) {
