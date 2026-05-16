@@ -67,11 +67,14 @@ function buildToolToServerMap(): Map<string, string> {
 }
 
 function detectAlreadyConnected(pi: ExtensionAPI): Set<string> {
-	const configured = readConfiguredServerNames();
+	const configured = readConfiguredServers();
 	const toolNames = new Set(pi.getAllTools().map((t) => t.name));
 	const connected = new Set<string>();
 
-	for (const name of configured) {
+	for (const [name, serverConfig] of Object.entries(configured)) {
+		// Skip direct-tool servers — their tools are always available, not MCP-connected
+		if (serverConfig?.directTools) continue;
+
 		const normalized = name.replace(/-/g, "_");
 		const prefix = `${normalized}_`;
 		for (const tn of toolNames) {
@@ -413,12 +416,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 
 		const toolName = (event as any).toolName ?? "";
 
-		const server = resolveServerFromTool(toolName);
-		if (server) {
-			markConnected(server, ctx);
-			return;
-		}
-
+		// Only detect connections through the mcp gateway, not direct tools
 		if (toolName === "mcp" && (event as any).input) {
 			const input = (event as any).input;
 
@@ -445,6 +443,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 		const toolName = (event as any).toolName ?? "";
 		const input = (event as any).input ?? {};
 
+		// Only detect connections through the mcp gateway, not direct tools
 		if (toolName === "mcp" && input.connect && !connectedServers.has(input.connect)) {
 			connectingTarget = input.connect;
 			startPulse(ctx);
@@ -454,16 +453,6 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 
 		if (toolName === "mcp" && input.tool) {
 			const server = resolveServerFromTool(input.tool);
-			if (server && !connectedServers.has(server)) {
-				connectingTarget = server;
-				startPulse(ctx);
-				updateStatus(ctx);
-				return;
-			}
-		}
-
-		if (toolName !== "mcp") {
-			const server = resolveServerFromTool(toolName);
 			if (server && !connectedServers.has(server)) {
 				connectingTarget = server;
 				startPulse(ctx);
