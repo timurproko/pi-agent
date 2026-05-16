@@ -58,7 +58,7 @@ function setDirectToolsEnabled(serverName: string, enabled: boolean): boolean {
 	}
 }
 
-async function askToEnableDirectTools(ctx: ExtensionContext, serverName: string): Promise<boolean> {
+async function askToEnableMcpServer(ctx: ExtensionContext, serverName: string): Promise<boolean> {
 	const items: SelectItem[] = [
 		{ value: "yes", label: "Yes" },
 		{ value: "no", label: "No" },
@@ -464,16 +464,11 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 					if (activeCtx) updateStatus(activeCtx);
 				}
 
-				// Connect: send steer messages only for servers that already have direct tools enabled.
-				// When directTools is off, ask before enabling it and never auto-connect in the same step.
+				// Connect: ask before enabling/starting any MCP server.
+				// Yes allows the MCP connection only; it does not toggle directTools in mcp.json.
 				const skippedAutoConnect: string[] = [];
 				for (const serverName of toConnect) {
-					const directToolsEnabled = directState.get(serverName) ?? false;
-					if (!directToolsEnabled) {
-						const alreadyRequestedEnable = dirChanges[serverName] === true;
-						if (alreadyRequestedEnable || await askToEnableDirectTools(ctx, serverName)) {
-							dirChanges[serverName] = true;
-						}
+					if (!(await askToEnableMcpServer(ctx, serverName))) {
 						skippedAutoConnect.push(serverName);
 						continue;
 					}
@@ -489,7 +484,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 				}
 				if (skippedAutoConnect.length > 0) {
 					ctx.ui.notify(
-						`Did not auto-connect ${skippedAutoConnect.join(", ")}. Enable direct tools first, then retry the connection.`,
+						`MCP connection cancelled for ${skippedAutoConnect.join(", ")}.`,
 						"info",
 					);
 				}
@@ -571,61 +566,50 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 				}
 			}
 		}
+		const directToolServer = resolveServerFromTool(toolName);
+		if (directToolServer) {
+			markConnected(directToolServer, ctx);
+		}
+
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
 		const toolName = (event as any).toolName ?? "";
 		const input = (event as any).input ?? {};
-		if (toolName !== "mcp") return;
-
 		const configuredNames = readConfiguredServerNames();
-		const explicitTarget = input.connect || input.server;
-		const targetServer = explicitTarget && configuredNames.includes(String(explicitTarget))
-			? String(explicitTarget)
-			: input.tool
-				? resolveServerFromTool(input.tool)
-				: undefined;
 
-		// Block every MCP gateway path that would implicitly start a server while
-		// direct tools are disabled. This includes explicit mcp({ connect }) and
-		// lazy mcp({ server, tool }) calls.
-		if (targetServer && !connectedServers.has(targetServer) && !isDirectToolsEnabled(targetServer)) {
+		let targetServer: string | undefined;
+		if (toolName === "mcp") {
+			const explicitTarget = input.connect || input.server;
+			targetServer = explicitTarget && configuredNames.includes(String(explicitTarget))
+				? String(explicitTarget)
+				: input.tool
+					? resolveServerFromTool(input.tool)
+					: undefined;
+		} else {
+			targetServer = resolveServerFromTool(toolName);
+		}
+
+		// Ask before starting any configured MCP server. This is universal: it
+		// covers the mcp gateway and direct server tools such as ctx_execute.
+		if (targetServer && !connectedServers.has(targetServer)) {
 			if (!ctx.hasUI) {
-				return { block: true, reason: `MCP connect blocked: direct tools are disabled for ${targetServer}.` };
+				return { block: true, reason: `MCP connect blocked: enable the ${targetServer} server first.` };
 			}
 
-			const enableDirectTools = await askToEnableDirectTools(ctx, targetServer);
-			if (!enableDirectTools) {
-				return { block: true, reason: `MCP connect cancelled: direct tools are disabled for ${targetServer}.` };
+			const enableMcpServer = await askToEnableMcpServer(ctx, targetServer);
+			if (!enableMcpServer) {
+				return { block: true, reason: `MCP connect cancelled for ${targetServer}.` };
 			}
-
-			if (!setDirectToolsEnabled(targetServer, true)) {
-				ctx.ui.notify(`Failed to enable direct tools for ${targetServer}.`, "error");
-				return { block: true, reason: `Failed to enable direct tools for ${targetServer}.` };
-			}
-
-			ctx.ui.notify(`Enabled direct tools for ${targetServer}. Reloading before MCP connect.`, "info");
-			void ctx.reload();
-			return { block: true, reason: `Enabled direct tools for ${targetServer}; reload before connecting.` };
 		}
 
-		if (!ctx.hasUI || !originalSetStatus) return;
+		if (!ctx.hasUI || !originalSetStatus || !targetServer || connectedServers.has(targetServer)) return;
 
-		// Only show connection progress after the direct-tools guard has allowed it.
-		if (input.connect && targetServer && !connectedServers.has(targetServer)) {
-			connectingTarget = targetServer;
-			startPulse(ctx);
-			updateStatus(ctx);
-			return;
-		}
-
-		if (input.tool && targetServer && !connectedServers.has(targetServer)) {
-			connectingTarget = targetServer;
-			startPulse(ctx);
-			updateStatus(ctx);
-		}
+		// Show connection progress after the user has allowed this MCP server.
+		connectingTarget = targetServer;
+		startPulse(ctx);
+		updateStatus(ctx);
 	});
-
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (!ctx.hasUI || !originalSetStatus) return;
 		stopPulse();

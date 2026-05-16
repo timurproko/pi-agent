@@ -1,5 +1,10 @@
 {
   "mcpServers": {
+    "context-mode": {
+      "command": "context-mode",
+      "env": {},
+      "directTools": false
+    },
     "unity-stdio": {
       "command": "uvx",
       "args": [
@@ -38,11 +43,6 @@
         "MCP_TRANSPORT": "stdio",
         "LOG_LEVEL": "ERROR"
       },
-      "directTools": false
-    },
-    "context-mode": {
-      "command": "context-mode",
-      "env": {},
       "directTools": false
     }
   }
