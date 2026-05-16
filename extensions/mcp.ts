@@ -18,7 +18,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Container, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
 
 const STATUS_KEY = "mcp";
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -37,6 +38,68 @@ function readConfiguredServers(): Record<string, any> {
 
 function readConfiguredServerNames(): string[] {
 	return Object.keys(readConfiguredServers());
+}
+
+function isDirectToolsEnabled(serverName: string): boolean {
+	return !!readConfiguredServers()[serverName]?.directTools;
+}
+
+function setDirectToolsEnabled(serverName: string, enabled: boolean): boolean {
+	try {
+		const configPath = path.join(getAgentDir(), "mcp.json");
+		const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+		const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
+		if (!mcpServers[serverName]) return false;
+		mcpServers[serverName].directTools = enabled;
+		fs.writeFileSync(configPath, JSON.stringify(raw, null, 2));
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function askToEnableDirectTools(ctx: ExtensionContext, serverName: string): Promise<boolean> {
+	const items: SelectItem[] = [
+		{ value: "yes", label: "Yes" },
+		{ value: "no", label: "No" },
+	];
+
+	const result = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+		const container = new Container();
+		container.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
+		container.addChild(new Spacer(1));
+		container.addChild(new Text(theme.fg("accent", theme.bold("Enable MCP server")), 0, 0));
+		container.addChild(new Text(`Proceed to connect to ${serverName} server?`, 0, 0));
+		container.addChild(new Spacer(1));
+
+		const selectList = new SelectList(items, items.length, {
+			selectedPrefix: (t) => theme.fg("accent", t),
+			selectedText: (t) => theme.fg("accent", t),
+			description: (t) => theme.fg("dim", t),
+			scrollInfo: (t) => theme.fg("dim", t),
+			noMatch: (t) => theme.fg("warning", t),
+		});
+		selectList.onSelect = (item) => done(String(item.value));
+		selectList.onCancel = () => done(null);
+		container.addChild(selectList);
+
+		container.addChild(new Spacer(1));
+		container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc cancel"), 0, 0));
+		container.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
+
+		return {
+			render: (width: number) => container.render(width),
+			invalidate: () => container.invalidate(),
+			handleInput: (data: string) => {
+				// Ctrl+C is intentionally ignored here; Esc is the only cancel shortcut.
+				if (data === "\x03") return;
+				selectList.handleInput(data);
+				tui.requestRender();
+			},
+		};
+	});
+
+	return result === "yes";
 }
 
 function readCache(): Record<string, { tools?: any[] }> {
@@ -276,8 +339,8 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 			// Read current directTools state from config
 			const mcpConfig = readConfiguredServers();
 			const directState = new Map<string, boolean>();
-			for (const [name, cfg] of Object.entries(mcpConfig)) {
-				directState.set(name, !!(cfg as any)?.directTools);
+			for (const name of Object.keys(mcpConfig)) {
+				directState.set(name, isDirectToolsEnabled(name));
 			}
 
 			const result = await ctx.ui.custom((tui, theme, _kb, done) => {
@@ -401,8 +464,20 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 					if (activeCtx) updateStatus(activeCtx);
 				}
 
-				// Connect: send steer messages
+				// Connect: send steer messages only for servers that already have direct tools enabled.
+				// When directTools is off, ask before enabling it and never auto-connect in the same step.
+				const skippedAutoConnect: string[] = [];
 				for (const serverName of toConnect) {
+					const directToolsEnabled = directState.get(serverName) ?? false;
+					if (!directToolsEnabled) {
+						const alreadyRequestedEnable = dirChanges[serverName] === true;
+						if (alreadyRequestedEnable || await askToEnableDirectTools(ctx, serverName)) {
+							dirChanges[serverName] = true;
+						}
+						skippedAutoConnect.push(serverName);
+						continue;
+					}
+
 					pi.sendMessage(
 						{
 							customType: "mcp-connect",
@@ -410,6 +485,12 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 							display: false,
 						},
 						{ triggerTurn: true, deliverAs: "steer" },
+					);
+				}
+				if (skippedAutoConnect.length > 0) {
+					ctx.ui.notify(
+						`Did not auto-connect ${skippedAutoConnect.join(", ")}. Enable direct tools first, then retry the connection.`,
+						"info",
 					);
 				}
 
@@ -493,26 +574,55 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (!ctx.hasUI || !originalSetStatus) return;
-
 		const toolName = (event as any).toolName ?? "";
 		const input = (event as any).input ?? {};
+		if (toolName !== "mcp") return;
 
-		// Only detect connections through the mcp gateway, not direct tools
-		if (toolName === "mcp" && input.connect && !connectedServers.has(input.connect)) {
-			connectingTarget = input.connect;
+		const configuredNames = readConfiguredServerNames();
+		const explicitTarget = input.connect || input.server;
+		const targetServer = explicitTarget && configuredNames.includes(String(explicitTarget))
+			? String(explicitTarget)
+			: input.tool
+				? resolveServerFromTool(input.tool)
+				: undefined;
+
+		// Block every MCP gateway path that would implicitly start a server while
+		// direct tools are disabled. This includes explicit mcp({ connect }) and
+		// lazy mcp({ server, tool }) calls.
+		if (targetServer && !connectedServers.has(targetServer) && !isDirectToolsEnabled(targetServer)) {
+			if (!ctx.hasUI) {
+				return { block: true, reason: `MCP connect blocked: direct tools are disabled for ${targetServer}.` };
+			}
+
+			const enableDirectTools = await askToEnableDirectTools(ctx, targetServer);
+			if (!enableDirectTools) {
+				return { block: true, reason: `MCP connect cancelled: direct tools are disabled for ${targetServer}.` };
+			}
+
+			if (!setDirectToolsEnabled(targetServer, true)) {
+				ctx.ui.notify(`Failed to enable direct tools for ${targetServer}.`, "error");
+				return { block: true, reason: `Failed to enable direct tools for ${targetServer}.` };
+			}
+
+			ctx.ui.notify(`Enabled direct tools for ${targetServer}. Reloading before MCP connect.`, "info");
+			void ctx.reload();
+			return { block: true, reason: `Enabled direct tools for ${targetServer}; reload before connecting.` };
+		}
+
+		if (!ctx.hasUI || !originalSetStatus) return;
+
+		// Only show connection progress after the direct-tools guard has allowed it.
+		if (input.connect && targetServer && !connectedServers.has(targetServer)) {
+			connectingTarget = targetServer;
 			startPulse(ctx);
 			updateStatus(ctx);
 			return;
 		}
 
-		if (toolName === "mcp" && input.tool) {
-			const server = resolveServerFromTool(input.tool);
-			if (server && !connectedServers.has(server)) {
-				connectingTarget = server;
-				startPulse(ctx);
-				updateStatus(ctx);
-			}
+		if (input.tool && targetServer && !connectedServers.has(targetServer)) {
+			connectingTarget = targetServer;
+			startPulse(ctx);
+			updateStatus(ctx);
 		}
 	});
 
