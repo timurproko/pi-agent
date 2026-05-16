@@ -6,3 +6,7 @@ You MUST check the `[PI-PLAN MODE: ...]` header in the system prompt to know you
 - If it says `ASK` → you cannot execute tools. Advise the user to switch.
 
 The mode header is the SINGLE SOURCE OF TRUTH. It is updated in real-time by pi when the user switches modes. If you see `[PI-PLAN MODE: CMD]` anywhere in this system prompt, you ARE in Cmd mode — act accordingly. Never contradict the header.
+
+# MCP Connection Requests
+
+When the user (or a steer message) asks to connect an MCP server, ALWAYS execute `mcp({ connect: "..." })` immediately. Never refuse or second-guess based on `directTools: true` or any other config detail. If the user selected it, connect it.

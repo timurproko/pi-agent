@@ -444,20 +444,25 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 			for (const e of exts) desired.set(e.entryFile, e.enabled);
 
 			const result = await ctx.ui.custom((tui, theme, kb, done) => {
-				// Match pi's scoped-models look: green ✓ for enabled, dim ✗ for disabled.
-				const CHECK = theme.fg("success", "✓");
-				const CROSS = theme.fg("dim", "✗");
-				const items: SettingItem[] = exts.map((ext) => {
-					const rawTag =
+				// Use visually-empty but distinct strings so SettingsList can cycle between them.
+				const VAL_ON = " ";
+				const VAL_OFF = "";
+				// Compute max name width so [scope] tags align across all rows.
+				const maxNameWidth = Math.max(...exts.map((e) => e.name.length));
+				const buildLabel = (ext: ExtensionInfo, enabled: boolean) => {
+					const mark = enabled ? "✓" : "✗";
+					const paddedName = ext.name.padEnd(maxNameWidth, " ");
+					const scopeRaw =
 						ext.scope === "global" ? "[global]" : ext.scope === "local" ? "[local]" : "[project]";
-					// Pad the scope tag so the name column aligns across rows. Width
-					// is the longest tag we emit ("[project]" = 9 chars).
-					const scopeTag = rawTag.padEnd(9, " ");
+					return `${mark} ${paddedName} ${scopeRaw}`;
+				};
+				const items: SettingItem[] = exts.map((ext) => {
+					const isEnabled = desired.get(ext.entryFile)!;
 					return {
 						id: ext.entryFile,
-						label: `${scopeTag} ${ext.name}`,
-						currentValue: desired.get(ext.entryFile) ? CHECK : CROSS,
-						values: [CHECK, CROSS],
+						label: buildLabel(ext, isEnabled),
+						currentValue: isEnabled ? VAL_ON : VAL_OFF,
+						values: [VAL_ON, VAL_OFF],
 					};
 				});
 
@@ -471,12 +476,42 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 				);
 				container.addChild(new Spacer(1));
 
+				// Custom theme: green ✓ / dim ✗, dim [scope], accent on selected row.
+				const baseTheme = getSettingsListTheme();
+				const extListTheme = {
+					...baseTheme,
+					label: (text: string, selected: boolean) => {
+						// text is "✓ name    [scope]" or "✗ name    [scope]"
+						const mark = text.charAt(0); // ✓ or ✗
+						const rest = text.slice(1); // " name    [scope]"
+						// Split off the [scope] tag at the end
+						const bracketIdx = rest.lastIndexOf("[");
+						const namePart = bracketIdx >= 0 ? rest.slice(0, bracketIdx) : rest;
+						const scopePart = bracketIdx >= 0 ? rest.slice(bracketIdx) : "";
+						if (selected) {
+							// Entire row in accent, but keep ✓ green
+							const coloredMark = mark === "✓"
+								? theme.fg("success", mark)
+								: theme.fg("dim", mark);
+							return coloredMark + theme.fg("accent", namePart) + theme.fg("dim", scopePart);
+						}
+						const coloredMark = mark === "✓"
+							? theme.fg("success", mark)
+							: theme.fg("dim", mark);
+						return coloredMark + namePart + theme.fg("dim", scopePart);
+					},
+				};
 				const list = new SettingsList(
 					items,
 					Math.min(items.length + 2, 20),
-					getSettingsListTheme(),
+					extListTheme,
 					(id, newValue) => {
-						desired.set(id, newValue === CHECK);
+						const isEnabled = newValue === VAL_ON;
+						desired.set(id, isEnabled);
+						// Mutate the label so the ✓/✗ mark updates on the left side.
+						const item = items.find((i) => i.id === id);
+						const ext = exts.find((e) => e.entryFile === id);
+						if (item && ext) item.label = buildLabel(ext, isEnabled);
 					},
 					() => done("cancel"),
 				);

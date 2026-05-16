@@ -20,7 +20,7 @@
     "ai-game-developer": {
       "url": "http://localhost:25454",
       "type": "http",
-      "directTools": true
+      "directTools": false
     },
     "houdini": {
       "command": "C:/Users/tprokopiev/.local/bin/uv.exe",
@@ -41,7 +41,8 @@
     },
     "context-mode": {
       "command": "context-mode",
-      "env": {}
+      "env": {},
+      "directTools": false
     }
   }
 }

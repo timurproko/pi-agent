@@ -157,6 +157,19 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
+		// Sync connectedServers from actual active tools
+		const activeToolNames = new Set(pi.getActiveTools().map(t => t.name).filter(Boolean));
+		const configured = readConfiguredServers();
+		connectedServers.clear();
+		for (const [name] of Object.entries(configured)) {
+			const normalized = name.replace(/-/g, "_");
+			const prefix = `${normalized}_`;
+			const hasActiveTools = [...activeToolNames].some(tn =>
+				tn === name || tn === normalized || tn.startsWith(prefix)
+			);
+			if (hasActiveTools) connectedServers.add(name);
+		}
+
 		const text = formatStatusBar(
 			ctx,
 			Array.from(connectedServers),
@@ -272,10 +285,19 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
+			// Read current directTools state from config
+			const mcpConfig = readConfiguredServers();
+			const directState = new Map<string, boolean>();
+			for (const [name, cfg] of Object.entries(mcpConfig)) {
+				directState.set(name, !!(cfg as any)?.directTools);
+			}
+
 			const result = await ctx.ui.custom((tui, theme, _kb, done) => {
 				let selectedIndex = 0;
-				const toggled = new Set<string>();
-				const deselected = new Set<string>();
+				// Track desired connection changes: true=connect, false=disconnect, undefined=no change
+				const connectionChanges = new Map<string, boolean>();
+				// Track desired directTools changes
+				const directChanges = new Map<string, boolean>();
 
 				const component = {
 					render(width: number): string[] {
@@ -285,34 +307,40 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 						lines.push(theme.fg("accent", theme.bold("MCP Servers")));
 						lines.push("");
 
-						const nameWidth = Math.max(...servers.map(s => s.name.length));
+						const nameWithToolsWidth = Math.max(...servers.map(s => `${s.name} (${s.toolCount})`.length));
 
 						for (let i = 0; i < servers.length; i++) {
 							const server = servers[i];
 							const isSelected = i === selectedIndex;
 
+							// Direct tools state (space to toggle) - shown as bulb
+							const wantDirect = directChanges.has(server.name)
+								? directChanges.get(server.name)!
+								: directState.get(server.name) ?? false;
+							const directBulb = wantDirect
+								? theme.fg("success", "●")
+								: theme.fg("dim", "○");
+
+							// Connection state (left/right to toggle) - shown as text
+							const wantConnected = connectionChanges.has(server.name)
+								? connectionChanges.get(server.name)!
+								: server.connected;
+							const connLabel = wantConnected
+								? theme.fg("success", "[enabled]")
+								: theme.fg("dim", "[disabled]");
+
 							const cursor = isSelected ? "→ " : "  ";
-							const paddedName = server.name.padEnd(nameWidth);
-							const toolsBadge = `(${server.toolCount})`;
-
-							const isToggled = toggled.has(server.name);
-
-							const isDeselected = deselected.has(server.name);
-							const bulb = server.connected
-								? (isDeselected ? theme.fg("dim", "○") : theme.fg("success", "●"))
-								: isToggled
-									? theme.fg("dim", "◉")
-									: theme.fg("dim", "○");
+							const nameWithTools = `${server.name} (${server.toolCount})`.padEnd(nameWithToolsWidth);
 
 							if (isSelected) {
-								lines.push(theme.fg("accent", cursor) + bulb + theme.fg("accent", ` ${paddedName} ${toolsBadge}`));
+								lines.push(theme.fg("accent", cursor) + directBulb + theme.fg("accent", ` ${nameWithTools}`) + " " + connLabel);
 							} else {
-								lines.push(`${cursor}${bulb} ${paddedName} ${theme.fg("dim", toolsBadge)}`);
+								lines.push(`${cursor}${directBulb} ${nameWithTools} ${connLabel}`);
 							}
 						}
 
 						lines.push("");
-						lines.push(theme.fg("dim", "↑↓ navigate · space toggle · enter apply · esc close"));
+						lines.push(theme.fg("dim", "↑↓ navigate · ←→ connect/disconnect · space direct · enter apply · esc close"));
 						lines.push(theme.fg("border", "─".repeat(width)));
 
 						return lines;
@@ -320,37 +348,28 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 
 					handleInput(data: string) {
 						if (data === "\x1B[A" || data === "k") {
-							selectedIndex = Math.max(0, selectedIndex - 1);
+							selectedIndex = selectedIndex === 0 ? servers.length - 1 : selectedIndex - 1;
 						} else if (data === "\x1B[B" || data === "j") {
-							selectedIndex = Math.min(servers.length - 1, selectedIndex + 1);
+							selectedIndex = selectedIndex === servers.length - 1 ? 0 : selectedIndex + 1;
 						} else if (data === "\x1B" || data === "q") {
 							done(undefined);
 							return;
-						} else if (data === " ") {
-							// Space: toggle selection in dialog (no connect yet)
+						} else if (data === "\x1B[D" || data === "\x1B[C") {
+							// Left/Right: toggle connection state
 							const server = servers[selectedIndex];
-							if (server.connected) {
-								// Toggle deselect for connected servers (mark for disconnect)
-								if (deselected.has(server.name)) {
-									deselected.delete(server.name);
-								} else {
-									deselected.add(server.name);
-								}
-							} else {
-								if (toggled.has(server.name)) {
-									toggled.delete(server.name);
-								} else {
-									toggled.add(server.name);
-								}
-							}
+							const current = connectionChanges.has(server.name)
+								? connectionChanges.get(server.name)!
+								: server.connected;
+							connectionChanges.set(server.name, !current);
+						} else if (data === " ") {
+							// Space: toggle directTools
+							const server = servers[selectedIndex];
+							const current = directChanges.has(server.name)
+								? directChanges.get(server.name)!
+								: directState.get(server.name) ?? false;
+							directChanges.set(server.name, !current);
 						} else if (data === "\r" || data === "\n") {
-							// Enter: connect toggled servers and/or disconnect deselected servers
-							const toConnect = toggled.size > 0
-								? Array.from(toggled)
-								: (servers[selectedIndex].connected ? [] : [servers[selectedIndex].name]);
-							const toDisconnect = Array.from(deselected);
-							if (toConnect.length === 0 && toDisconnect.length === 0) return;
-							done({ action: "apply", serverNames: toConnect, disconnectNames: toDisconnect });
+							done({ action: "apply", connectionChanges: Object.fromEntries(connectionChanges), directChanges: Object.fromEntries(directChanges) });
 							return;
 						}
 						tui.requestRender();
@@ -362,21 +381,40 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 				return component;
 			});
 
-			// After panel closes, handle connect/disconnect actions
 			if (result && typeof result === "object" && (result as any).action === "apply") {
-				const serverNames: string[] = (result as any).serverNames ?? [];
-				const disconnectNames: string[] = (result as any).disconnectNames ?? [];
+				const connChanges: Record<string, boolean> = (result as any).connectionChanges ?? {};
+				const dirChanges: Record<string, boolean> = (result as any).directChanges ?? {};
 
-				// Disconnect deselected servers
-				for (const serverName of disconnectNames) {
-					connectedServers.delete(serverName);
-				}
-				if (disconnectNames.length > 0 && activeCtx) {
-					updateStatus(activeCtx);
+				// Handle connection changes
+				const toConnect: string[] = [];
+				const toDisconnect: string[] = [];
+				for (const [name, want] of Object.entries(connChanges)) {
+					const server = servers.find(s => s.name === name);
+					if (!server) continue;
+					if (want && !server.connected) toConnect.push(name);
+					if (!want && server.connected) toDisconnect.push(name);
 				}
 
-				// Connect toggled servers
-				for (const serverName of serverNames) {
+				// Disconnect: remove tools from active set
+				if (toDisconnect.length > 0) {
+					const toolsToRemove = new Set<string>();
+					for (const serverName of toDisconnect) {
+						const normalized = serverName.replace(/-/g, "_");
+						const prefix = `${normalized}_`;
+						for (const tool of pi.getAllTools()) {
+							if (tool.name === serverName || tool.name === normalized || tool.name.startsWith(prefix)) {
+								toolsToRemove.add(tool.name);
+							}
+						}
+						connectedServers.delete(serverName);
+					}
+					const activeTools = pi.getActiveTools().map(t => t.name).filter(n => !toolsToRemove.has(n));
+					pi.setActiveTools(activeTools);
+					if (activeCtx) updateStatus(activeCtx);
+				}
+
+				// Connect: send steer messages
+				for (const serverName of toConnect) {
 					pi.sendMessage(
 						{
 							customType: "mcp-connect",
@@ -385,6 +423,29 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 						},
 						{ triggerTurn: true, deliverAs: "steer" },
 					);
+				}
+
+				// Handle directTools changes — write to mcp.json and reload
+				let configChanged = false;
+				for (const [name, want] of Object.entries(dirChanges)) {
+					const current = directState.get(name) ?? false;
+					if (want !== current) configChanged = true;
+				}
+				if (configChanged) {
+					try {
+						const configPath = path.join(getAgentDir(), "mcp.json");
+						const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+						const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
+						for (const [name, want] of Object.entries(dirChanges)) {
+							if (mcpServers[name]) {
+								mcpServers[name].directTools = want;
+							}
+						}
+						fs.writeFileSync(configPath, JSON.stringify(raw, null, 2));
+						await ctx.reload();
+					} catch (e) {
+						ctx.ui.notify(`Failed to update mcp.json: ${e}`, "error");
+					}
 				}
 			}
 		},
