@@ -1,15 +1,18 @@
 /**
- * MCP Status Bar Extension
+ * MCP Extension — Status Bar + /mcp-list Command
  *
- * Shows actual MCP connection state in the status bar:
- *   - `mcp: 2/5 • houdini, unity-stdio` (connected servers)
- *   - `mcp: houdini connecting…` (during connection)
+ * Status bar:
+ *   - `mcp: 2/5` (connected count)
+ *   - `mcp: houdini connecting...` (during connection, animated)
  *   - `mcp: 0/5` (none connected)
  *
- * Detection uses the same strategy as mcp-list.ts:
+ * Command:
+ *   /mcp-list — shows all configured MCP servers with connection state (● connected, ○ not)
+ *
+ * Detection:
  *   - Reads mcp-cache.json for tool→server mapping
  *   - Tracks tool_result events to detect active connections
- *   - Also checks pi.getAllTools() at session start for stdio auto-connects
+ *   - Checks pi.getAllTools() at session start for stdio auto-connects
  */
 
 import * as fs from "node:fs";
@@ -18,18 +21,22 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const STATUS_KEY = "mcp";
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
-// ─── Helpers ────────────────────────────────────────────────────────
+// ─── Shared Helpers ─────────────────────────────────────────────────
 
-function readConfiguredServerNames(): string[] {
+function readConfiguredServers(): Record<string, any> {
 	try {
 		const configPath = path.join(getAgentDir(), "mcp.json");
 		const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-		const servers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
-		return Object.keys(servers);
+		return raw.mcpServers ?? raw["mcp-servers"] ?? {};
 	} catch {
-		return [];
+		return {};
 	}
+}
+
+function readConfiguredServerNames(): string[] {
+	return Object.keys(readConfiguredServers());
 }
 
 function readCache(): Record<string, { tools?: any[] }> {
@@ -77,6 +84,10 @@ function detectAlreadyConnected(pi: ExtensionAPI): Set<string> {
 	return connected;
 }
 
+function stripAnsi(text: string): string {
+	return text.replace(ANSI_RE, "");
+}
+
 // ─── Formatting ─────────────────────────────────────────────────────
 
 function ansi(code: number, text: string): string {
@@ -87,14 +98,6 @@ function paintMuted(ctx: ExtensionContext, label: string): string {
 	try { return ctx.ui.theme.fg("dim", label); } catch { return ansi(90, label); }
 }
 
-function paintCyan(label: string): string {
-	return ansi(36, label);
-}
-
-function paintGreen(label: string): string {
-	return ansi(32, label);
-}
-
 function formatStatusBar(
 	ctx: ExtensionContext,
 	connectedNames: string[],
@@ -103,10 +106,8 @@ function formatStatusBar(
 ): string {
 	const total = readConfiguredServerNames().length;
 
-	// No servers configured
 	if (total === 0) return paintMuted(ctx, "mcp: —");
 
-	// Currently connecting - show server name with animation
 	if (connectingName) {
 		const dots = ".".repeat((pulseFrame % 3) + 1);
 		const pad = " ".repeat(3 - dots.length);
@@ -115,13 +116,12 @@ function formatStatusBar(
 
 	const count = connectedNames.length;
 	const counter = `${count}/${total}`;
-
 	return `${paintMuted(ctx, "mcp: ")}${paintMuted(ctx, counter)}`;
 }
 
 // ─── Extension ──────────────────────────────────────────────────────
 
-export default function piMcpExtension(pi: ExtensionAPI): void {
+export default function mcpExtension(pi: ExtensionAPI): void {
 	const connectedServers = new Set<string>();
 	let toolToServer = buildToolToServerMap();
 	let connectingTarget: string | undefined;
@@ -129,6 +129,8 @@ export default function piMcpExtension(pi: ExtensionAPI): void {
 	let pulseTimer: ReturnType<typeof setInterval> | undefined;
 	let activeCtx: ExtensionContext | null = null;
 	let originalSetStatus: ((key: string, text?: string) => void) | null = null;
+
+	// ─── Status Bar Logic ───────────────────────────────────────────
 
 	function stopPulse(): void {
 		if (!pulseTimer) return;
@@ -162,7 +164,6 @@ export default function piMcpExtension(pi: ExtensionAPI): void {
 		if (connectedServers.has(serverName)) return;
 		connectedServers.add(serverName);
 
-		// If we were connecting this server, stop animation
 		if (connectingTarget === serverName) {
 			connectingTarget = undefined;
 			stopPulse();
@@ -174,17 +175,8 @@ export default function piMcpExtension(pi: ExtensionAPI): void {
 		let server = toolToServer.get(toolName);
 		if (server) return server;
 
-		// Rebuild index and retry
 		toolToServer = buildToolToServerMap();
 		return toolToServer.get(toolName);
-	}
-
-	// ─── Intercept core MCP status calls ────────────────────────────
-
-	const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
-
-	function stripAnsi(text: string): string {
-		return text.replace(ANSI_RE, "");
 	}
 
 	function interceptSetStatus(ctx: ExtensionContext, key: string, text?: string): void {
@@ -195,18 +187,15 @@ export default function piMcpExtension(pi: ExtensionAPI): void {
 
 		const plain = stripAnsi(text);
 
-		// Detect "MCP: connecting to X..." from core
 		const connectMatch = plain.match(/\bMCP:\s*connecting to\s+(.+?)(?:\.\.\.)?$/i);
 		if (connectMatch) {
 			let target = connectMatch[1].trim();
-			// "connecting to 1 servers" → resolve to actual name
 			const countMatch = target.match(/^(\d+)\s+servers?$/i);
 			if (countMatch) {
 				const names = readConfiguredServerNames();
 				if (Number.parseInt(countMatch[1], 10) === 1 && names.length === 1) {
 					target = names[0];
 				} else {
-					// Multiple servers connecting - use first uncconnected
 					target = names.find((n) => !connectedServers.has(n)) ?? target;
 				}
 			}
@@ -216,21 +205,108 @@ export default function piMcpExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
-		// Detect "MCP: N/T servers ..." from core (connection complete)
 		const countMatch = plain.match(/\bMCP:\s*(\d+)\/(\d+)\s+servers\b/i);
 		if (countMatch) {
 			connectingTarget = undefined;
 			stopPulse();
-			// Core is reporting count; refresh our detection
 			const freshConnected = detectAlreadyConnected(pi);
 			for (const name of freshConnected) connectedServers.add(name);
 			updateStatus(ctx);
 			return;
 		}
 
-		// Unknown MCP status - just format it
 		updateStatus(ctx);
 	}
+
+	// ─── /mcp-list Command ──────────────────────────────────────────
+
+	function getMcpServers(): { name: string; toolCount: number; connected: boolean; type: "stdio" | "http" }[] {
+		const mcpServers = readConfiguredServers();
+		const cache = readCache();
+
+		return Object.entries(mcpServers).map(([name, serverConfig]: [string, any]) => {
+			const cachedCount = cache[name]?.tools?.length ?? 0;
+			const type: "stdio" | "http" =
+				serverConfig.type === "http" || serverConfig.url ? "http" : "stdio";
+
+			return {
+				name,
+				toolCount: cachedCount,
+				connected: connectedServers.has(name),
+				type,
+			};
+		});
+	}
+
+	pi.registerCommand("mcp-list", {
+		description: "Show MCP server connection status",
+		handler: async (_args, ctx) => {
+			toolToServer = buildToolToServerMap();
+			const servers = getMcpServers();
+
+			if (servers.length === 0) {
+				ctx.ui.notify("No MCP servers configured in mcp.json", "warning");
+				return;
+			}
+
+			await ctx.ui.custom((tui, theme, _kb, done) => {
+				let selectedIndex = 0;
+
+				const component = {
+					render(width: number): string[] {
+						const lines: string[] = [];
+						lines.push(theme.fg("border", "─".repeat(width)));
+						lines.push("");
+						lines.push(theme.fg("accent", theme.bold("MCP Servers")));
+						lines.push("");
+
+						const nameWidth = Math.max(...servers.map(s => s.name.length));
+
+						for (let i = 0; i < servers.length; i++) {
+							const server = servers[i];
+							const isSelected = i === selectedIndex;
+
+							const cursor = isSelected ? "→ " : "  ";
+							const paddedName = server.name.padEnd(nameWidth);
+							const toolsBadge = `(${server.toolCount})`;
+
+							const bulb = server.connected
+								? theme.fg("success", "●")
+								: theme.fg("dim", "○");
+
+							if (isSelected) {
+								lines.push(theme.fg("accent", cursor) + bulb + theme.fg("accent", ` ${paddedName} ${toolsBadge}`));
+							} else {
+								lines.push(`${cursor}${bulb} ${paddedName} ${theme.fg("dim", toolsBadge)}`);
+							}
+						}
+
+						lines.push("");
+						lines.push(theme.fg("dim", "↑↓ navigate · esc close"));
+						lines.push(theme.fg("border", "─".repeat(width)));
+
+						return lines;
+					},
+
+					handleInput(data: string) {
+						if (data === "\x1B[A" || data === "k") {
+							selectedIndex = Math.max(0, selectedIndex - 1);
+						} else if (data === "\x1B[B" || data === "j") {
+							selectedIndex = Math.min(servers.length - 1, selectedIndex + 1);
+						} else if (data === "\x1B" || data === "q") {
+							done(undefined);
+							return;
+						}
+						tui.requestRender();
+					},
+
+					invalidate() {},
+				};
+
+				return component;
+			});
+		},
+	});
 
 	// ─── Events ─────────────────────────────────────────────────────
 
@@ -242,45 +318,37 @@ export default function piMcpExtension(pi: ExtensionAPI): void {
 		originalSetStatus = ctx.ui.setStatus.bind(ctx.ui);
 		toolToServer = buildToolToServerMap();
 
-		// Detect already-connected servers (stdio auto-connect before session_start)
 		const alreadyConnected = detectAlreadyConnected(pi);
 		for (const name of alreadyConnected) connectedServers.add(name);
 
-		// Patch setStatus to intercept core MCP updates
 		ctx.ui.setStatus = ((key: string, text?: string) => {
 			interceptSetStatus(ctx, key, text);
 		}) as typeof ctx.ui.setStatus;
 
-		// Initial render
 		updateStatus(ctx);
 	});
 
-	// Track connections via tool_result events (same as mcp-list.ts)
 	pi.on("tool_result", async (event, ctx) => {
 		if (!ctx.hasUI || !originalSetStatus) return;
 		if ((event as any).isError) return;
 
 		const toolName = (event as any).toolName ?? "";
 
-		// Direct tool match from cache
 		const server = resolveServerFromTool(toolName);
 		if (server) {
 			markConnected(server, ctx);
 			return;
 		}
 
-		// MCP gateway tool - check inner tool or connect target
 		if (toolName === "mcp" && (event as any).input) {
 			const input = (event as any).input;
 
-			// If connecting to a server
 			const connectTarget = input.connect || input.server;
 			if (connectTarget && readConfiguredServerNames().includes(connectTarget)) {
 				markConnected(connectTarget, ctx);
 				return;
 			}
 
-			// Inner tool call
 			const innerTool = input.tool || input.name;
 			if (innerTool) {
 				const innerServer = resolveServerFromTool(innerTool);
@@ -292,19 +360,36 @@ export default function piMcpExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	// Also detect via tool_call for early "connecting" state
 	pi.on("tool_call", async (event, ctx) => {
 		if (!ctx.hasUI || !originalSetStatus) return;
 
 		const toolName = (event as any).toolName ?? "";
-		if (toolName !== "mcp") return;
-
 		const input = (event as any).input ?? {};
-		const connectTarget = input.connect;
-		if (connectTarget && !connectedServers.has(connectTarget)) {
-			connectingTarget = connectTarget;
+
+		if (toolName === "mcp" && input.connect && !connectedServers.has(input.connect)) {
+			connectingTarget = input.connect;
 			startPulse(ctx);
 			updateStatus(ctx);
+			return;
+		}
+
+		if (toolName === "mcp" && input.tool) {
+			const server = resolveServerFromTool(input.tool);
+			if (server && !connectedServers.has(server)) {
+				connectingTarget = server;
+				startPulse(ctx);
+				updateStatus(ctx);
+				return;
+			}
+		}
+
+		if (toolName !== "mcp") {
+			const server = resolveServerFromTool(toolName);
+			if (server && !connectedServers.has(server)) {
+				connectingTarget = server;
+				startPulse(ctx);
+				updateStatus(ctx);
+			}
 		}
 	});
 
