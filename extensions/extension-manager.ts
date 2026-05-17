@@ -28,8 +28,7 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir, getSettingsListTheme, InteractiveMode, DynamicBorder } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList, Spacer, Text } from "@earendil-works/pi-tui";
+import { getAgentDir, InteractiveMode } from "@earendil-works/pi-coding-agent";
 
 /**
  * Scope of a discovered extension:
@@ -443,77 +442,69 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 			const desired = new Map<string, boolean>();
 			for (const e of exts) desired.set(e.entryFile, e.enabled);
 
-			const result = await ctx.ui.custom((tui, theme, kb, done) => {
-				const items: SettingItem[] = exts.map((ext) => {
-					const rawTag =
-						ext.scope === "global" ? "[global]" : ext.scope === "local" ? "[local]" : "[project]";
-					// Pad the scope tag so the name column aligns across rows. Width
-					// is the longest tag we emit ("[project]" = 9 chars).
-					const scopeTag = rawTag.padEnd(9, " ");
-					return {
-						id: ext.entryFile,
-						label: `${scopeTag} ${ext.name}`,
-						currentValue: desired.get(ext.entryFile) ? "enabled" : "disabled",
-						values: ["enabled", "disabled"],
-					};
-				});
+			const result = await ctx.ui.custom((tui, theme, _kb, done) => {
+				let selectedIndex = 0;
 
-				const container = new Container();
+				const component = {
+					render(width: number): string[] {
+						const lines: string[] = [];
+						lines.push(theme.fg("border", "─".repeat(width)));
+						lines.push("");
+						lines.push(theme.fg("accent", theme.bold("Extensions")));
+						lines.push("");
 
-				// Top border + spacer + title (matches the built-in scoped-models layout)
-				container.addChild(new DynamicBorder((s) => theme.fg("border", s)));
-				container.addChild(new Spacer(1));
-				container.addChild(
-					new Text(theme.fg("accent", theme.bold("Extensions")), 0, 0),
-				);
-				container.addChild(new Spacer(1));
+						for (let i = 0; i < exts.length; i++) {
+							const ext = exts[i];
+							const isSelected = i === selectedIndex;
+							const isEnabled = desired.get(ext.entryFile) ?? ext.enabled;
 
-				const list = new SettingsList(
-					items,
-					Math.min(items.length + 2, 20),
-					getSettingsListTheme(),
-					(id, newValue) => {
-						desired.set(id, newValue === "enabled");
+							const statusIcon = isEnabled
+								? theme.fg("success", "✓")
+								: theme.fg("dim", "✗");
+
+							const rawTag =
+								ext.scope === "global" ? "[global]" : ext.scope === "local" ? "[local]" : "[project]";
+							const scopeTag = theme.fg("dim", rawTag);
+
+							const cursor = isSelected ? "→ " : "  ";
+
+							if (isSelected) {
+								lines.push(theme.fg("accent", cursor) + theme.fg("accent", ext.name) + " " + scopeTag + " " + statusIcon);
+							} else {
+								lines.push(`${cursor}${ext.name} ${scopeTag} ${statusIcon}`);
+							}
+						}
+
+						lines.push("");
+						lines.push(theme.fg("dim", "↑↓ navigate · space toggle · enter apply & reload · esc cancel"));
+						lines.push(theme.fg("border", "─".repeat(width)));
+
+						return lines;
 					},
-					() => done("cancel"),
-				);
 
-				// Suppress the built-in "Enter/Space to change · Esc to cancel" hint.
-				(list as unknown as { addHintLine: (lines: string[], width: number) => void }).addHintLine =
-					() => {};
-
-				container.addChild(list);
-				container.addChild(new Spacer(1));
-				container.addChild(
-					new Text(
-						theme.fg(
-							"dim",
-							"enter apply & reload · space toggle · esc cancel",
-						),
-						0,
-						0,
-					),
-				);
-				container.addChild(new DynamicBorder((s) => theme.fg("border", s)));
-
-				return {
-					render(width: number) {
-						return container.render(width);
-					},
-					invalidate() {
-						container.invalidate();
-					},
 					handleInput(data: string) {
-						// Enter applies & reloads; Esc (handled by list.onCancel) closes
-						// without applying; Space (forwarded to list) cycles the value.
-						if (kb.matches(data, "tui.select.confirm")) {
+						if (data === "\x1B[A" || data === "k") {
+							selectedIndex = selectedIndex === 0 ? exts.length - 1 : selectedIndex - 1;
+						} else if (data === "\x1B[B" || data === "j") {
+							selectedIndex = selectedIndex === exts.length - 1 ? 0 : selectedIndex + 1;
+						} else if (data === "\x1B" || data === "q") {
+							done("cancel");
+							return;
+						} else if (data === " ") {
+							const ext = exts[selectedIndex];
+							const current = desired.get(ext.entryFile) ?? ext.enabled;
+							desired.set(ext.entryFile, !current);
+						} else if (data === "\r" || data === "\n") {
 							done("apply");
 							return;
 						}
-						list.handleInput?.(data);
 						tui.requestRender();
 					},
+
+					invalidate() {},
 				};
+
+				return component;
 			});
 
 			// Esc / cancel: do nothing, no reload

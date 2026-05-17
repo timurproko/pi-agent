@@ -358,8 +358,6 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 						lines.push(theme.fg("accent", theme.bold("MCP Servers")));
 						lines.push("");
 
-						const nameWithToolsWidth = Math.max(...servers.map(s => `${s.name} (${s.toolCount})`.length));
-
 						for (let i = 0; i < servers.length; i++) {
 							const server = servers[i];
 							const isSelected = i === selectedIndex;
@@ -372,21 +370,21 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 								? theme.fg("success", "●")
 								: theme.fg("dim", "○");
 
-							// Connection state (left/right to toggle) - shown as text
+							// Connection state (left/right to toggle) - shown as ✓/✗
 							const wantConnected = connectionChanges.has(server.name)
 								? connectionChanges.get(server.name)!
 								: server.connected;
 							const connLabel = wantConnected
-								? theme.fg("success", "enabled")
-								: theme.fg("dim", "disabled");
+								? theme.fg("success", "✓")
+								: theme.fg("dim", "✗");
 
 							const cursor = isSelected ? "→ " : "  ";
-							const nameWithTools = `${server.name} (${server.toolCount})`.padEnd(nameWithToolsWidth);
+							const toolCount = theme.fg("dim", `(${server.toolCount})`);
 
 							if (isSelected) {
-								lines.push(theme.fg("accent", cursor) + directBulb + theme.fg("accent", ` ${nameWithTools}`) + " " + connLabel);
+								lines.push(theme.fg("accent", cursor) + directBulb + theme.fg("accent", ` ${server.name} `) + toolCount + " " + connLabel);
 							} else {
-								lines.push(`${cursor}${directBulb} ${nameWithTools} ${connLabel}`);
+								lines.push(`${cursor}${directBulb} ${server.name} ${toolCount} ${connLabel}`);
 							}
 						}
 

@@ -9,9 +9,9 @@
     "npm:context-mode"
   ],
   "enabledModels": [
-    "github-copilot/claude-opus-4.7",
     "github-copilot/claude-opus-4.6",
-    "github-copilot/gpt-5.5"
+    "github-copilot/gpt-5.5",
+    "github-copilot/claude-opus-4.7"
   ],
   "doubleEscapeAction": "none"
 }
