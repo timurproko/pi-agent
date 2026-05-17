@@ -551,12 +551,6 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 		const alreadyConnected = detectAlreadyConnected(pi);
 		for (const name of alreadyConnected) connectedServers.add(name);
 
-		// Also mark directTools servers as connected (their tools are always active)
-		const allConfigured = readConfiguredServers();
-		for (const [name, cfg] of Object.entries(allConfigured)) {
-			if ((cfg as any)?.directTools) connectedServers.add(name);
-		}
-
 		ctx.ui.setStatus = ((key: string, text?: string) => {
 			interceptSetStatus(ctx, key, text);
 		}) as typeof ctx.ui.setStatus;
