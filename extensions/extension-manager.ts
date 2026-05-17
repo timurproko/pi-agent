@@ -475,8 +475,14 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 							}
 						}
 
+						// Unsaved indicator
+						const hasChanges = exts.some(ext => (desired.get(ext.entryFile) ?? ext.enabled) !== ext.enabled);
+
 						lines.push("");
-						lines.push(theme.fg("dim", "↑↓ navigate · space toggle · enter apply & reload · esc cancel"));
+						lines.push(theme.fg("dim", "↑↓ navigate · enter toggle · ctrl+s save & reload · esc cancel"));
+						if (hasChanges) {
+							lines.push(theme.fg("warning", "(unsaved)"));
+						}
 						lines.push(theme.fg("border", "─".repeat(width)));
 
 						return lines;
@@ -490,11 +496,13 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 						} else if (data === "\x1B" || data === "q") {
 							done("cancel");
 							return;
-						} else if (data === " ") {
+						} else if (data === "\r" || data === "\n") {
+							// Enter: toggle selected extension
 							const ext = exts[selectedIndex];
 							const current = desired.get(ext.entryFile) ?? ext.enabled;
 							desired.set(ext.entryFile, !current);
-						} else if (data === "\r" || data === "\n") {
+						} else if (data === "\x13") {
+							// Ctrl+S: save & apply
 							done("apply");
 							return;
 						}

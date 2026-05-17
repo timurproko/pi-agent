@@ -325,9 +325,10 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 		});
 	}
 
-	pi.registerCommand("mcp-status", {
+	const mcpStatusCommand = {
 		description: "Show MCP server connection status",
-		handler: async (_args, ctx) => {
+		handler: async (_args: string, ctx: any) => {
+
 			toolToServer = buildToolToServerMap();
 			const servers = getMcpServers();
 
@@ -388,8 +389,14 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 							}
 						}
 
+						// Unsaved indicator
+						const hasChanges = connectionChanges.size > 0 || directChanges.size > 0;
+
 						lines.push("");
-						lines.push(theme.fg("dim", "↑↓ navigate · ←→ connect/disconnect · space direct · enter apply · esc close"));
+						lines.push(theme.fg("dim", "↑↓ navigate · enter toggle · space direct · ctrl+s save · esc close"));
+						if (hasChanges) {
+							lines.push(theme.fg("warning", "(unsaved)"));
+						}
 						lines.push(theme.fg("border", "─".repeat(width)));
 
 						return lines;
@@ -403,8 +410,8 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 						} else if (data === "\x1B" || data === "q") {
 							done(undefined);
 							return;
-						} else if (data === "\x1B[D" || data === "\x1B[C") {
-							// Left/Right: toggle connection state
+						} else if (data === "\r" || data === "\n") {
+							// Enter: toggle connection state
 							const server = servers[selectedIndex];
 							const current = connectionChanges.has(server.name)
 								? connectionChanges.get(server.name)!
@@ -417,7 +424,8 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 								? directChanges.get(server.name)!
 								: directState.get(server.name) ?? false;
 							directChanges.set(server.name, !current);
-						} else if (data === "\r" || data === "\n") {
+						} else if (data === "\x13") {
+							// Ctrl+S: save/apply
 							done({ action: "apply", connectionChanges: Object.fromEntries(connectionChanges), directChanges: Object.fromEntries(directChanges) });
 							return;
 						}
@@ -511,13 +519,20 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 				}
 			}
 		},
-	});
+	};
+
+	let commandRegistered = false;
 
 	// ─── Events ─────────────────────────────────────────────────────
 
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
 		if (!pi.getAllTools().some((t) => t.name === "mcp")) return;
+
+		if (!commandRegistered) {
+			commandRegistered = true;
+			pi.registerCommand("mcp-status", mcpStatusCommand);
+		}
 
 		activeCtx = ctx;
 		originalSetStatus = ctx.ui.setStatus.bind(ctx.ui);
