@@ -3,7 +3,7 @@
     "context-mode": {
       "command": "context-mode",
       "env": {},
-      "directTools": false
+      "directTools": true
     },
     "unity-stdio": {
       "command": "uvx",

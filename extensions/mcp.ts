@@ -389,8 +389,18 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 							}
 						}
 
-						// Unsaved indicator
-						const hasChanges = connectionChanges.size > 0 || directChanges.size > 0;
+						// Unsaved indicator — only true when desired state differs from original
+						let hasChanges = false;
+						for (const [name, want] of connectionChanges) {
+							const original = servers.find(s => s.name === name)?.connected ?? false;
+							if (want !== original) { hasChanges = true; break; }
+						}
+						if (!hasChanges) {
+							for (const [name, want] of directChanges) {
+								const original = directState.get(name) ?? false;
+								if (want !== original) { hasChanges = true; break; }
+							}
+						}
 
 						lines.push("");
 						lines.push(theme.fg("dim", "↑↓ navigate · enter toggle · space direct · ctrl+s save · esc close"));
