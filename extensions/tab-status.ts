@@ -34,6 +34,7 @@ const STATUS_TEXT: Record<StatusState, string> = {
 	timeout: "timeout",
 };
 
+
 const INACTIVE_TIMEOUT_MS = 180_000;
 const GIT_COMMIT_RE = /\bgit\b[^\n]*\bcommit\b/;
 
@@ -51,7 +52,7 @@ export default function (pi: ExtensionAPI) {
 	const setTitle = (ctx: ExtensionContext, next: StatusState): void => {
 		status.state = next;
 		if (!ctx.hasUI) return;
-		ctx.ui.setTitle(`pi • ${STATUS_TEXT[next]}`);
+		ctx.ui.setTitle(`π - ${STATUS_TEXT[next]}`);
 	};
 
 	const clearTabTimeout = (): void => {
@@ -168,7 +169,7 @@ export default function (pi: ExtensionAPI) {
 			async (_event: SessionShutdownEvent, ctx: ExtensionContext) => {
 				clearTabTimeout();
 				if (!ctx.hasUI) return;
-				ctx.ui.setTitle(`pi`);
+				ctx.ui.setTitle(`π - agent`);
 			},
 		],
 	] as const;

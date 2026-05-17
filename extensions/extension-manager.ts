@@ -479,7 +479,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 						const hasChanges = exts.some(ext => (desired.get(ext.entryFile) ?? ext.enabled) !== ext.enabled);
 
 						lines.push("");
-						lines.push(theme.fg("dim", "↑↓ navigate · enter toggle · ctrl+s save & reload · esc cancel"));
+						lines.push(theme.fg("dim", "↑↓ navigate · enter toggle · ctrl+a toggle all · ctrl+s save & reload · esc cancel"));
 						if (hasChanges) {
 							lines.push(theme.fg("warning", "(unsaved)"));
 						}
@@ -501,6 +501,13 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 							const ext = exts[selectedIndex];
 							const current = desired.get(ext.entryFile) ?? ext.enabled;
 							desired.set(ext.entryFile, !current);
+						} else if (data === "\x01") {
+							// Ctrl+A: toggle all extensions
+							const toggleable = exts.filter(e => !e.isSelf);
+							const allEnabled = toggleable.every(e => desired.get(e.entryFile) ?? e.enabled);
+							for (const ext of toggleable) {
+								desired.set(ext.entryFile, !allEnabled);
+							}
 						} else if (data === "\x13") {
 							// Ctrl+S: save & apply
 							done("apply");

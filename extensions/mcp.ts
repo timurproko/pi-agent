@@ -175,9 +175,9 @@ function formatStatusBar(
 	if (total === 0) return paintMuted(ctx, "mcp: —");
 
 	if (connectingName) {
-		const dots = ".".repeat((pulseFrame % 3) + 1);
-		const pad = " ".repeat(3 - dots.length);
-		return `${paintMuted(ctx, "mcp: ")}${paintMuted(ctx, `${connectingName} connecting${dots}${pad}`)}`;
+		const dots = ".".repeat(pulseFrame % 4);
+		const pad = " ".repeat(3 - Math.min(dots.length, 3));
+		return `${paintMuted(ctx, `${connectingName}${dots}${pad}`)}`;
 	}
 
 	const count = connectedNames.length;
@@ -609,7 +609,8 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 
 		// Ask before starting any configured MCP server. This is universal: it
 		// covers the mcp gateway and direct server tools such as ctx_execute.
-		if (targetServer && !connectedServers.has(targetServer)) {
+		// Skip the prompt if directTools is enabled — auto-connect silently.
+		if (targetServer && !connectedServers.has(targetServer) && !isDirectToolsEnabled(targetServer)) {
 			if (!ctx.hasUI) {
 				return { block: true, reason: `MCP connect blocked: enable the ${targetServer} server first.` };
 			}
