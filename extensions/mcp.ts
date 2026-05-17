@@ -377,8 +377,8 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 								? connectionChanges.get(server.name)!
 								: server.connected;
 							const connLabel = wantConnected
-								? theme.fg("success", "[enabled]")
-								: theme.fg("dim", "[disabled]");
+								? theme.fg("success", "enabled")
+								: theme.fg("dim", "disabled");
 
 							const cursor = isSelected ? "→ " : "  ";
 							const nameWithTools = `${server.name} (${server.toolCount})`.padEnd(nameWithToolsWidth);
