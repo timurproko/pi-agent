@@ -177,7 +177,7 @@ function formatStatusBar(
 	if (connectingName) {
 		const dots = ".".repeat(pulseFrame % 4);
 		const pad = " ".repeat(3 - Math.min(dots.length, 3));
-		return `${paintMuted(ctx, `${connectingName}${dots}${pad}`)}`;
+		return `${paintMuted(ctx, "mcp: ")}${paintMuted(ctx, `${connectingName}${dots}${pad}`)}`;
 	}
 
 	const count = connectedNames.length;
