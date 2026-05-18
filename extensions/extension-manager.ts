@@ -23,9 +23,7 @@
  * changes we call `ctx.reload()` to re-run discovery.
  */
 
-import { execSync } from "node:child_process";
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, InteractiveMode } from "@earendil-works/pi-coding-agent";
@@ -143,62 +141,13 @@ function resolveDirEntry(dir: string): { entryFile: string; enabled: boolean } |
 }
 
 /**
- * Resolve the npm global `node_modules` directory.
- *   1. cached value (this never changes within a process)
- *   2. derive from the install path of `@earendil-works/pi-coding-agent`
- *      — we are loaded from <npm-root>/@earendil-works/pi-coding-agent so the
- *      parent's parent of its package.json is the global node_modules dir
- *   3. fall back to `npm root -g` (slow on Windows, hence last)
+ * Resolve pi's npm root. Pi installs packages into the agent-local prefix
+ * (`~/.pi/agent/npm/node_modules`); the legacy global npm root is no longer
+ * consulted.
  */
-// Extensions load as ES modules; `require` is not on globalThis. Build a
-// require() bound to this module's URL so require.resolve() works for the
-// npm-root lookup below.
-const extRequire = createRequire(import.meta.url);
-
-let cachedNpmGlobalRoot: string | null | undefined;
-function getNpmGlobalRoot(): string | null {
-	if (cachedNpmGlobalRoot !== undefined) return cachedNpmGlobalRoot;
-
-	try {
-		const pkgPath = extRequire.resolve("@earendil-works/pi-coding-agent/package.json");
-		// pkgPath is <root>/@earendil-works/pi-coding-agent/package.json
-		const candidate = path.resolve(pkgPath, "..", "..", "..");
-		if (fs.existsSync(candidate)) {
-			cachedNpmGlobalRoot = candidate;
-			return candidate;
-		}
-	} catch {
-		// fall through to `npm root -g`
-	}
-
-	try {
-		const out = execSync("npm root -g", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
-		const trimmed = out.trim();
-		if (trimmed && fs.existsSync(trimmed)) {
-			cachedNpmGlobalRoot = trimmed;
-			return trimmed;
-		}
-	} catch {
-		// ignore
-	}
-
-	cachedNpmGlobalRoot = null;
-	return null;
-}
-
-/**
- * Return all npm roots pi might have installed packages into:
- *   1. Agent-local: ~/.pi/agent/npm/node_modules  (default since recent pi update)
- *   2. Global:      <npm root -g>                  (legacy installs)
- * Deduplicated, existence-checked, order preserved.
- */
-function getNpmRoots(): string[] {
-	const roots: string[] = [];
-	const agentLocal = path.join(getAgentDir(), "npm", "node_modules");
-	if (fs.existsSync(agentLocal)) roots.push(agentLocal);
-	const global = getNpmGlobalRoot();
-	if (global && !roots.includes(global) && fs.existsSync(global)) roots.push(global);
-	return roots;
+function getPiNpmRoot(): string | null {
+	const root = path.join(getAgentDir(), "npm", "node_modules");
+	return fs.existsSync(root) ? root : null;
 }
 
 /** npm package names declared in settings.json `packages` (without `npm:` prefix). */
@@ -223,23 +172,12 @@ function readConfiguredNpmPackageNames(): string[] {
  * basename so users can tell sibling rows apart.
  */
 function discoverNpmExtensions(): ExtensionInfo[] {
-	const roots = getNpmRoots();
-	if (roots.length === 0) return [];
+	const root = getPiNpmRoot();
+	if (!root) return [];
 	const out: ExtensionInfo[] = [];
-	const seenPkgDirs = new Set<string>();
 
 	for (const pkgName of readConfiguredNpmPackageNames()) {
-		// Try each root; first hit wins (agent-local takes precedence over global).
-		let pkgDir: string | null = null;
-		for (const root of roots) {
-			const candidate = path.join(root, pkgName);
-			if (fs.existsSync(path.join(candidate, "package.json"))) {
-				pkgDir = candidate;
-				break;
-			}
-		}
-		if (!pkgDir || seenPkgDirs.has(pkgDir)) continue;
-		seenPkgDirs.add(pkgDir);
+		const pkgDir = path.join(root, pkgName);
 		const pkgJson = path.join(pkgDir, "package.json");
 		if (!fs.existsSync(pkgJson)) continue;
 
