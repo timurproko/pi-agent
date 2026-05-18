@@ -1,8 +1,8 @@
 {
   "quietStartup": true,
-  "lastChangelogVersion": "0.74.1",
+  "lastChangelogVersion": "0.75.2",
   "defaultProvider": "github-copilot",
-  "defaultModel": "claude-opus-4.6",
+  "defaultModel": "claude-opus-4.7",
   "defaultThinkingLevel": "medium",
   "packages": [
     "npm:pi-mcp-adapter",
@@ -11,7 +11,8 @@
   "enabledModels": [
     "github-copilot/claude-opus-4.6",
     "github-copilot/gpt-5.5",
-    "github-copilot/claude-opus-4.7"
+    "github-copilot/claude-opus-4.7",
+    "github-copilot/gpt-5.3-codex"
   ],
   "doubleEscapeAction": "none"
 }
