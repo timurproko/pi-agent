@@ -1,7 +1,7 @@
 /**
- * This extension stores todo items as files under <todo-dir> (defaults to todos,
- * or the path in PI_TODO_PATH).  Each todo is a standalone markdown file named
- * <id>.md and an optional <id>.lock file is used while a session is editing it.
+ * This extension stores todo items as files under ~/.pi/agent/todo.
+ * Each todo is a standalone markdown file named <id>.md and an optional
+ * <id>.lock file is used while a session is editing it.
  *
  * File format in todos:
  * - The file starts with a JSON object (not YAML) containing the front matter:
@@ -33,6 +33,7 @@ import { DynamicBorder, copyToClipboard, getMarkdownTheme, keyHint, type Extensi
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import path from "node:path";
+import os from "node:os";
 import fs from "node:fs/promises";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import crypto from "node:crypto";
@@ -53,8 +54,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
-const TODO_DIR_NAME = "todos";
-const TODO_PATH_ENV = "PI_TODO_PATH";
+const TODO_DIR_PATH = [".pi", "agent", "todo"];
 const TODO_SETTINGS_NAME = "settings.json";
 const TODO_ID_PREFIX = "TODO-";
 const TODO_ID_PATTERN = /^[a-f0-9]{8}$/i;
@@ -719,20 +719,12 @@ class TodoDetailOverlayComponent {
 	}
 }
 
-function getTodosDir(cwd: string): string {
-	const overridePath = process.env[TODO_PATH_ENV];
-	if (overridePath && overridePath.trim()) {
-		return path.resolve(cwd, overridePath.trim());
-	}
-	return path.resolve(cwd, TODO_DIR_NAME);
+function getTodosDir(_cwd: string): string {
+	return path.join(os.homedir(), ...TODO_DIR_PATH);
 }
 
-function getTodosDirLabel(cwd: string): string {
-	const overridePath = process.env[TODO_PATH_ENV];
-	if (overridePath && overridePath.trim()) {
-		return path.resolve(cwd, overridePath.trim());
-	}
-	return TODO_DIR_NAME;
+function getTodosDirLabel(_cwd: string): string {
+	return path.join("~", ...TODO_DIR_PATH);
 }
 
 function getTodoSettingsPath(todosDir: string): string {
@@ -1798,7 +1790,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("todos", {
-		description: "List todos from todos", 
+		description: `List todos from ${getTodosDirLabel(process.cwd())}`,
 		handler: async (args, ctx) => {
 			const todosDir = getTodosDir(ctx.cwd);
 			const todos = await listTodos(todosDir);

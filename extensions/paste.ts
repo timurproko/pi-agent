@@ -57,6 +57,16 @@ interface PendingUrl {
   url: string;
 }
 
+interface PendingValueTag {
+  tag: string;
+  value: string;
+}
+
+interface PendingPathTag {
+  tag: string;
+  fullPath: string;
+}
+
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
 function getErrorMessage(error: unknown): string {
@@ -502,18 +512,28 @@ function containsHoudiniPath(text: string): boolean {
   return HOUDINI_PATH_RE.test(text);
 }
 
+function makeUniqueHoudiniChip(fullPath: string, pathMap: Map<string, string>): string {
+  const segments = fullPath.split("/").filter(Boolean);
+  const labels: string[] = [];
+  for (let depth = 1; depth <= segments.length; depth++) {
+    labels.push(segments.slice(-depth).join("/"));
+  }
+  labels.push(fullPath);
+
+  for (const label of [...new Set(labels.filter((candidate) => candidate.length > 0))]) {
+    const chip = `[🟧 ${label}]`;
+    if (!pathMap.has(chip) || pathMap.get(chip) === fullPath) return chip;
+  }
+
+  return `[🟧 ${segments[segments.length - 1] ?? "path"}-${randomBytes(2).toString("hex")}]`;
+}
+
 function replaceHoudiniPaths(content: string, pathMap: Map<string, string>): string | undefined {
   HOUDINI_PATH_RE.lastIndex = 0;
   if (!HOUDINI_PATH_RE.test(content)) return undefined;
   HOUDINI_PATH_RE.lastIndex = 0;
   const transformed = content.replace(HOUDINI_PATH_RE, (match) => {
-    const segments = match.split("/").filter(Boolean);
-    const nodeName = segments[segments.length - 1]!;
-    let chip = `[🟧 ${nodeName}]`;
-    if (pathMap.has(chip) && pathMap.get(chip) !== match) {
-      const parent = segments[segments.length - 2] ?? segments[0];
-      chip = `[🟧 ${parent}/${nodeName}]`;
-    }
+    const chip = makeUniqueHoudiniChip(match, pathMap);
     pathMap.set(chip, match);
     return chip;
   });
@@ -555,10 +575,88 @@ function makeFolderTag(folderPath: string): string {
   return `[📁 ${path.basename(folderPath.trim())}]`;
 }
 
+function normalizePathForComparison(fullPath: string): string {
+  const normalized = path.normalize(fullPath.trim());
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function displayPathWithForwardSlashes(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function getPathSegments(fullPath: string): string[] {
+  const normalized = path.normalize(fullPath.trim());
+  const parsed = path.parse(normalized);
+  const relative = normalized.slice(parsed.root.length);
+  return relative.split(/[\\/]+/).filter((segment) => segment.length > 0);
+}
+
+function buildPathLabelCandidates(fullPath: string): string[] {
+  const trimmed = fullPath.trim();
+  const normalized = path.normalize(trimmed);
+  const parsed = path.parse(normalized);
+  const segments = getPathSegments(fullPath);
+  const labels: string[] = [];
+
+  for (let depth = 1; depth <= segments.length; depth++) {
+    labels.push(segments.slice(-depth).join("/"));
+  }
+
+  const root = parsed.root.replace(/[\\/]+$/g, "");
+  if (root && segments.length > 0) labels.push(`${displayPathWithForwardSlashes(root)}/${segments.join("/")}`);
+  labels.push(displayPathWithForwardSlashes(normalized));
+
+  return [...new Set(labels.filter((label) => label.length > 0))];
+}
+
+function makeUniqueValueTag(
+  value: string,
+  pending: readonly PendingValueTag[],
+  suggestedTag: string,
+  makeFallbackTag: () => string,
+): string {
+  if (!pending.some((item) => item.tag === suggestedTag && item.value !== value)) return suggestedTag;
+  const fallbackTag = makeFallbackTag();
+  if (!pending.some((item) => item.tag === fallbackTag && item.value !== value)) return fallbackTag;
+  return makeFallbackTag();
+}
+
+function makeUniquePathTag(
+  fullPath: string,
+  pending: readonly PendingPathTag[],
+  makeTagFromLabel: (label: string) => string,
+): string {
+  const normalizedFullPath = normalizePathForComparison(fullPath);
+  const conflicts = (tag: string): boolean => pending.some(
+    (item) => item.tag === tag && normalizePathForComparison(item.fullPath) !== normalizedFullPath,
+  );
+
+  for (const label of buildPathLabelCandidates(fullPath)) {
+    const tag = makeTagFromLabel(label);
+    if (!conflicts(tag)) return tag;
+  }
+
+  return makeTagFromLabel(displayPathWithForwardSlashes(path.normalize(fullPath.trim())));
+}
+
+function makeUniqueFolderTag(folderPath: string, pendingFolders: readonly PendingFolder[], suggestedTag = makeFolderTag(folderPath)): string {
+  if (!pendingFolders.some((item) => item.tag === suggestedTag && normalizePathForComparison(item.fullPath) !== normalizePathForComparison(folderPath))) {
+    return suggestedTag;
+  }
+  return makeUniquePathTag(folderPath, pendingFolders, (label) => `[📁 ${label}]`);
+}
+
 const IMAGE_EXT_RE = /\.(jpe?g|png)$/i;
 function makeFileTag(filePath: string): string {
   const name = path.basename(filePath.trim());
   return IMAGE_EXT_RE.test(name) ? `[🖼  ${name}]` : `[📄 ${name}]`;
+}
+
+function makeUniqueFileTag(filePath: string, pendingFiles: readonly PendingFile[], suggestedTag = makeFileTag(filePath)): string {
+  if (!pendingFiles.some((item) => item.tag === suggestedTag && normalizePathForComparison(item.fullPath) !== normalizePathForComparison(filePath))) {
+    return suggestedTag;
+  }
+  return makeUniquePathTag(filePath, pendingFiles, (label) => IMAGE_EXT_RE.test(path.basename(filePath.trim())) ? `[🖼  ${label}]` : `[📄 ${label}]`);
 }
 
 const URL_RE = /^https?:\/\/[^\s]+$/i;
@@ -572,6 +670,15 @@ const URL_DISPLAY_MAX = 40;
 function makeUrlTag(url: string): string {
   const trimmed = url.trim();
   return trimmed.length <= URL_DISPLAY_MAX ? `[🔗 ${trimmed}]` : `[🔗 ${trimmed.slice(0, URL_DISPLAY_MAX)}...]`;
+}
+
+function makeUniqueUrlTag(url: string, pendingUrls: readonly PendingUrl[], suggestedTag = makeUrlTag(url)): string {
+  return makeUniqueValueTag(
+    url,
+    pendingUrls.map((item) => ({ tag: item.tag, value: item.url })),
+    suggestedTag,
+    () => `[🔗 ${url.trim().slice(0, Math.max(1, URL_DISPLAY_MAX - 9))}...#${randomBytes(2).toString("hex")}]`,
+  );
 }
 
 interface InterceptorState {
@@ -947,9 +1054,9 @@ function registerPasteInterceptor(
   ctx: PasteContext,
   handler: (ctx: PasteContext, tag: string) => void,
   generateTag: () => string,
-  folderHandler?: (ctx: PasteContext, fullPath: string, tag: string) => void,
-  fileHandler?: (ctx: PasteContext, fullPath: string, tag: string) => void,
-  urlHandler?: (ctx: PasteContext, url: string, tag: string) => void,
+  folderHandler?: (ctx: PasteContext, fullPath: string, tag: string) => string | void,
+  fileHandler?: (ctx: PasteContext, fullPath: string, tag: string) => string | void,
+  urlHandler?: (ctx: PasteContext, url: string, tag: string) => string | void,
   houdiniPathMap?: Map<string, string>,
 ): () => void {
   if (!ui || typeof ui.onTerminalInput !== "function") return () => {};
@@ -1011,23 +1118,28 @@ function registerPasteInterceptor(
             if (isDirectoryPath(content)) {
               const prefix = buffer.slice(0, beginIdx);
               const tail = rest.slice(endIdx + PASTE_END.length);
-              const tag = makeFolderTag(content);
-              folderHandler(ctx, content.trim(), tag);
+              const fullPath = content.trim();
+              const suggestedTag = makeFolderTag(fullPath);
+              const handlerTag = folderHandler(ctx, fullPath, suggestedTag);
+              const tag = typeof handlerTag === "string" && handlerTag.length > 0 ? handlerTag : suggestedTag;
               return { data: prefix + leadingSpaceFor(ui, prefix) + tag + " " + tail };
             }
             if (fileHandler && isFilePath(content)) {
               const prefix = buffer.slice(0, beginIdx);
               const tail = rest.slice(endIdx + PASTE_END.length);
-              const tag = makeFileTag(content);
-              fileHandler(ctx, content.trim(), tag);
+              const fullPath = content.trim();
+              const suggestedTag = makeFileTag(fullPath);
+              const handlerTag = fileHandler(ctx, fullPath, suggestedTag);
+              const tag = typeof handlerTag === "string" && handlerTag.length > 0 ? handlerTag : suggestedTag;
               return { data: prefix + leadingSpaceFor(ui, prefix) + tag + " " + tail };
             }
             if (urlHandler && isUrl(content)) {
               const prefix = buffer.slice(0, beginIdx);
               const tail = rest.slice(endIdx + PASTE_END.length);
               const trimmedUrl = content.trim();
-              const tag = makeUrlTag(trimmedUrl);
-              urlHandler(ctx, trimmedUrl, tag);
+              const suggestedTag = makeUrlTag(trimmedUrl);
+              const handlerTag = urlHandler(ctx, trimmedUrl, suggestedTag);
+              const tag = typeof handlerTag === "string" && handlerTag.length > 0 ? handlerTag : suggestedTag;
               return { data: prefix + leadingSpaceFor(ui, prefix) + tag + " " + tail };
             }
             if (houdiniPathMap && containsHoudiniPath(content)) {
@@ -1314,9 +1426,21 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
     try {
       pasteInterceptorUnsubscribe = registerPasteInterceptor(
         ctx.ui, ctx, startImageRead, generateImageTag,
-        (_ctx: PasteContext, fullPath: string, tag: string) => { pendingFolders.push({ tag, fullPath }); },
-        (_ctx: PasteContext, fullPath: string, tag: string) => { pendingFiles.push({ tag, fullPath }); },
-        (_ctx: PasteContext, url: string, tag: string) => { pendingUrls.push({ tag, url }); },
+        (_ctx: PasteContext, fullPath: string, tag: string) => {
+          const uniqueTag = makeUniqueFolderTag(fullPath, pendingFolders, tag);
+          pendingFolders.push({ tag: uniqueTag, fullPath });
+          return uniqueTag;
+        },
+        (_ctx: PasteContext, fullPath: string, tag: string) => {
+          const uniqueTag = makeUniqueFileTag(fullPath, pendingFiles, tag);
+          pendingFiles.push({ tag: uniqueTag, fullPath });
+          return uniqueTag;
+        },
+        (_ctx: PasteContext, url: string, tag: string) => {
+          const uniqueTag = makeUniqueUrlTag(url, pendingUrls, tag);
+          pendingUrls.push({ tag: uniqueTag, url });
+          return uniqueTag;
+        },
         houdiniPathMap,
       );
     } catch {}

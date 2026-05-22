@@ -5742,7 +5742,7 @@
           "description": "All currently open editor windows with their titles, types, positions, and focus state.\n\nURI: mcpforunity://editor/windows"
         }
       ],
-      "cachedAt": 1779116775287
+      "cachedAt": 1779441937057
     },
     "houdini": {
       "configHash": "d64b6db7b333563542b474515ea517d6af529c9ef9158c840c1a89c86836c7e3",
