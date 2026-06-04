@@ -1202,6 +1202,42 @@ function generateImageTag(): string {
   return `[📷 clipboard-${hash}.png]`;
 }
 
+const IMAGE_TAG_RE_SRC = "\\[\\u{1F4F7} clipboard-[a-f0-9]+\\.png\\]";
+
+function extractImageTags(text: string): string[] {
+  return [...new Set([...text.matchAll(new RegExp(IMAGE_TAG_RE_SRC, "gu"))].map((match) => match[0]))];
+}
+
+function readContentText(item: unknown): string {
+  if (!item || typeof item !== "object") return "";
+  const value = (item as { text?: unknown }).text;
+  return typeof value === "string" ? value : "";
+}
+
+function readContentImage(item: unknown): { data: string; mimeType: string } | null {
+  if (!item || typeof item !== "object") return null;
+  const candidate = item as {
+    type?: unknown;
+    data?: unknown;
+    mimeType?: unknown;
+    source?: { type?: unknown; data?: unknown; mediaType?: unknown };
+  };
+  if (candidate.type !== "image") return null;
+
+  const data = typeof candidate.data === "string"
+    ? candidate.data
+    : candidate.source?.type === "base64" && typeof candidate.source.data === "string"
+      ? candidate.source.data
+      : null;
+  const mimeType = typeof candidate.mimeType === "string"
+    ? candidate.mimeType
+    : typeof candidate.source?.mediaType === "string"
+      ? candidate.source.mediaType
+      : "image/png";
+
+  return data ? { data, mimeType } : null;
+}
+
 const API_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 function resizeImageViaPowerShell(
@@ -1300,6 +1336,7 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
   setImmediate(() => { void loadPhoton().catch(() => {}); });
 
   const pendingImages: PendingImage[] = [];
+  const imageArchive = new Map<string, PendingImage>();
   const pendingFolders: PendingFolder[] = [];
   const pendingFiles: PendingFile[] = [];
   const pendingUrls: PendingUrl[] = [];
@@ -1315,7 +1352,9 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
         return;
       }
       const prepared = await prepareImageForAttachment(image);
-      pendingImages.push({ type: "image", tag, data: prepared.data, mimeType: prepared.mimeType });
+      const pendingImage = { type: "image" as const, tag, data: prepared.data, mimeType: prepared.mimeType };
+      pendingImages.push(pendingImage);
+      imageArchive.set(tag, pendingImage);
     } catch (error) {
       ctx.ui.notify(`Image paste failed: ${getErrorMessage(error)}`, "warning");
     }
@@ -1330,10 +1369,33 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
     });
   };
 
+  const restoreImageArchiveFromSession = (ctx: PasteContext): void => {
+    try {
+      const entries = ctx.sessionManager.getBranch();
+      for (const entry of entries) {
+        const maybeMessage = entry as { type?: unknown; message?: { role?: unknown; content?: unknown } };
+        if (maybeMessage.type !== "message" || maybeMessage.message?.role !== "user") continue;
+        const content = maybeMessage.message.content;
+        if (!Array.isArray(content)) continue;
+
+        const tags = extractImageTags(content.map(readContentText).join("\n"));
+        if (tags.length === 0) continue;
+
+        const images = content.map(readContentImage).filter((img): img is { data: string; mimeType: string } => img !== null);
+        for (let i = 0; i < Math.min(tags.length, images.length); i++) {
+          if (!imageArchive.has(tags[i])) {
+            imageArchive.set(tags[i], { type: "image", tag: tags[i], data: images[i].data, mimeType: images[i].mimeType });
+          }
+        }
+      }
+    } catch {}
+  };
+
   pi.on("input", async (event) => {
     if (event.source === "extension") return { action: "continue" as const };
 
-    const hasImageTags = /\[\u{1F4F7} clipboard-[a-f0-9]+\.png\]/u.test(event.text);
+    const referencedImageTags = extractImageTags(event.text);
+    const hasImageTags = referencedImageTags.length > 0;
     const hasFolderTags = /\[\u{1F4C1} [^\]]+\]/u.test(event.text);
     const hasFileTags = /\[(?:\u{1F4C4}|\u{1F5BC}) {1,2}[^\]]+\]/u.test(event.text);
     const hasUrlTags = /\[\u{1F517} [^\]]+\]/u.test(event.text);
@@ -1353,7 +1415,18 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
       return { action: "continue" as const };
     }
 
-    const images = pendingImages.splice(0);
+    const referencedImageTagSet = new Set(referencedImageTags);
+    const pendingImageMap = new Map(pendingImages.map((img) => [img.tag, img]));
+    for (const image of pendingImages) imageArchive.set(image.tag, image);
+
+    const images = referencedImageTags
+      .map((tag) => pendingImageMap.get(tag) ?? imageArchive.get(tag))
+      .filter((img): img is PendingImage => img !== undefined);
+
+    for (let i = pendingImages.length - 1; i >= 0; i--) {
+      if (referencedImageTagSet.has(pendingImages[i].tag)) pendingImages.splice(i, 1);
+    }
+
     const folders = pendingFolders.splice(0);
     const files = pendingFiles.splice(0);
     const urls = pendingUrls.splice(0);
@@ -1397,6 +1470,10 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
       }),
     );
     const filteredImages = safeImages.filter((img): img is NonNullable<typeof img> => img !== null);
+    for (const image of filteredImages) {
+      const tag = (image as { tag?: unknown }).tag;
+      if (typeof tag === "string") imageArchive.set(tag, image as PendingImage);
+    }
 
     return {
       action: "transform" as const,
@@ -1448,6 +1525,7 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (_event, ctx) => {
     houdiniPathMap.clear();
+    restoreImageArchiveFromSession(ctx);
     installPasteInterceptor(ctx);
     // Pre-warm clipboard module + photon WASM so the first paste doesn't pay
     // first-load cost. Both are best-effort and run off the hot path.
@@ -1456,6 +1534,7 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (_event, ctx) => {
+    restoreImageArchiveFromSession(ctx);
     installPasteInterceptor(ctx);
   });
 }

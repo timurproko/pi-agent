@@ -5,27 +5,10 @@
       "env": {},
       "directTools": true
     },
-    "unity-stdio": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "mcpforunityserver",
-        "mcp-for-unity",
-        "--transport",
-        "stdio"
-      ],
-      "env": {},
+    "unity": {
+      "url": "http://localhost:26493",
+      "type": "http",
       "directTools": true
-    },
-    "unity-http": {
-      "url": "http://127.0.0.1:8080/mcp",
-      "type": "http",
-      "directTools": false
-    },
-    "ai-game-developer": {
-      "url": "http://localhost:25454",
-      "type": "http",
-      "directTools": false
     },
     "houdini": {
       "command": "C:/Users/tprokopiev/.local/bin/uv.exe",
@@ -43,7 +26,7 @@
         "MCP_TRANSPORT": "stdio",
         "LOG_LEVEL": "ERROR"
       },
-      "directTools": false
+      "directTools": true
     }
   }
 }

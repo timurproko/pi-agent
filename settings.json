@@ -1,12 +1,14 @@
 {
   "quietStartup": true,
-  "lastChangelogVersion": "0.75.4",
-  "defaultProvider": "github-copilot",
-  "defaultModel": "gpt-5.5",
+  "lastChangelogVersion": "0.78.1",
+  "defaultProvider": "cursor",
+  "defaultModel": "claude-4.6-sonnet-thinking",
   "defaultThinkingLevel": "medium",
   "packages": [
     "npm:pi-mcp-adapter",
-    "npm:context-mode"
+    "npm:context-mode",
+    "npm:pi-subagents",
+    "npm:pi-cursor-provider"
   ],
   "enabledModels": [
     "github-copilot/claude-opus-4.6",

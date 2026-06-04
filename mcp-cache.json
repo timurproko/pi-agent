@@ -985,6 +985,18 @@
                 ],
                 "default": null,
                 "description": "Camera FOV in degrees for batch='orbit' (default 60)."
+              },
+              "output_folder": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional folder for screenshot output. Project-relative (e.g. 'Assets/Screenshots' or 'Captures') or absolute path inside the project. Overrides the user's Editor preference. If omitted, falls back to the Editor preference, then to the built-in default (Assets/Screenshots)."
               }
             },
             "required": [
@@ -4873,6 +4885,17 @@
                 ],
                 "default": null
               },
+              "output_folder": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "stylesheet": {
                 "anyOf": [
                   {
@@ -5332,6 +5355,18 @@
                 "default": false,
                 "description": "Include details for all tests (default: false)",
                 "type": "boolean"
+              },
+              "init_timeout": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Initialization timeout in milliseconds. PlayMode tests may need longer due to domain reload (default: 15000). Recommended: 120000 for PlayMode."
               }
             },
             "additionalProperties": false
@@ -5742,7 +5777,7 @@
           "description": "All currently open editor windows with their titles, types, positions, and focus state.\n\nURI: mcpforunity://editor/windows"
         }
       ],
-      "cachedAt": 1779441937057
+      "cachedAt": 1780218502806
     },
     "houdini": {
       "configHash": "d64b6db7b333563542b474515ea517d6af529c9ef9158c840c1a89c86836c7e3",
@@ -10358,7 +10393,7 @@
         }
       ],
       "resources": [],
-      "cachedAt": 1778957865421
+      "cachedAt": 1780405513186
     },
     "context-mode": {
       "configHash": "be78da5140070409ccc777898ee8ec52513c847dbd47c30388998ff5352624fb",
@@ -10737,7 +10772,7 @@
       "cachedAt": 1778957371402
     },
     "ai-game-developer": {
-      "configHash": "43c89ea26642120b51a42adc2f1f96386b91c3caaff8b16d076fb9c42264fbfd",
+      "configHash": "afa78976305ce68b1b572b8bc1232ece05249230967d461279c42cbb34f2dab7",
       "tools": [
         {
           "name": "assets-find",
@@ -10750,7 +10785,7 @@
                 "description": "The filter string can contain search data. Could be empty. Name: Filter assets by their filename (without extension). Words separated by whitespace are treated as separate name searches. Labels (l:): Assets can have labels attached to them. Use 'l:' before each label. Types (t:): Find assets based on explicitly identified types. Use 't:' keyword. Available types: AnimationClip, AudioClip, AudioMixer, ComputeShader, Font, GUISkin, Material, Mesh, Model, PhysicMaterial, Prefab, Scene, Script, Shader, Sprite, Texture, VideoClip, VisualEffectAsset, VisualEffectSubgraph. AssetBundles (b:): Find assets which are part of an Asset bundle. Area (a:): Find assets in a specific area. Valid values are 'all', 'assets', and 'packages'. Globbing (glob:): Use globbing to match specific rules. Note: Searching is case insensitive."
               },
               "searchInFolders": {
-                "$ref": "#/$defs/System.String[]",
+                "$ref": "#/$defs/System.String-1",
                 "description": "The folders where the search will start. If null, the search will be performed in all folders."
               },
               "maxResults": {
@@ -10759,7 +10794,7 @@
               }
             },
             "$defs": {
-              "System.String[]": {
+              "System.String-1": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -10805,7 +10840,7 @@
                 "description": "Reference to UnityEngine.Object asset instance. It could be Material, ScriptableObject, Prefab, and any other Asset. Anything located in the Assets and Packages folders."
               },
               "paths": {
-                "$ref": "#/$defs/System.Collections.Generic.List<System.String>",
+                "$ref": "#/$defs/System.Collections.Generic.List(System.String)",
                 "description": "Optional. List of paths to read individually via Reflector.TryReadAt. Path syntax: 'fieldName', 'nested/field', 'arrayField/[i]', 'dictField/[key]'. Mutually exclusive with 'viewQuery'."
               },
               "viewQuery": {
@@ -10845,7 +10880,7 @@
                 ],
                 "description": "Reference to UnityEngine.Object asset instance. It could be Material, ScriptableObject, Prefab, and any other Asset. Anything located in the Assets and Packages folders."
               },
-              "System.Collections.Generic.List<System.String>": {
+              "System.Collections.Generic.List(System.String)": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -10911,7 +10946,7 @@
                 "description": "Optional. The asset content. It overrides the existing asset content (legacy path)."
               },
               "pathPatches": {
-                "$ref": "#/$defs/System.Collections.Generic.List<AIGD.PathPatch>",
+                "$ref": "#/$defs/System.Collections.Generic.List(AIGD.PathPatch)",
                 "description": "Optional. List of path-scoped patches routed through Reflector.TryModifyAt."
               },
               "jsonPatch": {
@@ -11006,7 +11041,7 @@
                   }
                 }
               },
-              "System.Collections.Generic.List<AIGD.PathPatch>": {
+              "System.Collections.Generic.List(AIGD.PathPatch)": {
                 "type": "array",
                 "items": {
                   "$ref": "#/$defs/AIGD.PathPatch"
@@ -11272,7 +11307,7 @@
                 "description": "Include pass source code in subshader data. Requires 'includeSubshaders' to be true. Can produce very large responses. Default: false"
               },
               "paths": {
-                "$ref": "#/$defs/System.Collections.Generic.List<System.String>",
+                "$ref": "#/$defs/System.Collections.Generic.List(System.String)",
                 "description": "Optional. List of paths to read individually via Reflector.TryReadAt against the underlying Shader asset. Path syntax: 'fieldName', 'nested/field', 'arrayField/[i]', 'dictField/[key]'. Mutually exclusive with 'viewQuery'."
               },
               "viewQuery": {
@@ -11315,7 +11350,7 @@
               "System.Boolean": {
                 "type": "boolean"
               },
-              "System.Collections.Generic.List<System.String>": {
+              "System.Collections.Generic.List(System.String)": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -11401,7 +11436,7 @@
             "type": "object",
             "properties": {
               "componentNames": {
-                "$ref": "#/$defs/System.String[]",
+                "$ref": "#/$defs/System.String-1",
                 "description": "Full name of the Component. It should include full namespace path and the class name."
               },
               "gameObjectRef": {
@@ -11414,7 +11449,7 @@
               "gameObjectRef"
             ],
             "$defs": {
-              "System.String[]": {
+              "System.String-1": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -11575,7 +11610,7 @@
                 "description": "Performs deep serialization including all nested objects. Otherwise, only serializes top-level members."
               },
               "paths": {
-                "$ref": "#/$defs/System.Collections.Generic.List<System.String>",
+                "$ref": "#/$defs/System.Collections.Generic.List(System.String)",
                 "description": "Optional. List of paths to read individually via Reflector.TryReadAt. When supplied, the legacy 'Fields'/'Properties' lists are skipped and the result is returned in 'View'. Path syntax: 'fieldName', 'nested/field', 'arrayField/[i]', 'dictField/[key]'. Mutually exclusive with 'viewQuery'."
               },
               "viewQuery": {
@@ -11646,7 +11681,7 @@
                 ],
                 "description": "Component reference. Used to find a Component at GameObject."
               },
-              "System.Collections.Generic.List<System.String>": {
+              "System.Collections.Generic.List(System.String)": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -11716,7 +11751,7 @@
                 "description": "Optional. The full component data to apply (legacy path). Should contain 'fields' and/or 'props' with the values to modify.\nOnly include the fields/properties you want to change.\nAny unknown or invalid fields and properties will be reported in the response."
               },
               "pathPatches": {
-                "$ref": "#/$defs/System.Collections.Generic.List<AIGD.PathPatch>",
+                "$ref": "#/$defs/System.Collections.Generic.List(AIGD.PathPatch)",
                 "description": "Optional. List of path-scoped patches routed through Reflector.TryModifyAt. Each entry targets one field/element/entry by path. Path syntax: 'fieldName', 'nested/field', 'arrayField/[i]', 'dictField/[key]'."
               },
               "jsonPatch": {
@@ -11842,7 +11877,7 @@
                   }
                 }
               },
-              "System.Collections.Generic.List<AIGD.PathPatch>": {
+              "System.Collections.Generic.List(AIGD.PathPatch)": {
                 "type": "array",
                 "items": {
                   "$ref": "#/$defs/AIGD.PathPatch"
@@ -12106,7 +12141,7 @@
                 "description": "Determines the depth of the hierarchy to include. 0 - means only the target GameObject. 1 - means to include one layer below."
               },
               "paths": {
-                "$ref": "#/$defs/System.Collections.Generic.List<System.String>",
+                "$ref": "#/$defs/System.Collections.Generic.List(System.String)",
                 "description": "Optional. List of paths to read individually via Reflector.TryReadAt. When supplied, replaces 'includeData'-style full serialization with a path-scoped aggregate. Path syntax: 'fieldName', 'nested/field', 'arrayField/[i]', 'dictField/[key]'. Mutually exclusive with 'viewQuery'."
               },
               "viewQuery": {
@@ -12154,7 +12189,7 @@
                 ],
                 "description": "Find GameObject in opened Prefab or in the active Scene."
               },
-              "System.Collections.Generic.List<System.String>": {
+              "System.Collections.Generic.List(System.String)": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -12199,11 +12234,11 @@
                 "description": "Optional. Each item in the array represents a GameObject modification of the 'gameObjectRefs' at the same index. Usually a GameObject is a container for components. Each component may have fields and properties for modification. If you need to modify components of a GameObject, please use 'gameobject-component-modify' tool. Ignore values that should not be modified. Any unknown or wrong located fields and properties will be ignored. Check the result of this command to see what was changed. The ignored fields and properties will be listed."
               },
               "pathPatchesPerGameObject": {
-                "$ref": "#/$defs/System.Collections.Generic.List<System.Collections.Generic.List<AIGD.PathPatch>>",
+                "$ref": "#/$defs/System.Collections.Generic.List(System.Collections.Generic.List(AIGD.PathPatch))",
                 "description": "Optional. Per-GameObject list of path-scoped patches routed through Reflector.TryModifyAt. Outer index aligns with 'gameObjectRefs'; inner list contains {path, value} entries. Pass null or omit for GameObjects that should not receive path patches."
               },
               "jsonPatchesPerGameObject": {
-                "$ref": "#/$defs/System.Collections.Generic.List<System.String>",
+                "$ref": "#/$defs/System.Collections.Generic.List(System.String)",
                 "description": "Optional. Per-GameObject JSON Merge Patch (RFC 7396, extended with [i]/[key] keys) routed through Reflector.TryPatch. Outer index aligns with 'gameObjectRefs'. Pass null or omit for GameObjects that should not receive a JSON patch."
               }
             },
@@ -12297,7 +12332,7 @@
                 ],
                 "additionalProperties": false
               },
-              "System.Collections.Generic.List<AIGD.PathPatch>": {
+              "System.Collections.Generic.List(AIGD.PathPatch)": {
                 "type": "array",
                 "items": {
                   "$ref": "#/$defs/AIGD.PathPatch"
@@ -12316,13 +12351,13 @@
                   }
                 }
               },
-              "System.Collections.Generic.List<System.Collections.Generic.List<AIGD.PathPatch>>": {
+              "System.Collections.Generic.List(System.Collections.Generic.List(AIGD.PathPatch))": {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/System.Collections.Generic.List<AIGD.PathPatch>"
+                  "$ref": "#/$defs/System.Collections.Generic.List(AIGD.PathPatch)"
                 }
               },
-              "System.Collections.Generic.List<System.String>": {
+              "System.Collections.Generic.List(System.String)": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -12413,7 +12448,7 @@
                 "description": "Reference to UnityEngine.Object instance. It could be GameObject, Component, Asset, etc. Anything extended from UnityEngine.Object."
               },
               "paths": {
-                "$ref": "#/$defs/System.Collections.Generic.List<System.String>",
+                "$ref": "#/$defs/System.Collections.Generic.List(System.String)",
                 "description": "Optional. List of paths to read individually via Reflector.TryReadAt. Each path may target a different depth. Path syntax: 'fieldName', 'nested/field', 'arrayField/[i]', 'dictField/[key]'. Mutually exclusive with 'viewQuery'."
               },
               "viewQuery": {
@@ -12438,7 +12473,7 @@
                 ],
                 "description": "Reference to UnityEngine.Object instance. It could be GameObject, Component, Asset, etc. Anything extended from UnityEngine.Object."
               },
-              "System.Collections.Generic.List<System.String>": {
+              "System.Collections.Generic.List(System.String)": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -12486,7 +12521,7 @@
                 "description": "Optional. The full object data to apply (legacy path). Should contain 'fields' and/or 'props' with the values to modify.\nOnly include the fields/properties you want to change.\nAny unknown or invalid fields and properties will be reported in the response."
               },
               "pathPatches": {
-                "$ref": "#/$defs/System.Collections.Generic.List<AIGD.PathPatch>",
+                "$ref": "#/$defs/System.Collections.Generic.List(AIGD.PathPatch)",
                 "description": "Optional. List of path-scoped patches routed through Reflector.TryModifyAt."
               },
               "jsonPatch": {
@@ -12566,7 +12601,7 @@
                   }
                 }
               },
-              "System.Collections.Generic.List<AIGD.PathPatch>": {
+              "System.Collections.Generic.List(AIGD.PathPatch)": {
                 "type": "array",
                 "items": {
                   "$ref": "#/$defs/AIGD.PathPatch"
@@ -12640,7 +12675,7 @@
                 "description": "If true, includes component data for GameObjects."
               },
               "paths": {
-                "$ref": "#/$defs/System.Collections.Generic.List<System.String>",
+                "$ref": "#/$defs/System.Collections.Generic.List(System.String)",
                 "description": "Optional. List of paths to read individually via Reflector.TryReadAt against the scene's root-GameObjects array. Path syntax: 'fieldName', '[i]/field', '[i]/component/[j]/property'. Mutually exclusive with 'viewQuery'."
               },
               "viewQuery": {
@@ -12649,7 +12684,7 @@
               }
             },
             "$defs": {
-              "System.Collections.Generic.List<System.String>": {
+              "System.Collections.Generic.List(System.String)": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -12847,7 +12882,7 @@
                 "description": "When true, renders only the target object using layer-based culling. When false, renders the full scene from the computed camera position. Default: true."
               },
               "backgroundMode": {
-                "$ref": "#/$defs/com.IvanMurzak.Unity.MCP.Editor.API.Tool_Screenshot+BackgroundMode",
+                "$ref": "#/$defs/com.IvanMurzak.Unity.MCP.Editor.API.Tool_Screenshot-BackgroundMode",
                 "description": "Background mode. Default: SolidColor."
               },
               "backgroundColor": {
@@ -12855,7 +12890,7 @@
                 "description": "Hex background color (e.g. '#404040'). Only used when backgroundMode is SolidColor."
               },
               "cameraView": {
-                "$ref": "#/$defs/com.IvanMurzak.Unity.MCP.Editor.API.Tool_Screenshot+CameraView",
+                "$ref": "#/$defs/com.IvanMurzak.Unity.MCP.Editor.API.Tool_Screenshot-CameraView",
                 "description": "Camera angle relative to the target object's bounding box. Default: Front."
               },
               "fieldOfView": {
@@ -12926,7 +12961,7 @@
               "System.Boolean": {
                 "type": "boolean"
               },
-              "com.IvanMurzak.Unity.MCP.Editor.API.Tool_Screenshot+BackgroundMode": {
+              "com.IvanMurzak.Unity.MCP.Editor.API.Tool_Screenshot-BackgroundMode": {
                 "type": "string",
                 "enum": [
                   "SolidColor",
@@ -12934,7 +12969,7 @@
                   "Transparent"
                 ]
               },
-              "com.IvanMurzak.Unity.MCP.Editor.API.Tool_Screenshot+CameraView": {
+              "com.IvanMurzak.Unity.MCP.Editor.API.Tool_Screenshot-CameraView": {
                 "type": "string",
                 "enum": [
                   "Front",
@@ -13096,8 +13131,8 @@
           }
         },
         {
-          "name": "tool-list",
-          "description": "List all available MCP tools. Optionally filter by regex across tool names, descriptions, and arguments.",
+          "name": "unity-tool-list",
+          "description": "List all Unity-MCP tools registered in the connected Unity Editor instance. Optionally filter by regex across tool names, descriptions, and arguments.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -13110,7 +13145,7 @@
                 "description": "Include tool descriptions in the result. Default: false"
               },
               "includeInputs": {
-                "$ref": "#/$defs/com.IvanMurzak.Unity.MCP.Editor.API.Tool_Tool+InputRequest",
+                "$ref": "#/$defs/com.IvanMurzak.Unity.MCP.Editor.API.Tool_Tool-InputRequest",
                 "description": "Include input arguments in the result. Default: None"
               }
             },
@@ -13118,7 +13153,7 @@
               "System.Boolean": {
                 "type": "boolean"
               },
-              "com.IvanMurzak.Unity.MCP.Editor.API.Tool_Tool+InputRequest": {
+              "com.IvanMurzak.Unity.MCP.Editor.API.Tool_Tool-InputRequest": {
                 "type": "string",
                 "enum": [
                   "None",
@@ -13132,7 +13167,13 @@
         }
       ],
       "resources": [],
-      "cachedAt": 1778955887262
+      "cachedAt": 1780231115028
+    },
+    "unity": {
+      "configHash": "afa78976305ce68b1b572b8bc1232ece05249230967d461279c42cbb34f2dab7",
+      "tools": [],
+      "resources": [],
+      "cachedAt": 1780490170336
     }
   }
 }
