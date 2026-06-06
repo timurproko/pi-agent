@@ -1,8 +1,8 @@
 {
   "quietStartup": true,
   "lastChangelogVersion": "0.78.1",
-  "defaultProvider": "cursor",
-  "defaultModel": "claude-4.6-sonnet-thinking",
+  "defaultProvider": "github-copilot",
+  "defaultModel": "claude-opus-4.6",
   "defaultThinkingLevel": "medium",
   "packages": [
     "npm:pi-mcp-adapter",
@@ -14,7 +14,8 @@
     "github-copilot/claude-opus-4.6",
     "github-copilot/gpt-5.5",
     "github-copilot/claude-opus-4.7",
-    "github-copilot/gpt-5.3-codex"
+    "github-copilot/gpt-5.3-codex",
+    "cursor/default"
   ],
   "doubleEscapeAction": "none"
 }

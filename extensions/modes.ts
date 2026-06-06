@@ -600,6 +600,27 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		return `${Math.round(count / 1_000_000)}M`;
 	}
 
+	function providerLabel(provider: string): string {
+		if (provider === "github-copilot") return "copilot";
+		if (provider === "pi-cursor-provider") return "cursor";
+		return provider
+			.replace(/^github-/, "")
+			.replace(/^pi-/, "")
+			.replace(/-provider$/, "");
+	}
+
+	function shouldShowProvider(ctx: ExtensionContext): boolean {
+		try {
+			const getAvailable = ctx.modelRegistry?.getAvailable;
+			if (typeof getAvailable !== "function") return false;
+			const models = getAvailable.call(ctx.modelRegistry) as Array<{ provider?: string }>;
+			const providers = new Set(models.map((m) => m.provider).filter((p): p is string => typeof p === "string" && p.length > 0));
+			return providers.size > 1;
+		} catch {
+			return false;
+		}
+	}
+
 	function installFooter(ctx: ExtensionContext): void {
 		if (!ctx.hasUI) return;
 		ctx.ui.setFooter((tui, theme, footerData) => {
@@ -667,6 +688,8 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 
 					// --- gather model line ---
 					const modelId = ctx.model?.id ?? "no-model";
+					const modelProviderSuffix = ctx.model && shouldShowProvider(ctx) ? ` (${providerLabel(ctx.model.provider)})` : "";
+					const modelLabel = `${modelId}${modelProviderSuffix}`;
 					const thinking = typeof pi.getThinkingLevel === "function" ? pi.getThinkingLevel() : undefined;
 					// Match default footer wording for thinking level.
 					const thinkingLevel = thinking || "off";
@@ -682,8 +705,8 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 					}
 					const modelRight =
 						thinkingLevel === "off"
-							? theme.fg("dim", `${modelId} • thinking off`)
-							: theme.fg("dim", `${modelId} • `) + levelPainted;
+							? theme.fg("dim", `${modelLabel} • thinking off`)
+							: theme.fg("dim", `${modelLabel} • `) + levelPainted;
 
 					// --- left side: extension statuses (mode badge etc.) and git branch ---
 					const branch = footerData.getGitBranch();
