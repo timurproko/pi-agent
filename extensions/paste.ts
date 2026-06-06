@@ -572,7 +572,15 @@ function isFilePath(text: string): boolean {
 }
 
 function makeFolderTag(folderPath: string): string {
-  return `[📁 ${path.basename(folderPath.trim())}]`;
+  const trimmed = folderPath.trim();
+  const basename = path.basename(trimmed);
+  // Drive roots like "C:\" have an empty basename — use the root itself
+  if (!basename) {
+    const parsed = path.parse(trimmed);
+    const root = parsed.root.replace(/[\\/]+$/, "");
+    return `[${root}\\]`;
+  }
+  return `[📁 ${basename}]`;
 }
 
 function normalizePathForComparison(fullPath: string): string {
@@ -701,7 +709,7 @@ const BACKSPACE_CHARS = new Set(["\x7f", "\b"]);
 const DELETE_KEYS = new Set(["\x1b[3~", "\x1b[P"]);
 
 const CHIP_BODY_RE_SRC =
-  "(?:\\[\\u{1F4F7} clipboard-[a-f0-9]+\\.png\\]|\\[\\u{1F4C1} [^\\]]+\\]|\\[(?:\\u{1F4C4}|\\u{1F5BC}) {1,2}[^\\]]+\\]|\\[\\u{1F517} [^\\]]+\\]|\\[\\u{1F7E7} [^\\]]+\\])";
+  "(?:\\[\\u{1F4F7} clipboard-[a-f0-9]+\\.png\\]|\\[\\u{1F4C1} [^\\]]+\\]|\\[(?:\\u{1F4C4}|\\u{1F5BC}) {1,2}[^\\]]+\\]|\\[\\u{1F517} [^\\]]+\\]|\\[\\u{1F7E7} [^\\]]+\\]|\\[[A-Za-z]:\\\\\\])";
 
 // Matches any chip produced by this extension at the END of the editor text.
 // Trailing whitespace (the space we insert after a chip) is allowed.
@@ -1443,6 +1451,7 @@ export default function piPasteExtension(pi: ExtensionAPI): void {
 
     cleanedText = cleanedText
       .replace(/\[\u{1F4C1} [^\]]+\]/gu, (match) => folderMap.get(match) ?? match)
+      .replace(/\[[A-Za-z]:\\\]/g, (match) => folderMap.get(match) ?? match)
       .replace(/\[(?:\u{1F4C4}|\u{1F5BC}) {1,2}[^\]]+\]/gu, (match) => fileMap.get(match) ?? match)
       .replace(/\[\u{1F517} [^\]]+\]/gu, (match) => urlMap.get(match) ?? match);
 
