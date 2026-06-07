@@ -293,10 +293,10 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.onSelectCallback = onSelect;
 		this.onCancelCallback = onCancel;
 
-		this.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
 		this.addChild(new Spacer(1));
 
-		this.headerText = new Text("", 1, 0);
+		this.headerText = new Text("", 0, 0);
 		this.addChild(this.headerText);
 		this.addChild(new Spacer(1));
 
@@ -315,10 +315,9 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.addChild(this.listContainer);
 
 		this.addChild(new Spacer(1));
-		this.hintText = new Text("", 1, 0);
+		this.hintText = new Text("", 0, 0);
 		this.addChild(this.hintText);
-		this.addChild(new Spacer(1));
-		this.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
 
 		this.updateHeader();
 		this.updateHints();
@@ -347,7 +346,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.hintText.setText(
 			this.theme.fg(
 				"dim",
-				"Type to search • ↑↓ select • Enter actions • Ctrl+Shift+W work • Ctrl+Shift+R refine • Esc close",
+				"type to search • ↑↓ navigate • enter actions • esc close",
 			),
 		);
 	}
@@ -380,18 +379,26 @@ class TodoSelectorComponent extends Container implements Focusable {
 			const closed = isTodoClosed(todo.status);
 			const prefix = isSelected ? this.theme.fg("accent", "→ ") : "  ";
 			const titleColor = isSelected ? "accent" : closed ? "dim" : "text";
-			const statusColor = closed ? "dim" : "success";
 			const tagText = todo.tags.length ? ` [${todo.tags.join(", ")}]` : "";
 			const assignmentText = renderAssignmentSuffix(this.theme, todo, this.currentSessionId);
+
+			let icon: string;
+			if (closed) {
+				icon = this.theme.fg("success", "✓");
+			} else if (todo.assigned_to_session) {
+				icon = this.theme.fg("accent", "◼");
+			} else {
+				icon = "◻";
+			}
+
 			const line =
 				prefix +
-				this.theme.fg("accent", formatTodoId(todo.id)) +
+				icon + " " +
+				this.theme.fg("dim", "#" + todo.id) +
 				" " +
 				this.theme.fg(titleColor, todo.title || "(untitled)") +
 				this.theme.fg("muted", tagText) +
-				assignmentText +
-				" " +
-				this.theme.fg(statusColor, `(${todo.status || "open"})`);
+				assignmentText;
 			this.listContainer.addChild(new Text(line, 0, 0));
 		}
 
@@ -427,16 +434,6 @@ class TodoSelectorComponent extends Container implements Focusable {
 			this.onCancelCallback();
 			return;
 		}
-		if (matchesKey(keyData, Key.ctrlShift("r"))) {
-			const selected = this.filteredTodos[this.selectedIndex];
-			if (selected && this.onQuickAction) this.onQuickAction(selected, "refine");
-			return;
-		}
-		if (matchesKey(keyData, Key.ctrlShift("w"))) {
-			const selected = this.filteredTodos[this.selectedIndex];
-			if (selected && this.onQuickAction) this.onQuickAction(selected, "work");
-			return;
-		}
 		this.searchInput.handleInput(keyData);
 		this.applyFilter(this.searchInput.getValue());
 	}
@@ -468,8 +465,8 @@ class TodoActionMenuComponent extends Container {
 		const title = todo.title || "(untitled)";
 		const options: SelectItem[] = [
 			{ value: "view", label: "view", description: "View todo" },
+			{ value: "refine", label: "refine", description: "Refine todo" },
 			{ value: "work", label: "work", description: "Work on todo" },
-			{ value: "refine", label: "refine", description: "Refine task" },
 			...(closed
 				? [{ value: "reopen", label: "reopen", description: "Reopen todo" }]
 				: [{ value: "close", label: "close", description: "Close todo" }]),
@@ -481,12 +478,12 @@ class TodoActionMenuComponent extends Container {
 			{ value: "delete", label: "delete", description: "Delete todo" },
 		];
 
-		this.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
 		this.addChild(
 			new Text(
 				theme.fg(
 					"accent",
-					theme.bold(`Actions for ${formatTodoId(todo.id)} "${title}"`),
+					theme.bold(`Actions for "${title}"`),
 				),
 			),
 		);
@@ -503,8 +500,9 @@ class TodoActionMenuComponent extends Container {
 		this.selectList.onCancel = () => this.onCancelCallback();
 
 		this.addChild(this.selectList);
-		this.addChild(new Text(theme.fg("dim", "Enter to confirm • Esc back")));
-		this.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		this.addChild(new Spacer(1));
+		this.addChild(new Text(theme.fg("dim", "enter to confirm • esc back"), 0, 0));
+		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
 	}
 
 	handleInput(keyData: string): void {
@@ -529,7 +527,7 @@ class TodoDeleteConfirmComponent extends Container {
 			{ value: "no", label: "No" },
 		];
 
-		this.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
 		this.addChild(new Text(theme.fg("accent", message)));
 
 		this.selectList = new SelectList(options, options.length, {
@@ -544,8 +542,8 @@ class TodoDeleteConfirmComponent extends Container {
 		this.selectList.onCancel = () => this.onConfirm(false);
 
 		this.addChild(this.selectList);
-		this.addChild(new Text(theme.fg("dim", "Enter to confirm • Esc back")));
-		this.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		this.addChild(new Text(theme.fg("dim", "enter to confirm • esc back")));
+		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
 	}
 
 	handleInput(keyData: string): void {
@@ -679,9 +677,9 @@ class TodoDetailOverlayComponent {
 		const leftWidth = Math.max(0, Math.floor((width - titleWidth) / 2));
 		const rightWidth = Math.max(0, width - titleWidth - leftWidth);
 		return (
-			this.theme.fg("borderMuted", "─".repeat(leftWidth)) +
+			this.theme.fg("border", "─".repeat(leftWidth)) +
 			this.theme.fg("accent", titleText) +
-			this.theme.fg("borderMuted", "─".repeat(rightWidth))
+			this.theme.fg("border", "─".repeat(rightWidth))
 		);
 	}
 
@@ -699,10 +697,11 @@ class TodoDetailOverlayComponent {
 	}
 
 	private buildActionLine(width: number): string {
-		const work = this.theme.fg("accent", "enter") + this.theme.fg("muted", " work on todo");
-		const back = this.theme.fg("dim", "esc back");
-		const nav = this.theme.fg("dim", "↑/↓: move. ←/→: page.");
-		const pieces = [work, back, nav];
+		const work = this.theme.fg("dim", "enter") + this.theme.fg("dim", " to work on todo");
+		const nav = this.theme.fg("dim", "↑↓ navigate");
+		const pages = this.theme.fg("dim", "←→ pages");
+		const back = this.theme.fg("dim", "esc cancel");
+		const pieces = [work, nav, pages, back];
 
 		let line = pieces.join(this.theme.fg("muted", " • "));
 		if (this.totalLines > this.viewHeight) {
@@ -1130,7 +1129,7 @@ function buildRefinePrompt(todoId: string, title: string): string {
 	return (
 		`let's refine task ${formatTodoId(todoId)} "${title}": ` +
 		"Ask me for the missing details needed to refine the todo together. Do not rewrite the todo yet and do not make assumptions. " +
-		"Ask clear, concrete questions and wait for my answers before drafting any structured description.\n\n"
+		"Ask clear, concrete questions and wait for my answers before drafting any structured description.\n"
 	);
 }
 
@@ -1451,7 +1450,7 @@ function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], currentSe
 		const isAssignedToMe = todo.assigned_to_session === currentSessionId;
 		let icon: string;
 		if (isTodoClosed(todo.status)) {
-			icon = theme.fg("success", "✔");
+			icon = theme.fg("success", "✓");
 		} else if (todo.assigned_to_session) {
 			icon = theme.fg("accent", "◼");
 		} else {
