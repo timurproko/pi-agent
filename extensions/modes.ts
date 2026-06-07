@@ -45,14 +45,27 @@ const MODE_LABEL_TITLE: Record<Mode, string> = {
 	ask: "Ask",
 };
 
-// Theme color token per mode (status bar label).
-//   Ask     -> green  (success)
-//   Cmd     -> light gray (custom, brighter than muted but not white)
-//   Plan    -> cyan   (accent, which is typically cyan/blue in pi themes)
+// ─── All custom colors in one place ──────────────────────────────────
+// Each entry has a theme token (used with theme.fg()) and an optional hex
+// value for custom colors that we register at runtime.
+const COLORS = {
+	// Mode label & input border per mode
+	cmd:             { token: "piPlanCmdMode",            hex: "#979BA1", fallback: "dim"          }, // light gray
+	plan:            { token: "accent"                                                             }, // cyan (built-in)
+	ask:             { token: "success"                                                             }, // green (built-in)
+
+	// Bash-prefix mode (when input starts with `!`)
+	bash:            { token: "piPlanBashCommand",         hex: "#E5C07B", fallback: "warning"      }, // muted amber
+
+	// Thinking-level custom colors (registered at runtime)
+	thinkingLow:     { token: "piPlanThinkingLow",         hex: "#56B6C2", fallback: "thinkingMedium" }, // muted teal
+	thinkingBright:  { token: "piPlanThinkingBrightest",   hex: "#ff79e1", fallback: "thinkingXhigh"  }, // bright pink/magenta
+} as const;
+
 const MODE_COLOR: Record<Mode, string> = {
-	command: "piPlanCmdMode",
-	plan: "accent",
-	ask: "success",
+	command: COLORS.cmd.token,
+	plan: COLORS.plan.token,
+	ask: COLORS.ask.token,
 };
 
 
@@ -125,7 +138,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		let painted = label;
 		try {
 			painted = editorDraftIsBash
-				? ctx.ui.theme.fg(PI_PLAN_BASH_TOKEN, label)
+				? ctx.ui.theme.fg(COLORS.bash.token, label)
 				: ctx.ui.theme.fg(MODE_COLOR[mode], label);
 		} catch {
 			/* theme not ready - fall back to plain */
@@ -361,23 +374,15 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	// thinking level, giving the same visual hierarchy in the thinking blocks.
 	//
 	// Color shift: each level borrows the *next* level's color, and `xhigh`
-	// uses an even brighter custom color (registered as `piPlanThinkingBrightest`
-	// at install time). This makes the lower levels easier to distinguish.
-	const PI_PLAN_BRIGHTEST_TOKEN = "piPlanThinkingBrightest";
-	const PI_PLAN_BRIGHTEST_HEX = "#ff79e1"; // bright pink/magenta
-	const PI_PLAN_LOW_TOKEN = "piPlanThinkingLow";
-	const PI_PLAN_LOW_HEX = "#4fb090"; // muted teal - distinct from minimal but dimmer than medium
-	const PI_PLAN_CMD_TOKEN = "piPlanCmdMode";
-	const PI_PLAN_CMD_HEX = "#b8b8b8"; // light gray - brighter than muted but not white
-	const PI_PLAN_BASH_TOKEN = "piPlanBashCommand";
-	const PI_PLAN_BASH_HEX = "#c6a15b"; // muted amber - visible warning without overpowering mode colors
+	// uses an even brighter custom color. This makes the lower levels easier
+	// to distinguish.
 	const THINKING_LEVEL_TOKEN: Record<string, string> = {
 		off: "thinkingOff",
 		minimal: "thinkingLow",
-		low: PI_PLAN_LOW_TOKEN,
+		low: COLORS.thinkingLow.token,
 		medium: "thinkingHigh",
 		high: "thinkingXhigh",
-		xhigh: PI_PLAN_BRIGHTEST_TOKEN,
+		xhigh: COLORS.thinkingBright.token,
 	};
 
 	// Inject custom colors into the active theme's fgColors map so
@@ -399,20 +404,22 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 					? `\x1b[38;2;${r};${g};${b}m`
 					: theme.fgColors?.get(fallbackToken) ?? "";
 			};
-			const brightest = toAnsi(PI_PLAN_BRIGHTEST_HEX, "thinkingXhigh");
-			if (brightest) theme.fgColors.set(PI_PLAN_BRIGHTEST_TOKEN, brightest);
-			const low = toAnsi(PI_PLAN_LOW_HEX, "thinkingMedium");
-			if (low) theme.fgColors.set(PI_PLAN_LOW_TOKEN, low);
-			const cmd = toAnsi(PI_PLAN_CMD_HEX, "dim");
-			if (cmd) theme.fgColors.set(PI_PLAN_CMD_TOKEN, cmd);
-			const bash = toAnsi(PI_PLAN_BASH_HEX, "warning");
-			if (bash) {
-				theme.fgColors.set(PI_PLAN_BASH_TOKEN, bash);
-				// Built-in user-bash execution blocks use the `bashMode` color for
-				// their borders and `$ command` header. Align those with our muted
-				// amber warning instead of the default green.
-				theme.fgColors.set("bashMode", bash);
+			// Register all custom colors from the COLORS table
+			for (const entry of [
+				COLORS.thinkingBright,
+				COLORS.thinkingLow,
+				COLORS.cmd,
+				COLORS.bash,
+			] as const) {
+				if (!("hex" in entry)) continue;
+				const ansi = toAnsi(entry.hex, entry.fallback);
+				if (ansi) theme.fgColors.set(entry.token, ansi);
 			}
+			// Built-in user-bash execution blocks use the `bashMode` color for
+			// their borders and `$ command` header. Align those with our muted
+			// amber warning instead of the default green.
+			const bashAnsi = theme.fgColors.get(COLORS.bash.token);
+			if (bashAnsi) theme.fgColors.set("bashMode", bashAnsi);
 		} catch { /* theme shape changed - silently ignore */ }
 	}
 
@@ -504,7 +511,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		};
 		const paintBashBorder = (text: string): string => {
 			try {
-				return theme.fg(PI_PLAN_BASH_TOKEN, text);
+				return theme.fg(COLORS.bash.token, text);
 			} catch {
 				try {
 					return theme.fg("warning", text);
