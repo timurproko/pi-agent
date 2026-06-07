@@ -497,17 +497,17 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		const dim = (painted: string): string => `\x1b[2m${painted}\x1b[22m`;
 		const paintBorder = (text: string): string => {
 			try {
-				return dim(theme.fg(MODE_COLOR[mode], text));
+				return theme.fg(MODE_COLOR[mode], text);
 			} catch {
 				return text;
 			}
 		};
 		const paintBashBorder = (text: string): string => {
 			try {
-				return dim(theme.fg(PI_PLAN_BASH_TOKEN, text));
+				return theme.fg(PI_PLAN_BASH_TOKEN, text);
 			} catch {
 				try {
-					return dim(theme.fg("warning", text));
+					return theme.fg("warning", text);
 				} catch {
 					return text;
 				}
