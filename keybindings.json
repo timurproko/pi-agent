@@ -1,5 +1,5 @@
 {
-  "tui.editor.deleteWordBackward": ["ctrl+w", "alt+backspace", "ctrl+backspace"],
-  "tui.editor.deleteWordForward": ["alt+d", "alt+delete", "ctrl+delete"],
+  "tui.editor.deleteWordBackward": ["alt+backspace", "ctrl+backspace"],
+  "tui.editor.deleteWordForward": ["alt+delete", "ctrl+delete"],
   "app.thinking.cycle": ["ctrl+l"]
 }
