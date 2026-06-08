@@ -681,6 +681,13 @@ class TodoDetailOverlayComponent {
 		// Bottom border (rounded)
 		output.push(borderColor(`╰${"─".repeat(innerWidth)}╯`));
 
+		// Pad to fill entire terminal so no content bleeds through
+		const totalRows = this.tui.terminal.rows || 24;
+		const emptyLine = " ".repeat(width);
+		while (output.length < totalRows) {
+			output.push(emptyLine);
+		}
+
 		return output.map((line) => truncateToWidth(line, width));
 	}
 
@@ -690,7 +697,7 @@ class TodoDetailOverlayComponent {
 
 	private getMaxHeight(): number {
 		const rows = this.tui.terminal.rows || 24;
-		return Math.max(10, rows - 2);
+		return Math.max(10, rows);
 	}
 
 	private buildTitleLine(width: number): string {
