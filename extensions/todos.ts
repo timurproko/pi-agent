@@ -616,45 +616,72 @@ class TodoDetailOverlayComponent {
 
 	render(width: number): string[] {
 		const maxHeight = this.getMaxHeight();
-		const headerLines = 3;
-		const footerLines = 3;
+		const headerLines = 2;
+		const footerLines = 1;
+		const separatorLines = 2;
 		const borderLines = 2;
 		const innerWidth = Math.max(10, width - 2);
-		const contentHeight = Math.max(1, maxHeight - headerLines - footerLines - borderLines);
+		const contentHeight = Math.max(1, maxHeight - headerLines - footerLines - separatorLines - borderLines);
 
-		const markdownLines = this.markdown.render(innerWidth);
+		const markdownLines = this.markdown.render(innerWidth - 2);
 		this.totalLines = markdownLines.length;
 		this.viewHeight = contentHeight;
 		const maxScroll = Math.max(0, this.totalLines - contentHeight);
 		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, maxScroll));
 
 		const visibleLines = markdownLines.slice(this.scrollOffset, this.scrollOffset + contentHeight);
-		const lines: string[] = [];
-
-		lines.push(this.buildTitleLine(innerWidth));
-		lines.push(this.buildMetaLine(innerWidth));
-		lines.push("");
-
-		for (const line of visibleLines) {
-			lines.push(truncateToWidth(line, innerWidth));
-		}
-		while (lines.length < headerLines + contentHeight) {
-			lines.push("");
-		}
-
-		lines.push("");
-		lines.push(this.buildActionLine(innerWidth));
 
 		const borderColor = (text: string) => this.theme.fg("borderMuted", text);
-		const top = borderColor(`┌${"─".repeat(innerWidth)}┐`);
-		const bottom = borderColor(`└${"─".repeat(innerWidth)}┘`);
-		const framedLines = lines.map((line) => {
-			const truncated = truncateToWidth(line, innerWidth);
+		const boxLine = (content: string): string => {
+			const truncated = truncateToWidth(content, innerWidth);
 			const padding = Math.max(0, innerWidth - visibleWidth(truncated));
 			return borderColor("│") + truncated + " ".repeat(padding) + borderColor("│");
-		});
+		};
+		const emptyBoxLine = (): string => boxLine("");
+		const separator = (): string => borderColor(`├${"─".repeat(innerWidth)}┤`);
 
-		return [top, ...framedLines, bottom].map((line) => truncateToWidth(line, width));
+		const output: string[] = [];
+
+		// Top border (rounded)
+		output.push(borderColor(`╭${"─".repeat(innerWidth)}╮`));
+
+		// Title: TODO-id • title
+		const titleLine = this.theme.fg("accent", formatTodoId(this.todo.id)) +
+			this.theme.fg("muted", " • ") +
+			this.theme.fg("text", this.todo.title || "(untitled)");
+		output.push(boxLine(` ${truncateToWidth(titleLine, innerWidth - 1)}`));
+
+		// Subtitle: status • tags
+		const status = this.todo.status || "open";
+		const statusColor = isTodoClosed(status) ? "dim" : "success";
+		const tagText = this.todo.tags.length ? this.todo.tags.join(", ") : "no tags";
+		const subtitleLine = this.theme.fg(statusColor, status) +
+			this.theme.fg("muted", " • ") +
+			this.theme.fg("muted", tagText);
+		output.push(boxLine(` ${truncateToWidth(subtitleLine, innerWidth - 1)}`));
+
+		// Separator
+		output.push(separator());
+
+		// Content
+		for (const line of visibleLines) {
+			output.push(boxLine(` ${truncateToWidth(line, innerWidth - 1)}`));
+		}
+		const renderedContent = visibleLines.length;
+		for (let i = renderedContent; i < contentHeight; i++) {
+			output.push(emptyBoxLine());
+		}
+
+		// Separator before footer
+		output.push(separator());
+
+		// Footer shortcuts
+		output.push(boxLine(` ${this.buildActionLine(innerWidth - 2)}`));
+
+		// Bottom border (rounded)
+		output.push(borderColor(`╰${"─".repeat(innerWidth)}╯`));
+
+		return output.map((line) => truncateToWidth(line, width));
 	}
 
 	invalidate(): void {
@@ -663,7 +690,7 @@ class TodoDetailOverlayComponent {
 
 	private getMaxHeight(): number {
 		const rows = this.tui.terminal.rows || 24;
-		return Math.max(10, Math.floor(rows * 0.8));
+		return Math.max(10, rows - 2);
 	}
 
 	private buildTitleLine(width: number): string {
@@ -707,8 +734,11 @@ class TodoDetailOverlayComponent {
 		if (this.totalLines > this.viewHeight) {
 			const start = Math.min(this.totalLines, this.scrollOffset + 1);
 			const end = Math.min(this.totalLines, this.scrollOffset + this.viewHeight);
-			const scrollInfo = this.theme.fg("dim", ` ${start}-${end}/${this.totalLines}`);
-			line += scrollInfo;
+			const scrollInfo = this.theme.fg("dim", `${start}-${end}/${this.totalLines}`);
+			const lineWidth = visibleWidth(line);
+			const infoWidth = visibleWidth(scrollInfo);
+			const gap = Math.max(1, width - lineWidth - infoWidth);
+			line += " ".repeat(gap) + scrollInfo;
 		}
 
 		return truncateToWidth(line, width);
@@ -1961,7 +1991,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 							),
 						{
 							overlay: true,
-							overlayOptions: { width: "80%", maxHeight: "80%", anchor: "center" },
+							overlayOptions: { width: "100%", maxHeight: "100%", anchor: "center" },
 						},
 					);
 
