@@ -17,5 +17,12 @@
     "github-copilot/gpt-5.3-codex",
     "cursor/default"
   ],
-  "doubleEscapeAction": "none"
+  "doubleEscapeAction": "none",
+  "todos": {
+    "deleteCompletedTodosOnStartup": true,
+    "completedTodoRetentionDays": 7,
+    "saveTodosInCurrentWorkingDirectory": false,
+    "maxVisibleTodosInWidget": 8,
+    "widgetSortOrder": "time"
+  }
 }

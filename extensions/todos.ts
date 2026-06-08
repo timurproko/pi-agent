@@ -19,12 +19,8 @@
  *
  *   Notes about the work go here.
  *
- * Todo storage settings are kept in <todo-dir>/settings.json.
- * Defaults:
- * {
- *   "gc": true,   // delete closed todos older than gcDays on startup
- *   "gcDays": 7   // age threshold for GC (days since created_at)
- * }
+ * Todo settings are kept in the global agent settings file under the `todos` key:
+ * C:\Users\<user>\.pi\agent\settings.json.
  *
  * Use `/todos` to bring up the visual todo manager or just let the LLM use them
  * naturally.
@@ -54,15 +50,18 @@ import {
 } from "@earendil-works/pi-tui";
 
 const TODO_DIR_NAME = ".pi/todos";
+const AGENT_TODO_DIR_NAME = "todos";
 const TODO_WIDGET_KEY = "todos-widget";
 const TODO_WIDGET_MAX_VISIBLE = 8;
 const TODO_PATH_ENV = "PI_TODO_PATH";
-const TODO_SETTINGS_NAME = "settings.json";
 const TODO_ID_PREFIX = "TODO-";
 const TODO_ID_PATTERN = /^[a-f0-9]{8}$/i;
 const DEFAULT_TODO_SETTINGS = {
-	gc: true,
-	gcDays: 7,
+	deleteCompletedTodosOnStartup: true,
+	completedTodoRetentionDays: 7,
+	saveTodosInCurrentWorkingDirectory: true,
+	maxVisibleTodosInWidget: TODO_WIDGET_MAX_VISIBLE,
+	widgetSortOrder: "time" as "id" | "time",
 };
 const LOCK_TTL_MS = 30 * 60 * 1000;
 
@@ -87,8 +86,11 @@ interface LockInfo {
 }
 
 interface TodoSettings {
-	gc: boolean;
-	gcDays: number;
+	deleteCompletedTodosOnStartup: boolean;
+	completedTodoRetentionDays: number;
+	saveTodosInCurrentWorkingDirectory: boolean;
+	maxVisibleTodosInWidget: number;
+	widgetSortOrder: "id" | "time";
 }
 
 type KeybindingMatcher = {
@@ -131,6 +133,8 @@ type TodoAction =
 	| "release";
 
 type TodoOverlayAction = "back" | "work";
+
+type TodoHomeAction = "view" | "create" | "clearAll" | "settings";
 
 type TodoMenuAction =
 	| "work"
@@ -248,7 +252,252 @@ function filterTodos(todos: TodoFrontMatter[], query: string): TodoFrontMatter[]
 		.map((match) => match.todo);
 }
 
-type TodoScope = "all" | "closed";
+type TodoScope = "all" | "open" | "closed";
+
+class TodoTextInputComponent extends Container implements Focusable {
+	private input: Input;
+	private _focused = false;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+		this.input.focused = value;
+	}
+
+	constructor(
+		private theme: Theme,
+		private keybindings: KeybindingMatcher,
+		private title: string,
+		private onSubmit: (value: string) => void,
+		private onCancel: () => void,
+		initialValue = "",
+		private description?: string,
+	) {
+		super();
+		this.input = new Input();
+		if (initialValue) this.input.setValue(initialValue);
+		this.input.onSubmit = () => this.onSubmit(this.input.getValue());
+	}
+
+	handleInput(keyData: string): void {
+		const kb = this.keybindings;
+		if (kb.matches(keyData, "tui.select.cancel")) {
+			this.onCancel();
+			return;
+		}
+		this.input.handleInput(keyData);
+	}
+
+	render(width: number): string[] {
+		const lines: string[] = [];
+		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
+		lines.push(border);
+		lines.push("");
+		lines.push(this.theme.fg("accent", this.theme.bold(this.title)));
+		if (this.description) {
+			lines.push(this.theme.fg("dim", this.description));
+		}
+		lines.push("");
+		lines.push(...this.input.render(width));
+		lines.push("");
+		lines.push(
+			this.theme.fg("dim", "enter submit") +
+			this.theme.fg("dim", " • ") +
+			this.theme.fg("dim", "esc back"),
+		);
+		lines.push(border);
+		return lines;
+	}
+
+	override invalidate(): void {}
+}
+
+class TodoHomeMenuComponent extends Container implements Focusable {
+	private selectedIndex = 0;
+	private items: Array<{ action: TodoHomeAction; label: string; disabled?: boolean }>;
+	private _focused = false;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+	}
+
+	constructor(
+		private theme: Theme,
+		private keybindings: KeybindingMatcher,
+		openCount: number,
+		allCount: number,
+		private onSelectCallback: (action: TodoHomeAction) => void,
+		private onCancelCallback: () => void,
+	) {
+		super();
+		this.items = [
+			{ action: "create", label: "Create todo" },
+			{ action: "view", label: `View all (${allCount})` },
+			{ action: "clearAll", label: `Clear all (${allCount})` },
+			{ action: "settings", label: "Settings" },
+		];
+		this.selectedIndex = this.firstEnabledIndex();
+	}
+
+	private firstEnabledIndex(): number {
+		const index = this.items.findIndex((item) => !item.disabled);
+		return index >= 0 ? index : 0;
+	}
+
+	private moveSelection(delta: number): void {
+		if (this.items.every((item) => item.disabled)) return;
+		let next = this.selectedIndex;
+		for (let i = 0; i < this.items.length; i++) {
+			next = (next + delta + this.items.length) % this.items.length;
+			if (!this.items[next]?.disabled) {
+				this.selectedIndex = next;
+				return;
+			}
+		}
+	}
+
+	handleInput(keyData: string): void {
+		const kb = this.keybindings;
+		if (kb.matches(keyData, "tui.select.up")) {
+			this.moveSelection(-1);
+			return;
+		}
+		if (kb.matches(keyData, "tui.select.down")) {
+			this.moveSelection(1);
+			return;
+		}
+		if (kb.matches(keyData, "tui.select.confirm")) {
+			const selected = this.items[this.selectedIndex];
+			if (selected && !selected.disabled) this.onSelectCallback(selected.action);
+			return;
+		}
+		if (kb.matches(keyData, "tui.select.cancel")) {
+			this.onCancelCallback();
+		}
+	}
+
+	render(width: number): string[] {
+		const lines: string[] = [];
+		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
+		lines.push(border);
+		lines.push("");
+		lines.push(this.theme.fg("accent", this.theme.bold("View all todos")));
+		lines.push("");
+		for (let i = 0; i < this.items.length; i++) {
+			const item = this.items[i]!;
+			const selected = i === this.selectedIndex && !item.disabled;
+			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
+			const labelColor = item.disabled ? "dim" : selected ? "accent" : "text";
+			const label = this.theme.fg(labelColor, item.label);
+			lines.push(prefix + label);
+		}
+		lines.push("");
+		lines.push(this.theme.fg("dim", "↑↓ navigate • enter select • esc close"));
+		lines.push(border);
+		return lines;
+	}
+
+	override invalidate(): void {}
+}
+
+class TodoSettingsMenuComponent extends Container implements Focusable {
+	private selectedIndex = 0;
+	private _focused = false;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+	}
+
+	constructor(
+		private theme: Theme,
+		private keybindings: KeybindingMatcher,
+		private settings: TodoSettings,
+		private onChange: (settings: TodoSettings) => void,
+		private onBack: () => void,
+	) {
+		super();
+	}
+
+	private updateSelected(delta: number): void {
+		this.selectedIndex = (this.selectedIndex + delta + 5) % 5;
+	}
+
+	private changeValue(delta = 1): void {
+		if (this.selectedIndex === 0) {
+			this.settings.saveTodosInCurrentWorkingDirectory = !this.settings.saveTodosInCurrentWorkingDirectory;
+		} else if (this.selectedIndex === 1) {
+			this.settings.maxVisibleTodosInWidget = Math.max(1, Math.min(100, this.settings.maxVisibleTodosInWidget + delta));
+		} else if (this.selectedIndex === 2) {
+			this.settings.widgetSortOrder = this.settings.widgetSortOrder === "id" ? "time" : "id";
+		} else if (this.selectedIndex === 3) {
+			this.settings.deleteCompletedTodosOnStartup = !this.settings.deleteCompletedTodosOnStartup;
+		} else {
+			this.settings.completedTodoRetentionDays = Math.max(0, Math.min(365, this.settings.completedTodoRetentionDays + delta));
+		}
+		this.onChange(this.settings);
+	}
+
+	handleInput(keyData: string): void {
+		const kb = this.keybindings;
+		if (kb.matches(keyData, "tui.select.up")) {
+			this.updateSelected(-1);
+			return;
+		}
+		if (kb.matches(keyData, "tui.select.down")) {
+			this.updateSelected(1);
+			return;
+		}
+		if (matchesKey(keyData, Key.left)) {
+			this.changeValue(-1);
+			return;
+		}
+		if (matchesKey(keyData, Key.right)) {
+			this.changeValue(1);
+			return;
+		}
+		if (kb.matches(keyData, "tui.select.confirm")) {
+			this.changeValue(1);
+			return;
+		}
+		if (kb.matches(keyData, "tui.select.cancel")) {
+			this.onBack();
+		}
+	}
+
+	render(width: number): string[] {
+		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
+		const rows = [
+			["Save in PWD directory", this.settings.saveTodosInCurrentWorkingDirectory ? "yes" : "no"],
+			["Max visible todos in widget", String(this.settings.maxVisibleTodosInWidget)],
+			["Widget sort order", this.settings.widgetSortOrder],
+			["Delete completed todos on startup", this.settings.deleteCompletedTodosOnStartup ? "yes" : "no"],
+			["Completed todo retention days", String(this.settings.completedTodoRetentionDays)],
+		] as const;
+		const lines = [border, "", this.theme.fg("accent", this.theme.bold("Todo settings")), ""];
+		for (let i = 0; i < rows.length; i++) {
+			const [label, value] = rows[i]!;
+			const selected = i === this.selectedIndex;
+			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
+			const labelText = this.theme.fg(selected ? "accent" : "text", label.padEnd(34));
+			const valueText = this.theme.fg("muted", value);
+			lines.push(prefix + labelText + valueText);
+		}
+		lines.push("");
+		lines.push(this.theme.fg("dim", "↑↓ navigate • enter toggle • ←→ adjust • esc back"));
+		lines.push(border);
+		return lines;
+	}
+
+	override invalidate(): void {}
+}
 
 class TodoSelectorComponent extends Container implements Focusable {
 	private searchInput: Input;
@@ -348,34 +597,38 @@ class TodoSelectorComponent extends Container implements Focusable {
 	}
 
 	private updateHeader(): void {
-		this.headerText.setText(this.theme.fg("accent", this.theme.bold("Todos")));
+		this.headerText.setText(this.theme.fg("accent", this.theme.bold("View all todos")));
 	}
 
 	private updateScope(): void {
-		const openLabel = this.scope === "all"
+		const allLabel = this.scope === "all"
+			? this.theme.fg("accent", "all")
+			: this.theme.fg("dim", "all");
+		const openLabel = this.scope === "open"
 			? this.theme.fg("accent", "open")
 			: this.theme.fg("dim", "open");
 		const closedLabel = this.scope === "closed"
 			? this.theme.fg("accent", "closed")
 			: this.theme.fg("dim", "closed");
-		this.scopeText.setText(this.theme.fg("dim", "Scope: ") + openLabel + this.theme.fg("dim", " | ") + closedLabel);
-		this.scopeHintText.setText(this.theme.fg("dim", "tab scope (open/closed)"));
+		const sep = this.theme.fg("dim", " | ");
+		this.scopeText.setText(this.theme.fg("dim", "Scope: ") + allLabel + sep + openLabel + sep + closedLabel);
+		this.scopeHintText.setText(this.theme.fg("dim", "tab scope (all/open/closed)"));
 	}
 
 	private updateHints(): void {
 		this.hintText.setText(
 			this.theme.fg(
 				"dim",
-				"type to search • ↑↓ navigate • tab scope • enter actions • esc close",
+				"type to search • ↑↓ navigate • tab scope • enter actions • esc back",
 			),
 		);
 	}
 
 	private applyFilter(query: string): void {
 		let todos = this.allTodos;
-		if (this.scope === "all") {
+		if (this.scope === "open") {
 			todos = todos.filter((t) => !isTodoClosed(t.status));
-		} else {
+		} else if (this.scope === "closed") {
 			todos = todos.filter((t) => isTodoClosed(t.status));
 		}
 		this.filteredTodos = filterTodos(todos, query);
@@ -465,7 +718,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 			return;
 		}
 		if (keyData === "\t") {
-			this.scope = this.scope === "all" ? "closed" : "all";
+			this.scope = this.scope === "all" ? "open" : this.scope === "open" ? "closed" : "all";
 			this.selectedIndex = 0;
 			this.updateHeader();
 			this.updateScope();
@@ -538,7 +791,7 @@ class TodoActionMenuComponent extends Container {
 
 		this.addChild(this.selectList);
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("dim", "enter to confirm • esc back"), 0, 0));
+		this.addChild(new Text(theme.fg("dim", "↑↓ navigate • enter select • esc back"), 0, 0));
 		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
 	}
 
@@ -551,45 +804,75 @@ class TodoActionMenuComponent extends Container {
 	}
 }
 
-class TodoDeleteConfirmComponent extends Container {
-	private selectList: SelectList;
-	private onConfirm: (confirmed: boolean) => void;
+class TodoDeleteConfirmComponent extends Container implements Focusable {
+	private selectedIndex = 0;
+	private readonly cancelLabel: "back" | "cancel";
+	private readonly subtitle?: string;
+	private _focused = false;
 
-	constructor(theme: Theme, message: string, onConfirm: (confirmed: boolean) => void) {
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+	}
+
+	constructor(
+		private theme: Theme,
+		private keybindings: KeybindingMatcher,
+		private title: string,
+		private onConfirm: (confirmed: boolean) => void,
+		options?: { subtitle?: string; cancelLabel?: "back" | "cancel" },
+	) {
 		super();
-		this.onConfirm = onConfirm;
-
-		const options: SelectItem[] = [
-			{ value: "yes", label: "Yes" },
-			{ value: "no", label: "No" },
-		];
-
-		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
-		this.addChild(new Text(theme.fg("accent", message)));
-
-		this.selectList = new SelectList(options, options.length, {
-			selectedPrefix: (text) => theme.fg("accent", text),
-			selectedText: (text) => theme.fg("accent", text),
-			description: (text) => theme.fg("muted", text),
-			scrollInfo: (text) => theme.fg("dim", text),
-			noMatch: (text) => theme.fg("warning", text),
-		});
-
-		this.selectList.onSelect = (item) => this.onConfirm(item.value === "yes");
-		this.selectList.onCancel = () => this.onConfirm(false);
-
-		this.addChild(this.selectList);
-		this.addChild(new Text(theme.fg("dim", "enter to confirm • esc back")));
-		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
+		this.subtitle = options?.subtitle;
+		this.cancelLabel = options?.cancelLabel ?? "back";
 	}
 
 	handleInput(keyData: string): void {
-		this.selectList.handleInput(keyData);
+		const kb = this.keybindings;
+		if (kb.matches(keyData, "tui.select.up") || kb.matches(keyData, "tui.select.down")) {
+			this.selectedIndex = this.selectedIndex === 0 ? 1 : 0;
+			return;
+		}
+		if (kb.matches(keyData, "tui.select.confirm")) {
+			this.onConfirm(this.selectedIndex === 0);
+			return;
+		}
+		if (kb.matches(keyData, "tui.select.cancel")) {
+			this.onConfirm(false);
+		}
 	}
 
-	override invalidate(): void {
-		super.invalidate();
+	render(width: number): string[] {
+		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
+		const lines: string[] = [
+			border,
+			"",
+			this.theme.fg("accent", this.theme.bold(this.title)),
+		];
+		if (this.subtitle) {
+			// Subtitle sits directly under the title, matching standard dialogs.
+			lines.push(this.theme.fg("dim", this.subtitle));
+		}
+		// Keep standard dialog breathing room before choices.
+		lines.push("");
+		lines.push(
+			(this.selectedIndex === 0 ? this.theme.fg("accent", "→ ") : "  ") +
+			this.theme.fg(this.selectedIndex === 0 ? "accent" : "text", "Yes"),
+		);
+		lines.push(
+			(this.selectedIndex === 1 ? this.theme.fg("accent", "→ ") : "  ") +
+			this.theme.fg(this.selectedIndex === 1 ? "accent" : "text", "No"),
+		);
+		// Keep one spacer above shortcuts, but no spacer between shortcuts and blue line.
+		lines.push("");
+		lines.push(this.theme.fg("dim", `↑↓ navigate • enter select • esc ${this.cancelLabel}`));
+		lines.push(border);
+		return lines;
 	}
+
+	override invalidate(): void {}
 }
 
 class TodoDetailOverlayComponent {
@@ -771,7 +1054,7 @@ class TodoDetailOverlayComponent {
 		const work = this.theme.fg("dim", "enter") + this.theme.fg("dim", " to work on todo");
 		const nav = this.theme.fg("dim", "↑↓ navigate");
 		const pages = this.theme.fg("dim", "←→ pages");
-		const back = this.theme.fg("dim", "esc cancel");
+		const back = this.theme.fg("dim", "esc back");
 		const pieces = [work, nav, pages, back];
 
 		let line = pieces.join(this.theme.fg("muted", " • "));
@@ -794,12 +1077,20 @@ class TodoDetailOverlayComponent {
 	}
 }
 
+function getAgentTodosDir(): string {
+	const home = process.env.USERPROFILE || process.env.HOME || process.cwd();
+	return path.join(home, ".pi", "agent", AGENT_TODO_DIR_NAME);
+}
+
 function getTodosDir(cwd: string): string {
 	const overridePath = process.env[TODO_PATH_ENV];
 	if (overridePath && overridePath.trim()) {
 		return path.resolve(cwd, overridePath.trim());
 	}
-	return path.resolve(cwd, TODO_DIR_NAME);
+	const settings = readTodoSettingsSync(getAgentTodosDir());
+	return settings.saveTodosInCurrentWorkingDirectory
+		? path.resolve(cwd, TODO_DIR_NAME)
+		: getAgentTodosDir();
 }
 
 function getTodosDirLabel(cwd: string): string {
@@ -807,38 +1098,76 @@ function getTodosDirLabel(cwd: string): string {
 	if (overridePath && overridePath.trim()) {
 		return path.resolve(cwd, overridePath.trim());
 	}
-	return TODO_DIR_NAME;
+	const settings = readTodoSettingsSync(getAgentTodosDir());
+	return settings.saveTodosInCurrentWorkingDirectory ? TODO_DIR_NAME : getAgentTodosDir();
 }
 
-function getTodoSettingsPath(todosDir: string): string {
-	return path.join(todosDir, TODO_SETTINGS_NAME);
+function getAgentSettingsPath(): string {
+	return path.join(getAgentTodosDir(), "..", "settings.json");
 }
 
-function normalizeTodoSettings(raw: Partial<TodoSettings>): TodoSettings {
-	const gc = raw.gc ?? DEFAULT_TODO_SETTINGS.gc;
-	const gcDays = Number.isFinite(raw.gcDays) ? raw.gcDays : DEFAULT_TODO_SETTINGS.gcDays;
+type RawTodoSettings = Partial<TodoSettings> & Record<string, any>;
+
+function normalizeTodoSettings(raw: RawTodoSettings): TodoSettings {
+	const deleteCompletedTodosOnStartup = raw.deleteCompletedTodosOnStartup ?? raw.gc ?? DEFAULT_TODO_SETTINGS.deleteCompletedTodosOnStartup;
+	const completedTodoRetentionDays = Number.isFinite(raw.completedTodoRetentionDays)
+		? raw.completedTodoRetentionDays
+		: Number.isFinite(raw.gcDays)
+			? raw.gcDays
+			: DEFAULT_TODO_SETTINGS.completedTodoRetentionDays;
+	const maxVisibleTodosInWidget = Number.isFinite(raw.maxVisibleTodosInWidget)
+		? raw.maxVisibleTodosInWidget
+		: Number.isFinite(raw.widgetMaxVisible)
+			? raw.widgetMaxVisible
+			: DEFAULT_TODO_SETTINGS.maxVisibleTodosInWidget;
+	const widgetSortOrder = raw.widgetSortOrder === "id" || raw.widgetSortOrder === "time"
+		? raw.widgetSortOrder
+		: DEFAULT_TODO_SETTINGS.widgetSortOrder;
 	return {
-		gc: Boolean(gc),
-		gcDays: Math.max(0, Math.floor(gcDays)),
+		deleteCompletedTodosOnStartup: Boolean(deleteCompletedTodosOnStartup),
+		completedTodoRetentionDays: Math.max(0, Math.floor(completedTodoRetentionDays)),
+		saveTodosInCurrentWorkingDirectory: Boolean(raw.saveTodosInCurrentWorkingDirectory ?? raw.saveInPwdDirectory ?? DEFAULT_TODO_SETTINGS.saveTodosInCurrentWorkingDirectory),
+		maxVisibleTodosInWidget: Math.max(1, Math.min(100, Math.floor(maxVisibleTodosInWidget))),
+		widgetSortOrder,
 	};
 }
 
-async function readTodoSettings(todosDir: string): Promise<TodoSettings> {
-	const settingsPath = getTodoSettingsPath(todosDir);
-	let data: Partial<TodoSettings> = {};
-
+function readGlobalSettingsSync(): Record<string, any> {
 	try {
-		const raw = await fs.readFile(settingsPath, "utf8");
-		data = JSON.parse(raw) as Partial<TodoSettings>;
+		return JSON.parse(readFileSync(getAgentSettingsPath(), "utf8")) as Record<string, any>;
 	} catch {
-		data = {};
+		return {};
 	}
+}
 
-	return normalizeTodoSettings(data);
+async function readGlobalSettings(): Promise<Record<string, any>> {
+	try {
+		return JSON.parse(await fs.readFile(getAgentSettingsPath(), "utf8")) as Record<string, any>;
+	} catch {
+		return {};
+	}
+}
+
+async function readTodoSettings(_todosDir: string): Promise<TodoSettings> {
+	const settings = await readGlobalSettings();
+	return normalizeTodoSettings((settings.todos ?? {}) as RawTodoSettings);
+}
+
+function readTodoSettingsSync(_todosDir: string): TodoSettings {
+	const settings = readGlobalSettingsSync();
+	return normalizeTodoSettings((settings.todos ?? {}) as RawTodoSettings);
+}
+
+async function writeTodoSettings(_todosDir: string, settings: TodoSettings): Promise<void> {
+	const settingsPath = getAgentSettingsPath();
+	const rootSettings = await readGlobalSettings();
+	rootSettings.todos = normalizeTodoSettings(settings as RawTodoSettings);
+	await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+	await fs.writeFile(settingsPath, JSON.stringify(rootSettings, null, 2) + "\n", "utf8");
 }
 
 async function garbageCollectTodos(todosDir: string, settings: TodoSettings): Promise<void> {
-	if (!settings.gc) return;
+	if (!settings.deleteCompletedTodosOnStartup) return;
 
 	let entries: string[] = [];
 	try {
@@ -847,7 +1176,7 @@ async function garbageCollectTodos(todosDir: string, settings: TodoSettings): Pr
 		return;
 	}
 
-	const cutoff = Date.now() - settings.gcDays * 24 * 60 * 60 * 1000;
+	const cutoff = Date.now() - settings.completedTodoRetentionDays * 24 * 60 * 60 * 1000;
 	await Promise.all(
 		entries
 			.filter((entry) => entry.endsWith(".md"))
@@ -1399,6 +1728,60 @@ function appendExpandHint(theme: Theme, text: string): string {
 	return `${text}\n${theme.fg("dim", `(${keyHint("app.tools.expand", "to expand")})`)}`;
 }
 
+function generateTodoTitleFromDescription(description: string): string {
+	const normalized = description
+		.replace(/```[\s\S]*?```/g, " ")
+		.replace(/[`*_#>\[\](),.:;!?]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (!normalized) return "Untitled task";
+
+	const folderName = normalized.match(/\b[A-Za-z]*XX\b/)?.[0];
+	if (/\bcreate\b/i.test(normalized) && /\bfolders?\b/i.test(normalized) && /\bdesktop\b/i.test(normalized)) {
+		return ["Create", folderName, "desktop folders"].filter(Boolean).join(" ");
+	}
+
+	const words = normalized.split(/\s+/).filter(Boolean);
+	const stopWords = new Set([
+		"a", "an", "and", "are", "as", "based", "be", "by", "for", "from", "i", "in", "is", "it", "its",
+		"me", "my", "of", "on", "or", "please", "that", "the", "this", "to", "with", "where", "which", "you",
+		"index", "name", "named", "task", "todo",
+	]);
+	const verbs = new Set(["add", "build", "change", "create", "delete", "fix", "implement", "make", "remove", "rename", "test", "update", "write"]);
+	const titleWords: string[] = [];
+	const firstVerb = words.find((word) => verbs.has(word.toLowerCase().replace(/[^a-z]/g, "")));
+	if (firstVerb) titleWords.push(firstVerb);
+	for (const word of words) {
+		const key = word.toLowerCase().replace(/[^a-z0-9]/g, "");
+		if (!key || stopWords.has(key)) continue;
+		if (titleWords.some((existing) => existing.toLowerCase() === word.toLowerCase())) continue;
+		titleWords.push(word);
+		if (titleWords.length >= 6) break;
+	}
+
+	let title = (titleWords.length ? titleWords : words.slice(0, 5)).join(" ").trim();
+	while (title.length > 48 && title.includes(" ")) {
+		title = title.replace(/\s+\S+$/, "");
+	}
+	if (!title) title = normalized.slice(0, 48).trim();
+	return title.charAt(0).toUpperCase() + title.slice(1);
+}
+
+async function promptTodoText(ctx: ExtensionContext, title: string, initialValue = "", description?: string): Promise<string | null> {
+	const result = await ctx.ui.custom<string | null>((_tui, theme, keybindings, done) =>
+		new TodoTextInputComponent(
+			theme,
+			keybindings,
+			title,
+			(value) => done(value),
+			() => done(null),
+			initialValue,
+			description,
+		),
+	);
+	return result ?? null;
+}
+
 async function ensureTodoExists(filePath: string, id: string): Promise<TodoRecord | null> {
 	if (!existsSync(filePath)) return null;
 	return readTodoFile(filePath, id);
@@ -1409,6 +1792,45 @@ async function appendTodoBody(filePath: string, todo: TodoRecord, text: string):
 	todo.body = `${todo.body.replace(/\s+$/, "")}${spacer}${text.trim()}\n`;
 	await writeTodoFile(filePath, todo);
 	return todo;
+}
+
+async function createTodoRecord(
+	todosDir: string,
+	input: { title: string; body?: string; tags?: string[]; status?: string },
+	ctx: ExtensionContext,
+): Promise<TodoRecord | { error: string }> {
+	const title = input.title.trim();
+	if (!title) return { error: "title required" };
+	await ensureTodosDir(todosDir);
+	const id = await generateTodoId(todosDir);
+	const filePath = getTodoPath(todosDir, id);
+	const todo: TodoRecord = {
+		id,
+		title,
+		tags: input.tags ?? [],
+		status: input.status ?? "open",
+		created_at: new Date().toISOString(),
+		body: input.body ?? "",
+	};
+
+	const result = await withTodoLock(todosDir, id, ctx, async () => {
+		await writeTodoFile(filePath, todo);
+		return todo;
+	});
+
+	if (typeof result === "object" && "error" in result) return { error: result.error };
+	return todo;
+}
+
+async function deleteAllTodos(todosDir: string, ctx: ExtensionContext): Promise<number | { error: string }> {
+	const todos = await listTodos(todosDir);
+	let deleted = 0;
+	for (const todo of todos) {
+		const result = await deleteTodo(todosDir, todo.id, ctx);
+		if ("error" in result) return { error: result.error };
+		deleted++;
+	}
+	return deleted;
 }
 
 async function updateTodoStatus(
@@ -1554,10 +1976,15 @@ async function deleteTodo(
 	return result;
 }
 
-function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], currentSessionId?: string): string[] {
+function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], currentSessionId: string | undefined, settings: TodoSettings): string[] {
 	const { assignedTodos, openTodos } = splitTodosByAssignment(todos);
 	const activeTodos = [...assignedTodos, ...openTodos];
 	if (activeTodos.length === 0) return [];
+
+	const sortedTodos = [...activeTodos].sort((a, b) => {
+		if (settings.widgetSortOrder === "id") return a.id.localeCompare(b.id);
+		return (a.created_at || "").localeCompare(b.created_at || "");
+	});
 
 	const lines: string[] = [];
 
@@ -1565,11 +1992,11 @@ function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], currentSe
 	const parts: string[] = [];
 	if (assignedTodos.length > 0) parts.push(`${assignedTodos.length} assigned`);
 	if (openTodos.length > 0) parts.push(`${openTodos.length} open`);
-	const statusText = `${activeTodos.length} todos (${parts.join(", ")})`;
+	const statusText = `${sortedTodos.length} todos (${parts.join(", ")})`;
 	lines.push(theme.fg("accent", "●") + " " + theme.fg("accent", statusText));
 
 	// Individual todo lines
-	const visible = activeTodos.slice(0, TODO_WIDGET_MAX_VISIBLE);
+	const visible = sortedTodos.slice(0, settings.maxVisibleTodosInWidget);
 	for (const todo of visible) {
 		const isAssignedToMe = todo.assigned_to_session === currentSessionId;
 		let icon: string;
@@ -1581,8 +2008,11 @@ function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], currentSe
 			icon = "◻";
 		}
 
+		const closed = isTodoClosed(todo.status);
 		const title = todo.title || "(untitled)";
-		const idStr = theme.fg("dim", "#" + todo.id);
+		const idStr = closed
+			? theme.fg("dim", "\x1b[9m#" + todo.id + "\x1b[29m")
+			: theme.fg("dim", "#" + todo.id);
 		const titleStr = title;
 		let suffix = "";
 		if (isAssignedToMe) {
@@ -1593,7 +2023,7 @@ function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], currentSe
 		lines.push(`  ${icon} ${idStr} ${titleStr}${suffix}`);
 	}
 
-	const hiddenCount = activeTodos.length - visible.length;
+	const hiddenCount = sortedTodos.length - visible.length;
 	if (hiddenCount > 0) {
 		lines.push(theme.fg("dim", `    … and ${hiddenCount} more`));
 	}
@@ -1605,9 +2035,10 @@ function updateTodoWidget(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
 	const todosDir = getTodosDir(ctx.cwd);
 	const todos = listTodosSync(todosDir);
+	const settings = readTodoSettingsSync(todosDir);
 	const currentSessionId = ctx.sessionManager.getSessionId();
 	const theme = ctx.ui.theme;
-	const lines = renderTodoWidgetLines(theme, todos, currentSessionId);
+	const lines = renderTodoWidgetLines(theme, todos, currentSessionId, settings);
 
 	if (lines.length === 0) {
 		ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
@@ -2055,23 +2486,103 @@ export default function todosExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("todos", {
-		description: "List todos from .pi/todos",
-		handler: async (args, ctx) => {
-			const todosDir = getTodosDir(ctx.cwd);
-			const todos = await listTodos(todosDir);
-			const currentSessionId = ctx.sessionManager.getSessionId();
-			const searchTerm = (args ?? "").trim();
+	const openTodosCommand = async (args: string | undefined, ctx: any) => {
+		const todosDir = getTodosDir(ctx.cwd);
+		let todos = await listTodos(todosDir);
+		const currentSessionId = ctx.sessionManager.getSessionId();
+		const searchTerm = (args ?? "").trim();
 
-			if (!ctx.hasUI) {
-				const text = formatTodoList(todos);
-				console.log(text);
+		if (!ctx.hasUI) {
+			const text = formatTodoList(todos);
+			console.log(text);
+			return;
+		}
+
+		const openCount = todos.filter((todo) => !isTodoClosed(getTodoStatus(todo))).length;
+		const allCount = todos.length;
+		const homeAction = await ctx.ui.custom<TodoHomeAction>((_tui, theme, keybindings, done) =>
+			new TodoHomeMenuComponent(
+				theme,
+				keybindings,
+				openCount,
+				allCount,
+				(action) => done(action),
+				() => done(),
+			),
+		);
+
+		if (!homeAction) {
+			updateTodoWidget(ctx);
+			return;
+		}
+
+		if (homeAction === "create") {
+			const details = await promptTodoText(ctx, "Create todo", "", "Describe task details.");
+			const body = details?.trim();
+			if (!body) {
+				await openTodosCommand(args, ctx);
 				return;
 			}
+			const title = generateTodoTitleFromDescription(body);
+			const result = await createTodoRecord(todosDir, { title, body }, ctx);
+			if ("error" in result) {
+				ctx.ui.notify(result.error, "error");
+				return;
+			}
+			ctx.ui.notify(`Created todo ${formatTodoId(result.id)}`, "info");
+			updateTodoWidget(ctx);
+			return;
+		}
 
-			let nextPrompt: string | null = null;
-			let rootTui: TUI | null = null;
-			await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
+		if (homeAction === "clearAll") {
+			const ok = await ctx.ui.custom<boolean>((_tui, theme, keybindings, done) =>
+				new TodoDeleteConfirmComponent(
+					theme,
+					keybindings,
+					"Clear all todos",
+					(confirmed) => done(confirmed),
+					{
+						subtitle: `Delete all ${allCount} todos? This cannot be undone.`,
+						cancelLabel: "cancel",
+					},
+				),
+			);
+			if (!ok) {
+				await openTodosCommand(args, ctx);
+				return;
+			}
+			const result = await deleteAllTodos(todosDir, ctx);
+			if (typeof result === "object" && "error" in result) {
+				ctx.ui.notify(result.error, "error");
+				return;
+			}
+			ctx.ui.notify(`Deleted ${result} todos`, "info");
+			updateTodoWidget(ctx);
+			return;
+		}
+
+		if (homeAction === "settings") {
+			const settings = await readTodoSettings(todosDir);
+			await ctx.ui.custom<void>((_tui, theme, keybindings, done) =>
+				new TodoSettingsMenuComponent(
+					theme,
+					keybindings,
+					settings,
+					(updatedSettings) => {
+						void writeTodoSettings(todosDir, updatedSettings).then(() => updateTodoWidget(ctx));
+					},
+					() => done(),
+				),
+			);
+			await openTodosCommand(args, ctx);
+			return;
+		}
+
+		todos = await listTodos(todosDir);
+		let nextPrompt: string | null = null;
+		let rootTui: TUI | null = null;
+		let goBackToHome = false;
+		await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
 				rootTui = tui;
 				let selector: TodoSelectorComponent | null = null;
 				let actionMenu: TodoActionMenuComponent | null = null;
@@ -2245,16 +2756,22 @@ export default function todosExtension(pi: ExtensionAPI) {
 
 					if (action === "delete") {
 						const message = `Delete todo ${formatTodoId(record.id)}? This cannot be undone.`;
-						deleteConfirm = new TodoDeleteConfirmComponent(theme, message, (confirmed) => {
-							if (!confirmed) {
-								setActiveComponent(actionMenu);
-								return;
-							}
-							void (async () => {
-								await applyTodoAction(record, "delete");
-								setActiveComponent(selector);
-							})();
-						});
+						deleteConfirm = new TodoDeleteConfirmComponent(
+							theme,
+							keybindings,
+							"Delete Todo",
+							(confirmed) => {
+								if (!confirmed) {
+									setActiveComponent(actionMenu);
+									return;
+								}
+								void (async () => {
+									await applyTodoAction(record, "delete");
+									setActiveComponent(selector);
+								})();
+							},
+							{ subtitle: message, cancelLabel: "back" },
+						);
 						setActiveComponent(deleteConfirm);
 						return;
 					}
@@ -2293,7 +2810,10 @@ export default function todosExtension(pi: ExtensionAPI) {
 					(todo) => {
 						void handleSelect(todo);
 					},
-					() => done(),
+					() => {
+						goBackToHome = true;
+						done();
+					},
 					searchTerm || undefined,
 					currentSessionId,
 					(todo, action) => {
@@ -2332,14 +2852,23 @@ export default function todosExtension(pi: ExtensionAPI) {
 				return rootComponent;
 			});
 
-			if (nextPrompt) {
-				ctx.ui.setEditorText(nextPrompt);
-				rootTui?.requestRender();
-			}
+		if (goBackToHome) {
+			await openTodosCommand(args, ctx);
+			return;
+		}
 
-			// Refresh widget after /todos command (user may have changed state)
-			updateTodoWidget(ctx);
-		},
+		if (nextPrompt) {
+			ctx.ui.setEditorText(nextPrompt);
+			rootTui?.requestRender();
+		}
+
+		// Refresh widget after /todos command (user may have changed state)
+		updateTodoWidget(ctx);
+	};
+
+	pi.registerCommand("todos", {
+		description: "Open the todo manager",
+		handler: openTodosCommand,
 	});
 
 }
