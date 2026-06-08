@@ -1001,10 +1001,9 @@ class TodoDetailOverlayComponent {
 		// Bottom border (rounded)
 		output.push(borderColor(`╰${"─".repeat(innerWidth)}╯`));
 
-		// Pad to fill entire terminal so no content bleeds through
-		const totalRows = this.tui.terminal.rows || 24;
+		// Pad only to this dialog's intended height, not the full terminal.
 		const emptyLine = " ".repeat(width);
-		while (output.length < totalRows) {
+		while (output.length < maxHeight) {
 			output.push(emptyLine);
 		}
 
@@ -1017,7 +1016,7 @@ class TodoDetailOverlayComponent {
 
 	private getMaxHeight(): number {
 		const rows = this.tui.terminal.rows || 24;
-		return Math.max(10, rows);
+		return Math.max(10, Math.floor(rows * 0.5));
 	}
 
 	private buildTitleLine(width: number): string {
@@ -2664,7 +2663,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 							),
 						{
 							overlay: true,
-							overlayOptions: { width: "100%", maxHeight: "100%", anchor: "center" },
+							overlayOptions: { width: "96%", maxHeight: "50%", anchor: "bottom-center", margin: 1 },
 						},
 					);
 
