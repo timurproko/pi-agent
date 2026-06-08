@@ -1208,6 +1208,55 @@ function buildRefinePrompt(todoId: string, title: string): string {
 	);
 }
 
+function extractTodoIdsFromText(text: unknown): string[] {
+	if (typeof text !== "string") return [];
+	const ids = new Set<string>();
+	const todoIdPattern = /TODO-([0-9a-fA-F]+)/g;
+	let match: RegExpExecArray | null;
+	while ((match = todoIdPattern.exec(text)) !== null) {
+		ids.add(match[1]!.toLowerCase());
+	}
+	return [...ids];
+}
+
+function isSuccessfulCompletedSubagentResult(result: any): boolean {
+	if (!result || typeof result !== "object") return false;
+	const status = result.progress?.status;
+	// During streaming, running snapshots can still have the default exitCode 0.
+	// Only close todos once the child result itself is terminal and successful.
+	if (status && status !== "completed") return false;
+	return result.exitCode === 0 && !result.error && !result.timedOut && !result.detached && !result.interrupted && !result.resourceLimitExceeded;
+}
+
+async function closeTodosForCompletedSubagentResults(details: any, ctx: ExtensionContext): Promise<boolean> {
+	const results = Array.isArray(details?.results) ? details.results : [];
+	const foundIds = new Set<string>();
+	for (const result of results) {
+		if (!isSuccessfulCompletedSubagentResult(result)) continue;
+		for (const id of extractTodoIdsFromText(result.task)) {
+			foundIds.add(id);
+		}
+	}
+	if (foundIds.size === 0) return false;
+
+	const todosDir = getTodosDir(ctx.cwd);
+	let changed = false;
+	for (const id of foundIds) {
+		const filePath = getTodoPath(todosDir, id);
+		if (!existsSync(filePath)) continue;
+		const result = await withTodoLock(todosDir, id, ctx, async () => {
+			const existing = await ensureTodoExists(filePath, id);
+			if (!existing || isTodoClosed(existing.status)) return false;
+			existing.status = "done";
+			existing.assigned_to_session = undefined;
+			await writeTodoFile(filePath, existing);
+			return true;
+		});
+		if (result === true) changed = true;
+	}
+	return changed;
+}
+
 function splitTodosByAssignment(todos: TodoFrontMatter[]): {
 	assignedTodos: TodoFrontMatter[];
 	openTodos: TodoFrontMatter[];
@@ -1576,56 +1625,24 @@ export default function todosExtension(pi: ExtensionAPI) {
 		updateTodoWidget(ctx);
 	});
 
-	// Refresh widget after any todo tool execution
+	// Refresh widget after any todo tool execution.
+	// For subagents, close only TODOs whose corresponding child result is terminal and successful.
+	// Do not close all TODO IDs mentioned in the original subagent input: at tool-call time they
+	// are merely assigned, and parallel/failing runs can include children that have not completed.
 	pi.on("tool_result", async (event: any, ctx) => {
 		if (event.toolName === "todo") {
 			updateTodoWidget(ctx);
 		}
-		// Auto-close todos when subagent tasks complete successfully
-		if (event.toolName === "subagent" && !event.isError) {
-			const input = event.input ?? {};
-			const agentTasks: { agent: string; task: string }[] = [];
-			if (input.task && input.agent) agentTasks.push({ agent: input.agent, task: input.task });
-			if (Array.isArray(input.tasks)) {
-				for (const t of input.tasks) {
-					if (t?.task && t?.agent) agentTasks.push({ agent: t.agent, task: t.task });
-				}
-			}
-			if (Array.isArray(input.chain)) {
-				for (const step of input.chain) {
-					if (step?.task && step?.agent) agentTasks.push({ agent: step.agent, task: step.task });
-					if (Array.isArray(step?.parallel)) {
-						for (const p of step.parallel) {
-							if (p?.task && p?.agent) agentTasks.push({ agent: p.agent, task: p.task });
-						}
-					}
-				}
-			}
-			const todoIdPattern = /TODO-([0-9a-fA-F]+)/g;
-			const foundIds = new Set<string>();
-			for (const { task } of agentTasks) {
-				let match;
-				while ((match = todoIdPattern.exec(task)) !== null) {
-					foundIds.add(match[1]!.toLowerCase());
-				}
-				todoIdPattern.lastIndex = 0;
-			}
-			if (foundIds.size > 0) {
-				const todosDir = getTodosDir(ctx.cwd);
-				for (const id of foundIds) {
-					const filePath = getTodoPath(todosDir, id);
-					if (!existsSync(filePath)) continue;
-					await withTodoLock(todosDir, id, ctx, async () => {
-						const existing = await ensureTodoExists(filePath, id);
-						if (!existing || isTodoClosed(existing.status)) return;
-						existing.status = "done";
-						existing.assigned_to_session = undefined;
-						await writeTodoFile(filePath, existing);
-					});
-				}
-				updateTodoWidget(ctx);
-			}
+		if (event.toolName === "subagent") {
+			const changed = await closeTodosForCompletedSubagentResults(event.details, ctx);
+			if (changed) updateTodoWidget(ctx);
 		}
+	});
+
+	pi.on("tool_execution_update", async (event: any, ctx) => {
+		if (event.toolName !== "subagent") return;
+		const changed = await closeTodosForCompletedSubagentResults(event.partialResult?.details, ctx);
+		if (changed) updateTodoWidget(ctx);
 	});
 
 	// Auto-claim todos when subagent tasks reference them
