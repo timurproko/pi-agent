@@ -2053,6 +2053,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 						}
 						const updatedTodos = await listTodos(todosDir);
 						selector?.setTodos(updatedTodos);
+						updateTodoWidget(ctx);
 						ctx.ui.notify(`Deleted todo ${formatTodoId(record.id)}`, "info");
 						return "stay";
 					}
@@ -2066,6 +2067,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 
 					const updatedTodos = await listTodos(todosDir);
 					selector?.setTodos(updatedTodos);
+					updateTodoWidget(ctx);
 					ctx.ui.notify(
 						`${action === "close" ? "Closed" : "Reopened"} todo ${formatTodoId(record.id)}`,
 						"info",
