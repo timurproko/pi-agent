@@ -2,7 +2,7 @@
   "quietStartup": true,
   "lastChangelogVersion": "0.78.1",
   "defaultProvider": "github-copilot",
-  "defaultModel": "gpt-5.5",
+  "defaultModel": "gpt-5.3-codex",
   "defaultThinkingLevel": "medium",
   "packages": [
     "npm:pi-mcp-adapter",

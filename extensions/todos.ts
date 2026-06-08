@@ -952,12 +952,20 @@ class TodoDetailOverlayComponent {
 		const visibleLines = markdownLines.slice(this.scrollOffset, this.scrollOffset + contentHeight);
 
 		const borderColor = (text: string) => this.theme.fg("borderMuted", text);
+		const hasScrollableContent = this.totalLines > contentHeight;
 		const boxLine = (content: string): string => {
 			const truncated = truncateToWidth(content, innerWidth);
 			const padding = Math.max(0, innerWidth - visibleWidth(truncated));
 			return borderColor("│") + truncated + " ".repeat(padding) + borderColor("│");
 		};
-		const emptyBoxLine = (): string => boxLine("");
+		const contentBoxLine = (content: string, rowIndex: number): string => {
+			if (!hasScrollableContent) return boxLine(content);
+			const contentWidth = Math.max(1, innerWidth - 1);
+			const truncated = truncateToWidth(content, contentWidth);
+			const padding = Math.max(0, contentWidth - visibleWidth(truncated));
+			const scrollIndicator = this.getScrollIndicatorForRow(rowIndex, contentHeight);
+			return borderColor("│") + truncated + " ".repeat(padding) + scrollIndicator + borderColor("│");
+		};
 		const separator = (): string => borderColor(`├${"─".repeat(innerWidth)}┤`);
 
 		const output: string[] = [];
@@ -984,12 +992,10 @@ class TodoDetailOverlayComponent {
 		output.push(separator());
 
 		// Content
-		for (const line of visibleLines) {
-			output.push(boxLine(` ${truncateToWidth(line, innerWidth - 1)}`));
-		}
-		const renderedContent = visibleLines.length;
-		for (let i = renderedContent; i < contentHeight; i++) {
-			output.push(emptyBoxLine());
+		const lineContentWidth = hasScrollableContent ? Math.max(1, innerWidth - 2) : Math.max(1, innerWidth - 1);
+		for (let i = 0; i < contentHeight; i++) {
+			const line = visibleLines[i] ?? "";
+			output.push(contentBoxLine(` ${truncateToWidth(line, lineContentWidth)}`, i));
 		}
 
 		// Separator before footer
@@ -1000,12 +1006,6 @@ class TodoDetailOverlayComponent {
 
 		// Bottom border (rounded)
 		output.push(borderColor(`╰${"─".repeat(innerWidth)}╯`));
-
-		// Pad only to this dialog's intended height, not the full terminal.
-		const emptyLine = " ".repeat(width);
-		while (output.length < maxHeight) {
-			output.push(emptyLine);
-		}
 
 		return output.map((line) => truncateToWidth(line, width));
 	}
@@ -1054,20 +1054,22 @@ class TodoDetailOverlayComponent {
 		const nav = this.theme.fg("dim", "↑↓ navigate");
 		const pages = this.theme.fg("dim", "←→ pages");
 		const back = this.theme.fg("dim", "esc back");
-		const pieces = [work, nav, pages, back];
-
-		let line = pieces.join(this.theme.fg("muted", " • "));
-		if (this.totalLines > this.viewHeight) {
-			const start = Math.min(this.totalLines, this.scrollOffset + 1);
-			const end = Math.min(this.totalLines, this.scrollOffset + this.viewHeight);
-			const scrollInfo = this.theme.fg("dim", `${start}-${end}/${this.totalLines}`);
-			const lineWidth = visibleWidth(line);
-			const infoWidth = visibleWidth(scrollInfo);
-			const gap = Math.max(1, width - lineWidth - infoWidth);
-			line += " ".repeat(gap) + scrollInfo;
-		}
-
+		const line = [work, nav, pages, back].join(this.theme.fg("muted", " • "));
 		return truncateToWidth(line, width);
+	}
+
+	private getScrollIndicatorForRow(rowIndex: number, trackHeight: number): string {
+		if (this.totalLines <= this.viewHeight || trackHeight <= 0) {
+			return " ";
+		}
+		const maxScroll = Math.max(0, this.totalLines - this.viewHeight);
+		const thumbHeight = Math.max(1, Math.round((this.viewHeight / this.totalLines) * trackHeight));
+		const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+		const thumbTop = maxScroll === 0
+			? 0
+			: Math.round((this.scrollOffset / maxScroll) * maxThumbTop);
+		const isThumbRow = rowIndex >= thumbTop && rowIndex < thumbTop + thumbHeight;
+		return isThumbRow ? this.theme.fg("accent", "┃") : this.theme.fg("borderMuted", "│");
 	}
 
 	private scrollBy(delta: number): void {
@@ -2661,10 +2663,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 								record,
 								overlayDone,
 							),
-						{
-							overlay: true,
-							overlayOptions: { width: "96%", maxHeight: "50%", anchor: "bottom-center", margin: 1 },
-						},
 					);
 
 					return action ?? "back";
