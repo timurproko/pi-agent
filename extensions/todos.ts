@@ -1459,9 +1459,7 @@ function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], currentSe
 
 		const title = todo.title || "(untitled)";
 		const idStr = theme.fg("dim", "#" + todo.id);
-		const titleStr = todo.assigned_to_session
-			? theme.fg("accent", title)
-			: title;
+		const titleStr = title;
 		const suffix = isAssignedToMe ? theme.fg("success", " (current)") : "";
 		lines.push(`  ${icon} ${idStr} ${titleStr}${suffix}`);
 	}

@@ -289,7 +289,7 @@ class QnAComponent implements Component {
 		}
 
 		const lines: string[] = [];
-		const boxWidth = Math.min(width - 4, 120); // Allow wider box
+		const boxWidth = width; // Full width
 		const contentWidth = boxWidth - 4; // 2 chars padding on each side
 
 		// Helper to create horizontal lines (dim the whole thing at once)
@@ -374,11 +374,11 @@ class QnAComponent implements Component {
 		// Confirmation dialog or footer with controls
 		if (this.showingConfirmation) {
 			lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
-			const confirmMsg = `${this.yellow("Submit all answers?")} ${this.dim("(Enter/y to confirm, Esc/n to cancel)")}`;
+			const confirmMsg = `${this.yellow("Submit all answers?")} ${this.dim("(enter/y to confirm, esc/n to cancel)")}`;
 			lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, contentWidth))));
 		} else {
 			lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
-			const controls = this.dim("←/→ navigate · enter next · shift+enter newline · esc cancel");
+			const controls = this.dim("←→ navigate · enter next · shift+enter newline · esc cancel");
 			lines.push(padToWidth(boxLine(truncateToWidth(controls, contentWidth))));
 		}
 		lines.push(padToWidth(this.dim("╰" + horizontalLine(boxWidth - 2) + "╯")));
