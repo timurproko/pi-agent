@@ -248,6 +248,8 @@ function filterTodos(todos: TodoFrontMatter[], query: string): TodoFrontMatter[]
 		.map((match) => match.todo);
 }
 
+type TodoScope = "all" | "closed";
+
 class TodoSelectorComponent extends Container implements Focusable {
 	private searchInput: Input;
 	private listContainer: Container;
@@ -257,9 +259,12 @@ class TodoSelectorComponent extends Container implements Focusable {
 	private onSelectCallback: (todo: TodoFrontMatter) => void;
 	private onCancelCallback: () => void;
 	private tui: TUI;
+	private scope: TodoScope = "all";
 	private theme: Theme;
 	private keybindings: KeybindingMatcher;
 	private headerText: Text;
+	private scopeText: Text;
+	private scopeHintText: Text;
 	private hintText: Text;
 	private currentSessionId?: string;
 
@@ -300,6 +305,12 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.addChild(this.headerText);
 		this.addChild(new Spacer(1));
 
+		this.scopeText = new Text("", 0, 0);
+		this.addChild(this.scopeText);
+		this.scopeHintText = new Text("", 0, 0);
+		this.addChild(this.scopeHintText);
+		this.addChild(new Spacer(1));
+
 		this.searchInput = new Input();
 		if (initialSearchInput) {
 			this.searchInput.setValue(initialSearchInput);
@@ -320,6 +331,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
 
 		this.updateHeader();
+		this.updateScope();
 		this.updateHints();
 		this.applyFilter(this.searchInput.getValue());
 	}
@@ -336,23 +348,37 @@ class TodoSelectorComponent extends Container implements Focusable {
 	}
 
 	private updateHeader(): void {
-		const openCount = this.allTodos.filter((todo) => !isTodoClosed(todo.status)).length;
-		const closedCount = this.allTodos.length - openCount;
-		const title = `Todos (${openCount} open, ${closedCount} closed)`;
-		this.headerText.setText(this.theme.fg("accent", this.theme.bold(title)));
+		this.headerText.setText(this.theme.fg("accent", this.theme.bold("Todos")));
+	}
+
+	private updateScope(): void {
+		const openLabel = this.scope === "all"
+			? this.theme.fg("accent", "open")
+			: this.theme.fg("dim", "open");
+		const closedLabel = this.scope === "closed"
+			? this.theme.fg("accent", "closed")
+			: this.theme.fg("dim", "closed");
+		this.scopeText.setText(this.theme.fg("dim", "Scope: ") + openLabel + this.theme.fg("dim", " | ") + closedLabel);
+		this.scopeHintText.setText(this.theme.fg("dim", "tab scope (open/closed)"));
 	}
 
 	private updateHints(): void {
 		this.hintText.setText(
 			this.theme.fg(
 				"dim",
-				"type to search • ↑↓ navigate • enter actions • esc close",
+				"type to search • ↑↓ navigate • tab scope • enter actions • esc close",
 			),
 		);
 	}
 
 	private applyFilter(query: string): void {
-		this.filteredTodos = filterTodos(this.allTodos, query);
+		let todos = this.allTodos;
+		if (this.scope === "all") {
+			todos = todos.filter((t) => !isTodoClosed(t.status));
+		} else {
+			todos = todos.filter((t) => isTodoClosed(t.status));
+		}
+		this.filteredTodos = filterTodos(todos, query);
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredTodos.length - 1));
 		this.updateList();
 	}
@@ -391,10 +417,14 @@ class TodoSelectorComponent extends Container implements Focusable {
 				icon = "◻";
 			}
 
+			const idText = closed
+				? this.theme.fg("dim", "\x1b[9m#" + todo.id + "\x1b[29m")
+				: this.theme.fg("dim", "#" + todo.id);
+
 			const line =
 				prefix +
 				icon + " " +
-				this.theme.fg("dim", "#" + todo.id) +
+				idText +
 				" " +
 				this.theme.fg(titleColor, todo.title || "(untitled)") +
 				this.theme.fg("muted", tagText) +
@@ -434,6 +464,14 @@ class TodoSelectorComponent extends Container implements Focusable {
 			this.onCancelCallback();
 			return;
 		}
+		if (keyData === "\t") {
+			this.scope = this.scope === "all" ? "closed" : "all";
+			this.selectedIndex = 0;
+			this.updateHeader();
+			this.updateScope();
+			this.applyFilter(this.searchInput.getValue());
+			return;
+		}
 		this.searchInput.handleInput(keyData);
 		this.applyFilter(this.searchInput.getValue());
 	}
@@ -441,6 +479,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 	override invalidate(): void {
 		super.invalidate();
 		this.updateHeader();
+		this.updateScope();
 		this.updateHints();
 		this.updateList();
 	}
@@ -473,8 +512,6 @@ class TodoActionMenuComponent extends Container {
 			...(todo.assigned_to_session
 				? [{ value: "release", label: "release", description: "Release assignment" }]
 				: []),
-			{ value: "copyPath", label: "copy path", description: "Copy absolute path to clipboard" },
-			{ value: "copyText", label: "copy text", description: "Copy title and body to clipboard" },
 			{ value: "delete", label: "delete", description: "Delete todo" },
 		];
 
@@ -483,7 +520,7 @@ class TodoActionMenuComponent extends Container {
 			new Text(
 				theme.fg(
 					"accent",
-					theme.bold(`Actions for "${title}"`),
+					theme.bold(`Actions for ${displayTodoId(todo.id)}: "${title}"`),
 				),
 			),
 		);
@@ -494,7 +531,7 @@ class TodoActionMenuComponent extends Container {
 			description: (text) => theme.fg("muted", text),
 			scrollInfo: (text) => theme.fg("dim", text),
 			noMatch: (text) => theme.fg("warning", text),
-		});
+		}, { maxPrimaryColumnWidth: 16 });
 
 		this.selectList.onSelect = (item) => this.onSelectCallback(item.value as TodoMenuAction);
 		this.selectList.onCancel = () => this.onCancelCallback();
@@ -1152,9 +1189,10 @@ function renderAssignmentSuffix(
 ): string {
 	if (!todo.assigned_to_session) return "";
 	const isCurrent = todo.assigned_to_session === currentSessionId;
-	const color = isCurrent ? "success" : "dim";
-	const suffix = isCurrent ? ", current" : "";
-	return theme.fg(color, ` (assigned: ${todo.assigned_to_session}${suffix})`);
+	if (isCurrent) {
+		return theme.fg("success", " (current)");
+	}
+	return theme.fg("accent", ` (${todo.assigned_to_session})`);
 }
 
 function formatTodoHeading(todo: TodoFrontMatter): string {
@@ -1497,7 +1535,12 @@ function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], currentSe
 		const title = todo.title || "(untitled)";
 		const idStr = theme.fg("dim", "#" + todo.id);
 		const titleStr = title;
-		const suffix = isAssignedToMe ? theme.fg("success", " (current)") : "";
+		let suffix = "";
+		if (isAssignedToMe) {
+			suffix = theme.fg("success", " (current)");
+		} else if (todo.assigned_to_session) {
+			suffix = theme.fg("accent", ` (${todo.assigned_to_session})`);
+		}
 		lines.push(`  ${icon} ${idStr} ${titleStr}${suffix}`);
 	}
 
@@ -1538,6 +1581,101 @@ export default function todosExtension(pi: ExtensionAPI) {
 		if (event.toolName === "todo") {
 			updateTodoWidget(ctx);
 		}
+		// Auto-close todos when subagent tasks complete successfully
+		if (event.toolName === "subagent" && !event.isError) {
+			const input = event.input ?? {};
+			const agentTasks: { agent: string; task: string }[] = [];
+			if (input.task && input.agent) agentTasks.push({ agent: input.agent, task: input.task });
+			if (Array.isArray(input.tasks)) {
+				for (const t of input.tasks) {
+					if (t?.task && t?.agent) agentTasks.push({ agent: t.agent, task: t.task });
+				}
+			}
+			if (Array.isArray(input.chain)) {
+				for (const step of input.chain) {
+					if (step?.task && step?.agent) agentTasks.push({ agent: step.agent, task: step.task });
+					if (Array.isArray(step?.parallel)) {
+						for (const p of step.parallel) {
+							if (p?.task && p?.agent) agentTasks.push({ agent: p.agent, task: p.task });
+						}
+					}
+				}
+			}
+			const todoIdPattern = /TODO-([0-9a-fA-F]+)/g;
+			const foundIds = new Set<string>();
+			for (const { task } of agentTasks) {
+				let match;
+				while ((match = todoIdPattern.exec(task)) !== null) {
+					foundIds.add(match[1]!.toLowerCase());
+				}
+				todoIdPattern.lastIndex = 0;
+			}
+			if (foundIds.size > 0) {
+				const todosDir = getTodosDir(ctx.cwd);
+				for (const id of foundIds) {
+					const filePath = getTodoPath(todosDir, id);
+					if (!existsSync(filePath)) continue;
+					await withTodoLock(todosDir, id, ctx, async () => {
+						const existing = await ensureTodoExists(filePath, id);
+						if (!existing || isTodoClosed(existing.status)) return;
+						existing.status = "done";
+						existing.assigned_to_session = undefined;
+						await writeTodoFile(filePath, existing);
+					});
+				}
+				updateTodoWidget(ctx);
+			}
+		}
+	});
+
+	// Auto-claim todos when subagent tasks reference them
+	pi.on("tool_call", async (event: any, ctx) => {
+		if (event.toolName !== "subagent") return;
+		const input = event.input ?? {};
+		// Collect {agent, task} pairs from single, parallel, or chain invocations
+		const agentTasks: { agent: string; task: string }[] = [];
+		if (input.task && input.agent) {
+			agentTasks.push({ agent: input.agent, task: input.task });
+		}
+		if (Array.isArray(input.tasks)) {
+			for (const t of input.tasks) {
+				if (t?.task && t?.agent) agentTasks.push({ agent: t.agent, task: t.task });
+			}
+		}
+		if (Array.isArray(input.chain)) {
+			for (const step of input.chain) {
+				if (step?.task && step?.agent) agentTasks.push({ agent: step.agent, task: step.task });
+				if (Array.isArray(step?.parallel)) {
+					for (const p of step.parallel) {
+						if (p?.task && p?.agent) agentTasks.push({ agent: p.agent, task: p.task });
+					}
+				}
+			}
+		}
+		// Map TODO IDs to agent names
+		const todoIdPattern = /TODO-([0-9a-fA-F]+)/g;
+		const todoAgentMap = new Map<string, string>();
+		for (const { agent, task } of agentTasks) {
+			let match;
+			while ((match = todoIdPattern.exec(task)) !== null) {
+				todoAgentMap.set(match[1]!.toLowerCase(), agent);
+			}
+			todoIdPattern.lastIndex = 0;
+		}
+		if (todoAgentMap.size === 0) return;
+		// Assign each referenced todo to its agent name
+		const todosDir = getTodosDir(ctx.cwd);
+		for (const [id, agentName] of todoAgentMap) {
+			const filePath = getTodoPath(todosDir, id);
+			if (!existsSync(filePath)) continue;
+			await withTodoLock(todosDir, id, ctx, async () => {
+				const existing = await ensureTodoExists(filePath, id);
+				if (!existing || isTodoClosed(existing.status)) return;
+				existing.assigned_to_session = agentName;
+				await writeTodoFile(filePath, existing);
+			});
+		}
+		updateTodoWidget(ctx);
 	});
 
 	const todosDirLabel = getTodosDirLabel(process.cwd());
