@@ -537,6 +537,19 @@ class TodoSelectorComponent extends Container implements Focusable {
 		return this.searchInput.getValue();
 	}
 
+	getVisibleTodos(): TodoFrontMatter[] {
+		return [...this.filteredTodos];
+	}
+
+	selectTodoById(todoId: string): void {
+		const normalizedId = normalizeTodoId(todoId);
+		const nextIndex = this.filteredTodos.findIndex((todo) => normalizeTodoId(todo.id) === normalizedId);
+		if (nextIndex < 0) return;
+		this.selectedIndex = nextIndex;
+		this.updateList();
+		this.tui.requestRender();
+	}
+
 	private updateHeader(): void {
 		this.headerText.setText(this.theme.fg("accent", this.theme.bold("View todos")));
 	}
@@ -823,6 +836,11 @@ class TodoDetailOverlayComponent {
 	private totalLines = 0;
 	private onAction: (action: TodoOverlayAction) => void;
 	private keybindings: KeybindingMatcher;
+	private navigation?: {
+		currentIndex: number;
+		total: number;
+		onNavigate: (direction: -1 | 1) => void | Promise<void>;
+	};
 
 	constructor(
 		tui: TUI,
@@ -830,12 +848,18 @@ class TodoDetailOverlayComponent {
 		keybindings: KeybindingMatcher,
 		todo: TodoRecord,
 		onAction: (action: TodoOverlayAction) => void,
+		navigation?: {
+			currentIndex: number;
+			total: number;
+			onNavigate: (direction: -1 | 1) => void | Promise<void>;
+		},
 	) {
 		this.tui = tui;
 		this.theme = theme;
 		this.keybindings = keybindings;
 		this.todo = todo;
 		this.onAction = onAction;
+		this.navigation = navigation;
 		this.markdown = new Markdown(this.getMarkdownText(), 0, 0, getMarkdownTheme());
 	}
 
@@ -858,11 +882,19 @@ class TodoDetailOverlayComponent {
 			this.scrollBy(1);
 			return;
 		}
-		if (kb.matches(keyData, "tui.select.pageUp") || matchesKey(keyData, Key.left)) {
+		if (matchesKey(keyData, Key.left)) {
+			void this.navigation?.onNavigate(-1);
+			return;
+		}
+		if (matchesKey(keyData, Key.right)) {
+			void this.navigation?.onNavigate(1);
+			return;
+		}
+		if (kb.matches(keyData, "tui.select.pageUp")) {
 			this.scrollBy(-this.viewHeight || -1);
 			return;
 		}
-		if (kb.matches(keyData, "tui.select.pageDown") || matchesKey(keyData, Key.right)) {
+		if (kb.matches(keyData, "tui.select.pageDown")) {
 			this.scrollBy(this.viewHeight || 1);
 			return;
 		}
@@ -915,8 +947,8 @@ class TodoDetailOverlayComponent {
 		// Top border (rounded)
 		output.push(borderColor(`╭${"─".repeat(innerWidth)}╮`));
 
-		// Title: #id title, all cyan.
-		const titleLine = cyanTodoViewTitle(this.todo);
+		// Title: #id title plus an optional todo-position counter.
+		const titleLine = cyanTodoViewTitle(this.todo) + this.buildCounterText();
 		output.push(boxLine(`  ${truncateToWidth(titleLine, innerWidth - 2)}`));
 
 		// Subtitle: status • tags
@@ -995,6 +1027,13 @@ class TodoDetailOverlayComponent {
 		const back = this.theme.fg("dim", "esc back");
 		const line = [nav, pages, back].join(this.theme.fg("muted", " • "));
 		return truncateToWidth(line, width);
+	}
+
+	private buildCounterText(): string {
+		if (!this.navigation || this.navigation.total <= 0 || this.navigation.currentIndex < 0) {
+			return "";
+		}
+		return this.theme.fg("dim", ` (${this.navigation.currentIndex + 1}/${this.navigation.total})`);
 	}
 
 	private getScrollIndicatorForRow(rowIndex: number, trackHeight: number): string {
@@ -1808,8 +1847,9 @@ function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], currentSe
 	const parts: string[] = [];
 	if (assignedTodos.length > 0) parts.push(`${assignedTodos.length} assigned`);
 	if (openTodos.length > 0) parts.push(`${openTodos.length} open`);
-	const statusText = `${sortedTodos.length} todos (${parts.join(", ")})`;
-	lines.push(theme.fg("accent", "●") + " " + theme.fg("accent", statusText));
+	const statusText = "Todos";
+	const statusDetails = parts.length > 0 ? theme.fg("dim", ` (${parts.join(", ")})`) : "";
+	lines.push(theme.fg("accent", statusText) + statusDetails);
 
 	// Individual todo lines
 	const visible = sortedTodos.slice(0, settings.maxVisibleTodosInWidget);
@@ -1836,7 +1876,7 @@ function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], currentSe
 		} else if (todo.assigned_to_session) {
 			suffix = theme.fg("accent", ` (${todo.assigned_to_session})`);
 		}
-		lines.push(`  ${icon} ${idStr} ${titleStr}${suffix}`);
+		lines.push(`${icon} ${titleStr} ${theme.fg("dim", "(")}${idStr}${theme.fg("dim", ")")}${suffix}`);
 	}
 
 	const hiddenCount = sortedTodos.length - visible.length;
@@ -2514,19 +2554,61 @@ export default function todosExtension(pi: ExtensionAPI) {
 					return "stay";
 				};
 
+				const createActionMenu = (record: TodoRecord): TodoActionMenuComponent =>
+					new TodoActionMenuComponent(
+						theme,
+						record,
+						(action) => {
+							void handleActionSelection(record, action);
+						},
+						() => {
+							setActiveComponent(selector);
+						},
+					);
+
+				const getDetailNavigation = (record: TodoRecord) => {
+					const recordId = normalizeTodoId(record.id);
+					const visibleTodos = selector?.getVisibleTodos() ?? [];
+					const currentIndex = visibleTodos.findIndex((todo) => normalizeTodoId(todo.id) === recordId);
+					if (currentIndex < 0 || visibleTodos.length === 0) return undefined;
+					return {
+						currentIndex,
+						total: visibleTodos.length,
+						onNavigate: async (direction: -1 | 1) => {
+							const latestVisibleTodos = selector?.getVisibleTodos() ?? visibleTodos;
+							if (latestVisibleTodos.length <= 1) return;
+							const latestIndex = latestVisibleTodos.findIndex((todo) => normalizeTodoId(todo.id) === recordId);
+							if (latestIndex < 0) return;
+							const nextIndex = (latestIndex + direction + latestVisibleTodos.length) % latestVisibleTodos.length;
+							const nextTodo = latestVisibleTodos[nextIndex];
+							if (!nextTodo) return;
+							const nextRecord = await resolveTodoRecord(nextTodo);
+							if (!nextRecord) return;
+							selector?.selectTodoById(nextRecord.id);
+							actionMenu = createActionMenu(nextRecord);
+							openDetail(nextRecord);
+						},
+					};
+				};
+
+				const openDetail = (record: TodoRecord) => {
+					setActiveComponent(
+						new TodoDetailOverlayComponent(
+							tui,
+							theme,
+							keybindings,
+							record,
+							() => {
+								setActiveComponent(actionMenu);
+							},
+							getDetailNavigation(record),
+						),
+					);
+				};
+
 				const handleActionSelection = async (record: TodoRecord, action: TodoMenuAction) => {
 					if (action === "view") {
-						setActiveComponent(
-							new TodoDetailOverlayComponent(
-								tui,
-								theme,
-								keybindings,
-								record,
-								() => {
-									setActiveComponent(actionMenu);
-								},
-							),
-						);
+						openDetail(record);
 						return;
 					}
 
@@ -2561,16 +2643,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 				const showActionMenu = async (todo: TodoFrontMatter | TodoRecord) => {
 					const record = "body" in todo ? todo : await resolveTodoRecord(todo);
 					if (!record) return;
-					actionMenu = new TodoActionMenuComponent(
-						theme,
-						record,
-						(action) => {
-							void handleActionSelection(record, action);
-						},
-						() => {
-							setActiveComponent(selector);
-						},
-					);
+					actionMenu = createActionMenu(record);
 					setActiveComponent(actionMenu);
 				};
 
