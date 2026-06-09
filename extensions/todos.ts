@@ -180,9 +180,9 @@ function cyanTodoId(id: string): string {
 	return cyan(formatTodoId(id));
 }
 
-function cyanTodoViewTitle(todo: TodoFrontMatter): string {
+function renderTodoViewTitle(theme: Theme, todo: TodoFrontMatter): string {
 	const title = todo.title || "(untitled)";
-	return cyan(`#${normalizeTodoId(todo.id)} ${title}`);
+	return theme.fg("accent", title) + theme.fg("dim", ` (#${normalizeTodoId(todo.id)})`);
 }
 
 function normalizeTodoId(id: string): string {
@@ -512,7 +512,6 @@ class TodoSelectorComponent extends Container implements Focusable {
 	private keybindings: KeybindingMatcher;
 	private headerText: Text;
 	private scopeText: Text;
-	private scopeHintText: Text;
 	private hintText: Text;
 	private currentSessionId?: string;
 
@@ -555,8 +554,6 @@ class TodoSelectorComponent extends Container implements Focusable {
 
 		this.scopeText = new Text("", 0, 0);
 		this.addChild(this.scopeText);
-		this.scopeHintText = new Text("", 0, 0);
-		this.addChild(this.scopeHintText);
 		this.addChild(new Spacer(1));
 
 		this.searchInput = new Input();
@@ -621,7 +618,6 @@ class TodoSelectorComponent extends Container implements Focusable {
 			: this.theme.fg("dim", "closed");
 		const sep = this.theme.fg("dim", " | ");
 		this.scopeText.setText(this.theme.fg("dim", "Filter: ") + openLabel + sep + closedLabel);
-		this.scopeHintText.setText(this.theme.fg("dim", "tab filter (open/closed)"));
 	}
 
 	private updateHints(): void {
@@ -767,16 +763,16 @@ class TodoActionMenuComponent extends Container {
 		const closed = isTodoClosed(todo.status);
 		const title = todo.title || "(untitled)";
 		const options: SelectItem[] = [
-			{ value: "view", label: "view", description: "View todo" },
-			{ value: "refine", label: "refine", description: "Refine todo" },
-			{ value: "work", label: "work", description: "Work on todo" },
+			{ value: "view", label: "View", description: "View todo" },
+			{ value: "refine", label: "Refine", description: "Refine todo" },
+			{ value: "work", label: "Work", description: "Work on todo" },
 			...(closed
-				? [{ value: "reopen", label: "reopen", description: "Reopen todo" }]
-				: [{ value: "close", label: "close", description: "Close todo" }]),
+				? [{ value: "reopen", label: "Reopen", description: "Reopen todo" }]
+				: [{ value: "close", label: "Close", description: "Close todo" }]),
 			...(todo.assigned_to_session
-				? [{ value: "release", label: "release", description: "Release assignment" }]
+				? [{ value: "release", label: "Release", description: "Release assignment" }]
 				: []),
-			{ value: "delete", label: "delete", description: "Delete todo" },
+			{ value: "delete", label: "Delete", description: "Delete todo" },
 		];
 
 		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
@@ -799,7 +795,7 @@ class TodoActionMenuComponent extends Container {
 			description: (text) => theme.fg("muted", text),
 			scrollInfo: (text) => theme.fg("dim", text),
 			noMatch: (text) => theme.fg("warning", text),
-		}, { maxPrimaryColumnWidth: 16 });
+		}, { maxPrimaryColumnWidth: 13 });
 
 		this.selectList.onSelect = (item) => this.onSelectCallback(item.value as TodoMenuAction);
 		this.selectList.onCancel = () => this.onCancelCallback();
@@ -900,11 +896,6 @@ class TodoDetailOverlayComponent {
 	private totalLines = 0;
 	private onAction: (action: TodoOverlayAction) => void;
 	private keybindings: KeybindingMatcher;
-	private navigation?: {
-		currentIndex: number;
-		total: number;
-		onNavigate: (direction: -1 | 1) => void | Promise<void>;
-	};
 
 	constructor(
 		tui: TUI,
@@ -912,18 +903,12 @@ class TodoDetailOverlayComponent {
 		keybindings: KeybindingMatcher,
 		todo: TodoRecord,
 		onAction: (action: TodoOverlayAction) => void,
-		navigation?: {
-			currentIndex: number;
-			total: number;
-			onNavigate: (direction: -1 | 1) => void | Promise<void>;
-		},
 	) {
 		this.tui = tui;
 		this.theme = theme;
 		this.keybindings = keybindings;
 		this.todo = todo;
 		this.onAction = onAction;
-		this.navigation = navigation;
 		this.markdown = new Markdown(this.getMarkdownText(), 0, 0, getMarkdownTheme());
 	}
 
@@ -944,14 +929,6 @@ class TodoDetailOverlayComponent {
 		}
 		if (kb.matches(keyData, "tui.select.down")) {
 			this.scrollBy(1);
-			return;
-		}
-		if (matchesKey(keyData, Key.left)) {
-			void this.navigation?.onNavigate(-1);
-			return;
-		}
-		if (matchesKey(keyData, Key.right)) {
-			void this.navigation?.onNavigate(1);
 			return;
 		}
 		if (kb.matches(keyData, "tui.select.pageUp")) {
@@ -996,13 +973,6 @@ class TodoDetailOverlayComponent {
 			const padding = Math.max(0, innerWidth - visibleWidth(truncated));
 			return borderColor("│") + truncated + " ".repeat(padding) + borderColor("│");
 		};
-		const boxLineWithRight = (left: string, right: string): string => {
-			const rightWidth = visibleWidth(right);
-			const gap = rightWidth > 0 ? 1 : 0;
-			const truncatedLeft = truncateToWidth(left, Math.max(0, innerWidth - rightWidth - gap));
-			const padding = Math.max(gap, innerWidth - visibleWidth(truncatedLeft) - rightWidth);
-			return borderColor("│") + truncatedLeft + " ".repeat(padding) + right + borderColor("│");
-		};
 		const contentBoxLine = (content: string, rowIndex: number): string => {
 			if (!hasScrollableContent) return boxLine(content);
 			const contentWidth = Math.max(1, innerWidth - 1);
@@ -1018,8 +988,8 @@ class TodoDetailOverlayComponent {
 		// Top border (rounded)
 		output.push(borderColor(`╭${"─".repeat(innerWidth)}╮`));
 
-		// Title: #id title plus an optional right-aligned todo-position counter.
-		output.push(boxLineWithRight(`  ${cyanTodoViewTitle(this.todo)}`, this.buildCounterText()));
+		// Title: todo title with the id in dim brackets.
+		output.push(boxLine(`  ${renderTodoViewTitle(this.theme, this.todo)}`));
 
 		// Subtitle: status • tags
 		const status = this.todo.status || "open";
@@ -1093,17 +1063,9 @@ class TodoDetailOverlayComponent {
 
 	private buildActionLine(width: number): string {
 		const nav = this.theme.fg("dim", "↑↓ scroll");
-		const pages = this.theme.fg("dim", "←→ navigate");
 		const back = this.theme.fg("dim", "esc back");
-		const line = [nav, pages, back].join(this.theme.fg("muted", " • "));
+		const line = [nav, back].join(this.theme.fg("muted", " • "));
 		return truncateToWidth(line, width);
-	}
-
-	private buildCounterText(): string {
-		if (!this.navigation || this.navigation.total <= 0 || this.navigation.currentIndex < 0) {
-			return "";
-		}
-		return this.theme.fg("dim", `(${this.navigation.currentIndex + 1}/${this.navigation.total})`);
 	}
 
 	private getScrollIndicatorForRow(rowIndex: number, trackHeight: number): string {
@@ -2656,31 +2618,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 						},
 					);
 
-				const getDetailNavigation = (record: TodoRecord) => {
-					const recordId = normalizeTodoId(record.id);
-					const visibleTodos = selector?.getVisibleTodos() ?? [];
-					const currentIndex = visibleTodos.findIndex((todo) => normalizeTodoId(todo.id) === recordId);
-					if (currentIndex < 0 || visibleTodos.length === 0) return undefined;
-					return {
-						currentIndex,
-						total: visibleTodos.length,
-						onNavigate: async (direction: -1 | 1) => {
-							const latestVisibleTodos = selector?.getVisibleTodos() ?? visibleTodos;
-							if (latestVisibleTodos.length <= 1) return;
-							const latestIndex = latestVisibleTodos.findIndex((todo) => normalizeTodoId(todo.id) === recordId);
-							if (latestIndex < 0) return;
-							const nextIndex = (latestIndex + direction + latestVisibleTodos.length) % latestVisibleTodos.length;
-							const nextTodo = latestVisibleTodos[nextIndex];
-							if (!nextTodo) return;
-							const nextRecord = await resolveTodoRecord(nextTodo);
-							if (!nextRecord) return;
-							selector?.selectTodoById(nextRecord.id);
-							actionMenu = createActionMenu(nextRecord);
-							openDetail(nextRecord);
-						},
-					};
-				};
-
 				const openDetail = (record: TodoRecord) => {
 					setActiveComponent(
 						new TodoDetailOverlayComponent(
@@ -2689,9 +2626,8 @@ export default function todosExtension(pi: ExtensionAPI) {
 							keybindings,
 							record,
 							() => {
-								setActiveComponent(actionMenu);
+								setActiveComponent(selector);
 							},
-							getDetailNavigation(record),
 						),
 					);
 				};

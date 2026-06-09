@@ -120,6 +120,42 @@ function listPlans(): string[] {
 		.sort();
 }
 
+function planPath(planName: string): string {
+	return path.join(plansDir(), planName);
+}
+
+interface PlanListItem {
+	name: string;
+	path: string;
+	title: string;
+}
+
+function readPlanTitle(filePath: string, fallbackName: string): string {
+	try {
+		const content = fs.readFileSync(filePath, "utf8");
+		const heading = content.match(/^#\s+(.+)\s*$/m)?.[1]?.trim();
+		if (heading) return heading;
+	} catch {
+		// If the file cannot be read, fall back to the filename so the list still works.
+	}
+	return fallbackName;
+}
+
+function listPlanItems(): PlanListItem[] {
+	return listPlans().map((name) => {
+		const fullPath = planPath(name);
+		return { name, path: fullPath, title: readPlanTitle(fullPath, name) };
+	});
+}
+
+function filterPlanItems(plans: PlanListItem[], query: string): PlanListItem[] {
+	const normalizedQuery = query.trim().toLowerCase();
+	if (!normalizedQuery) return plans;
+	return plans.filter((plan) =>
+		`${plan.name} ${plan.title} ${plan.path}`.toLowerCase().includes(normalizedQuery),
+	);
+}
+
 function buildRefinePlanPrompt(planFile: string): string {
 	return (
 		`Let's refine the plan at ${planFile}: ` +
@@ -148,6 +184,254 @@ type PlanAction =
 	| "Refine with Q&A session"
 	| "Suggest specific changes"
 	| "Accept plan and build";
+
+type PlanMenuAction = "view" | "refine" | "work" | "delete";
+
+interface PlanSelectorResult {
+	plan: PlanListItem;
+	query: string;
+}
+
+class PlanSelectorDialog implements Component, Focusable {
+	private readonly input = new Input();
+	private filteredPlans: PlanListItem[];
+	private selectedIndex = 0;
+	private _focused = false;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+		this.input.focused = value;
+	}
+
+	constructor(
+		private readonly tui: TUI,
+		private readonly theme: any,
+		private readonly keybindings: KeybindingMatcher,
+		private readonly plans: PlanListItem[],
+		private readonly onDone: (result: PlanSelectorResult | undefined) => void,
+		initialQuery = "",
+	) {
+		this.filteredPlans = plans;
+		if (initialQuery) this.input.setValue(initialQuery);
+		this.input.onSubmit = () => this.selectCurrent();
+		this.applyFilter(this.input.getValue());
+	}
+
+	private applyFilter(query: string): void {
+		this.filteredPlans = filterPlanItems(this.plans, query);
+		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredPlans.length - 1));
+	}
+
+	private selectCurrent(): void {
+		const plan = this.filteredPlans[this.selectedIndex];
+		if (plan) this.onDone({ plan, query: this.input.getValue() });
+	}
+
+	handleInput(keyData: string): void {
+		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
+			this.onDone(undefined);
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.up") || matchesKey(keyData, Key.up)) {
+			if (this.filteredPlans.length > 0) {
+				this.selectedIndex = this.selectedIndex === 0 ? this.filteredPlans.length - 1 : this.selectedIndex - 1;
+				this.tui.requestRender();
+			}
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.down)) {
+			if (this.filteredPlans.length > 0) {
+				this.selectedIndex = this.selectedIndex === this.filteredPlans.length - 1 ? 0 : this.selectedIndex + 1;
+				this.tui.requestRender();
+			}
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
+			this.selectCurrent();
+			return;
+		}
+
+		this.input.handleInput(keyData);
+		this.applyFilter(this.input.getValue());
+		this.tui.requestRender();
+	}
+
+	render(width: number): string[] {
+		const lines: string[] = [];
+		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
+		const push = (line = "") => lines.push(truncateToWidth(line, width));
+		const maxVisible = 10;
+		const startIndex = Math.max(
+			0,
+			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredPlans.length - maxVisible),
+		);
+		const endIndex = Math.min(startIndex + maxVisible, this.filteredPlans.length);
+
+		push(border);
+		push();
+		push(this.theme.fg("accent", this.theme.bold("View plans")));
+		push();
+		for (const line of this.input.render(width)) push(line);
+		push();
+
+		if (this.filteredPlans.length === 0) {
+			push(this.theme.fg("muted", "  No matching plans"));
+		} else {
+			for (let i = startIndex; i < endIndex; i += 1) {
+				const plan = this.filteredPlans[i];
+				if (!plan) continue;
+				const selected = i === this.selectedIndex;
+				const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
+				const title = this.theme.fg(selected ? "accent" : "text", plan.title || plan.name);
+				const fileName = this.theme.fg("dim", ` (${plan.name})`);
+				push(prefix + title + fileName);
+			}
+			if (startIndex > 0 || endIndex < this.filteredPlans.length) {
+				push(this.theme.fg("dim", `  (${this.selectedIndex + 1}/${this.filteredPlans.length})`));
+			}
+		}
+
+		push();
+		push(this.theme.fg("dim", "type to search • ↑↓ navigate • enter actions • esc back"));
+		push(border);
+		return lines;
+	}
+
+	invalidate(): void {
+		this.input.invalidate();
+	}
+}
+
+class PlanActionMenuDialog implements Component, Focusable {
+	private readonly actions: Array<{ value: PlanMenuAction; label: string; description: string }> = [
+		{ value: "view", label: "View", description: "Open plan view" },
+		{ value: "refine", label: "Refine", description: "Refine plan" },
+		{ value: "work", label: "Work", description: "Start implementation" },
+		{ value: "delete", label: "Delete", description: "Delete plan" },
+	];
+	private selectedIndex = 0;
+	private _focused = false;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+	}
+
+	constructor(
+		private readonly tui: TUI,
+		private readonly theme: any,
+		private readonly keybindings: KeybindingMatcher,
+		private readonly plan: PlanListItem,
+		private readonly onDone: (action: PlanMenuAction | undefined) => void,
+	) {}
+
+	handleInput(keyData: string): void {
+		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
+			this.onDone(undefined);
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.up") || matchesKey(keyData, Key.up)) {
+			this.selectedIndex = this.selectedIndex === 0 ? this.actions.length - 1 : this.selectedIndex - 1;
+			this.tui.requestRender();
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.down)) {
+			this.selectedIndex = this.selectedIndex === this.actions.length - 1 ? 0 : this.selectedIndex + 1;
+			this.tui.requestRender();
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
+			this.onDone(this.actions[this.selectedIndex]?.value);
+		}
+	}
+
+	render(width: number): string[] {
+		const lines: string[] = [];
+		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
+		const push = (line = "") => lines.push(truncateToWidth(line, width));
+		const labelColumnWidth = Math.max(...this.actions.map((action) => visibleWidth(action.label)));
+
+		push(border);
+		push();
+		push(this.theme.fg("accent", this.theme.bold(`Actions for "${this.plan.title || this.plan.name}"`)));
+		push();
+		for (let i = 0; i < this.actions.length; i += 1) {
+			const action = this.actions[i]!;
+			const selected = i === this.selectedIndex;
+			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
+			const label = this.theme.fg(selected ? "accent" : "text", action.label);
+			const padding = " ".repeat(Math.max(7, labelColumnWidth - visibleWidth(action.label) + 7));
+			const description = this.theme.fg(selected ? "accent" : "muted", action.description);
+			push(prefix + label + padding + description);
+		}
+		push();
+		push(this.theme.fg("dim", "↑↓ navigate • enter select • esc back"));
+		push(border);
+		return lines;
+	}
+
+	invalidate(): void {}
+}
+
+class PlanDeleteConfirmDialog implements Component, Focusable {
+	private selectedIndex = 0;
+	private _focused = false;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+	}
+
+	constructor(
+		private readonly tui: TUI,
+		private readonly theme: any,
+		private readonly keybindings: KeybindingMatcher,
+		private readonly plan: PlanListItem,
+		private readonly onDone: (confirmed: boolean) => void,
+	) {}
+
+	handleInput(keyData: string): void {
+		if (this.keybindings.matches(keyData, "tui.select.up") || this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.up) || matchesKey(keyData, Key.down)) {
+			this.selectedIndex = this.selectedIndex === 0 ? 1 : 0;
+			this.tui.requestRender();
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
+			this.onDone(this.selectedIndex === 0);
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
+			this.onDone(false);
+		}
+	}
+
+	render(width: number): string[] {
+		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
+		const yesPrefix = this.selectedIndex === 0 ? this.theme.fg("accent", "→ ") : "  ";
+		const noPrefix = this.selectedIndex === 1 ? this.theme.fg("accent", "→ ") : "  ";
+		return [
+			border,
+			"",
+			this.theme.fg("accent", this.theme.bold("Delete plan")),
+			this.theme.fg("dim", `Delete ${this.plan.name}? This cannot be undone.`),
+			"",
+			yesPrefix + this.theme.fg(this.selectedIndex === 0 ? "accent" : "text", "Yes"),
+			noPrefix + this.theme.fg(this.selectedIndex === 1 ? "accent" : "text", "No"),
+			"",
+			this.theme.fg("dim", "↑↓ choose • enter confirm • esc no"),
+			border,
+		].map((line) => truncateToWidth(line, width));
+	}
+
+	invalidate(): void {}
+}
 
 class PostPlanActionDialog {
 	focused = true;
@@ -521,16 +805,91 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	});
 
 	// ---- /plans command ----
-	pi.registerCommand("plans", {
-		description: "List plans saved under ~/.pi/agent/plans/",
-		handler: async (_args, ctx) => {
+	const openPlansCommand = async (_args: string | undefined, ctx: ExtensionContext): Promise<void> => {
+		if (!ctx.hasUI) {
 			const plans = listPlans();
+			ctx.ui.notify(plans.length > 0 ? `Plans (${plans.length}):\n${plans.map((p) => `  • ${p}`).join("\n")}` : "No plans yet.", "info");
+			return;
+		}
+
+		let searchQuery = (_args || "").trim();
+		while (true) {
+			const plans = listPlanItems();
 			if (plans.length === 0) {
 				ctx.ui.notify("No plans yet. Switch to Plan mode (Shift+Tab) and ask pi for a plan.", "info");
 				return;
 			}
-			ctx.ui.notify(`Plans (${plans.length}):\n${plans.map((p) => `  • ${p}`).join("\n")}`, "info");
-		},
+
+			const selected = await ctx.ui.custom<PlanSelectorResult | undefined>((tui, theme, keybindings, done) => {
+				return new PlanSelectorDialog(tui, theme, keybindings, plans, done, searchQuery);
+			});
+			if (!selected) return;
+			searchQuery = selected.query;
+
+			const action = await ctx.ui.custom<PlanMenuAction | undefined>((tui, theme, keybindings, done) => {
+				return new PlanActionMenuDialog(tui, theme, keybindings, selected.plan, done);
+			});
+			if (!action) continue;
+
+			if (action === "view") {
+				try {
+					const content = fs.readFileSync(selected.plan.path, "utf8");
+					await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
+						return new PlanReviewDialog(tui, theme, keybindings, selected.plan.path, content, () => done());
+					});
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					ctx.ui.notify(`Could not open plan: ${message}`, "error");
+				}
+				continue;
+			}
+
+			if (action === "refine") {
+				setMode("plan", ctx, false);
+				const refineFlow = (globalThis as any).__piAnswerRefineFlow;
+				if (typeof refineFlow?.start === "function") {
+					await refineFlow.start(ctx, {
+						key: `plan:${path.resolve(selected.plan.path)}`,
+						prompt: buildRefinePlanPrompt(selected.plan.path),
+						cancelMessage: false,
+						cancelControlLabel: "back to plans",
+						statusLabel: "plan",
+						onCancelled: async (cancelCtx: ExtensionContext) => {
+							if (mode === "plan") await openPlansCommand(undefined, cancelCtx);
+						},
+					});
+				} else {
+					ctx.ui.notify("Could not auto-open answer UI: /answer refine flow is not loaded", "error");
+					await pi.sendUserMessage(buildRefinePlanPrompt(selected.plan.path));
+				}
+				return;
+			}
+
+			if (action === "work") {
+				setMode("command", ctx, false);
+				await pi.sendUserMessage(`Execute the plan at ${selected.plan.path}. Read it first, then follow its Steps section.`);
+				return;
+			}
+
+			if (action === "delete") {
+				const confirmed = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => {
+					return new PlanDeleteConfirmDialog(tui, theme, keybindings, selected.plan, done);
+				});
+				if (!confirmed) continue;
+				try {
+					fs.unlinkSync(selected.plan.path);
+					ctx.ui.notify(`Deleted plan ${selected.plan.name}`, "info");
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					ctx.ui.notify(`Could not delete plan: ${message}`, "error");
+				}
+			}
+		}
+	};
+
+	pi.registerCommand("plans", {
+		description: "Open the plan manager",
+		handler: openPlansCommand,
 	});
 
 	// ---- gate tool calls based on mode ----

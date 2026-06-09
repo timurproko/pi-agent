@@ -326,15 +326,6 @@ class QnAComponent implements Component {
 			return this.dim("│") + paddedContent + "\x1b[0m" + " ".repeat(rightPad) + this.dim("│");
 		};
 
-		const boxLineWithRight = (left: string, right: string, leftPad: number = 2): string => {
-			const rightLen = visibleWidth(right);
-			const gap = rightLen > 0 ? 1 : 0;
-			const maxLeftWidth = Math.max(0, boxWidth - 2 - leftPad - rightLen - gap);
-			const paddedLeft = " ".repeat(leftPad) + truncateToWidth(left, maxLeftWidth);
-			const middlePad = Math.max(gap, boxWidth - visibleWidth(paddedLeft) - rightLen - 2);
-			return this.dim("│") + paddedLeft + "\x1b[0m" + " ".repeat(middlePad) + right + "\x1b[0m" + this.dim("│");
-		};
-
 		const emptyBoxLine = (): string => {
 			return this.dim("│") + " ".repeat(boxWidth - 2) + this.dim("│");
 		};
@@ -347,8 +338,8 @@ class QnAComponent implements Component {
 		// Title
 		lines.push(padToWidth(this.dim("╭" + horizontalLine(boxWidth - 2) + "╮")));
 		const title = this.bold(this.cyan("Questions"));
-		const counter = this.dim(`(${this.currentIndex + 1}/${this.questions.length})`);
-		lines.push(padToWidth(boxLineWithRight(title, counter)));
+		const counter = this.dim(` (${this.currentIndex + 1}/${this.questions.length})`);
+		lines.push(padToWidth(boxLine(title + counter)));
 		lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
 
 		// Progress indicator
@@ -411,7 +402,7 @@ class QnAComponent implements Component {
 			lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, contentWidth))));
 		} else {
 			lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
-			const controls = this.dim(`←→ navigate · enter next · shift+enter newline · esc ${this.cancelControlLabel}`);
+			const controls = this.dim(`←→ navigate · enter next · esc ${this.cancelControlLabel}`);
 			lines.push(padToWidth(boxLine(truncateToWidth(controls, contentWidth))));
 		}
 		lines.push(padToWidth(this.dim("╰" + horizontalLine(boxWidth - 2) + "╯")));
