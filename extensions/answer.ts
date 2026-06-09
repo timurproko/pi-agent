@@ -282,9 +282,22 @@ class QnAComponent implements Component {
 		}
 
 		// Handle Enter ourselves (editor's submit is disabled)
-		// Plain Enter moves to next question or shows confirmation on last question
-		// Shift+Enter adds a newline (handled by editor)
-		if (matchesKey(data, Key.enter) && !matchesKey(data, Key.shift("enter"))) {
+		// Ctrl+Enter adds a newline; plain Enter moves to the next question or confirms on the last question.
+		if (matchesKey(data, Key.ctrl("enter")) || data === "\n") {
+			this.editor.insertTextAtCursor("\n");
+			this.invalidate();
+			this.tui.requestRender();
+			return;
+		}
+		const isNonCtrlModifiedEnterNewline =
+			data === "\x1b\r" ||
+			data === "\x1b[13;2~" ||
+			(data.charCodeAt(0) === 10 && data.length > 1) ||
+			(data.length > 1 && data.includes("\x1b") && data.includes("\r"));
+		if (matchesKey(data, Key.shift("enter")) || isNonCtrlModifiedEnterNewline) {
+			return;
+		}
+		if (matchesKey(data, Key.enter)) {
 			this.saveCurrentAnswer();
 			if (this.currentIndex < this.questions.length - 1) {
 				this.navigateTo(this.currentIndex + 1);

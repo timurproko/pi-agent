@@ -179,13 +179,9 @@ type KeybindingMatcher = {
 	matches: (keyData: string, keybindingId: string) => boolean;
 };
 
-type PlanAction =
-	| "Open plan for review"
-	| "Refine with Q&A session"
-	| "Suggest specific changes"
-	| "Accept plan and build";
+type PlanAction = "view" | "refine" | "update" | "work";
 
-type PlanMenuAction = "view" | "refine" | "work" | "delete";
+type PlanMenuAction = PlanAction | "delete";
 
 interface PlanSelectorResult {
 	plan: PlanListItem;
@@ -309,6 +305,7 @@ class PlanActionMenuDialog implements Component, Focusable {
 	private readonly actions: Array<{ value: PlanMenuAction; label: string; description: string }> = [
 		{ value: "view", label: "View", description: "Open plan view" },
 		{ value: "refine", label: "Refine", description: "Refine plan" },
+		{ value: "update", label: "Update", description: "Suggest specific changes" },
 		{ value: "work", label: "Work", description: "Start implementation" },
 		{ value: "delete", label: "Delete", description: "Delete plan" },
 	];
@@ -435,11 +432,11 @@ class PlanDeleteConfirmDialog implements Component, Focusable {
 
 class PostPlanActionDialog {
 	focused = true;
-	private readonly actions: PlanAction[] = [
-		"Open plan for review",
-		"Refine with Q&A session",
-		"Suggest specific changes",
-		"Accept plan and build",
+	private readonly actions: Array<{ value: PlanAction; label: string; description: string }> = [
+		{ value: "view", label: "View", description: "Open plan view" },
+		{ value: "refine", label: "Refine", description: "Refine plan" },
+		{ value: "update", label: "Update", description: "Suggest specific changes" },
+		{ value: "work", label: "Work", description: "Start implementation" },
 	];
 	private selectedIndex = 0;
 
@@ -466,7 +463,7 @@ class PostPlanActionDialog {
 			return;
 		}
 		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
-			this.onDone(this.actions[this.selectedIndex]);
+			this.onDone(this.actions[this.selectedIndex]?.value);
 		}
 	}
 
@@ -480,11 +477,16 @@ class PostPlanActionDialog {
 		push(this.theme.fg("accent", this.theme.bold("Plan saved! What would you like to do?")));
 		push();
 
+		const labelColumnWidth = Math.max(...this.actions.map((action) => visibleWidth(action.label)));
+
 		for (let i = 0; i < this.actions.length; i++) {
+			const action = this.actions[i]!;
 			const selected = i === this.selectedIndex;
 			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-			const label = this.theme.fg(selected ? "accent" : "text", this.actions[i]);
-			push(prefix + label);
+			const label = this.theme.fg(selected ? "accent" : "text", action.label);
+			const padding = " ".repeat(Math.max(7, labelColumnWidth - visibleWidth(action.label) + 7));
+			const description = this.theme.fg(selected ? "accent" : "muted", action.description);
+			push(prefix + label + padding + description);
 		}
 
 		push();
@@ -865,6 +867,16 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
+			if (action === "update") {
+				setMode("plan", ctx, false);
+				const suggestion = await ctx.ui.custom<string | undefined>((tui, theme, keybindings, done) => {
+					return new SpecificSuggestionDialog(tui, theme, keybindings, done);
+				});
+				if (!suggestion?.trim()) continue;
+				await pi.sendUserMessage(buildSuggestSpecificChangesPrompt(selected.plan.path, suggestion.trim()));
+				return;
+			}
+
 			if (action === "work") {
 				setMode("command", ctx, false);
 				await pi.sendUserMessage(`Execute the plan at ${selected.plan.path}. Read it first, then follow its Steps section.`);
@@ -974,7 +986,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 				return new PostPlanActionDialog(tui, theme, keybindings, done);
 			});
 
-			if (choice === "Open plan for review") {
+			if (choice === "view") {
 				try {
 					const content = fs.readFileSync(planFile, "utf8");
 					await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
@@ -987,7 +999,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 				continue;
 			}
 
-			if (choice === "Refine with Q&A session") {
+			if (choice === "refine") {
 				const refineFlow = (globalThis as any).__piAnswerRefineFlow;
 				if (typeof refineFlow?.start !== "function") {
 					ctx.ui.notify("Could not auto-open answer UI: /answer refine flow is not loaded", "error");
@@ -1008,7 +1020,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			if (choice === "Suggest specific changes") {
+			if (choice === "update") {
 				const suggestion = await ctx.ui.custom<string | undefined>((tui, theme, keybindings, done) => {
 					return new SpecificSuggestionDialog(tui, theme, keybindings, done);
 				});
@@ -1019,7 +1031,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			if (choice === "Accept plan and build") {
+			if (choice === "work") {
 				setMode("command", ctx, false);
 				await pi.sendUserMessage(`Execute the plan at ${planFile}. Read it first, then follow its Steps section.`);
 				return;
