@@ -128,7 +128,7 @@ type TodoAction =
 	| "claim"
 	| "release";
 
-type TodoOverlayAction = "back" | "work";
+type TodoOverlayAction = "back";
 
 type TodoHomeAction = "view" | "clearAll" | "settings";
 
@@ -841,10 +841,6 @@ class TodoDetailOverlayComponent {
 			this.onAction("back");
 			return;
 		}
-		if (kb.matches(keyData, "tui.select.confirm")) {
-			this.onAction("work");
-			return;
-		}
 		if (kb.matches(keyData, "tui.select.up")) {
 			this.scrollBy(-1);
 			return;
@@ -987,11 +983,10 @@ class TodoDetailOverlayComponent {
 	}
 
 	private buildActionLine(width: number): string {
-		const work = this.theme.fg("dim", "enter") + this.theme.fg("dim", " to work on todo");
 		const nav = this.theme.fg("dim", "↑↓ navigate");
 		const pages = this.theme.fg("dim", "←→ pages");
 		const back = this.theme.fg("dim", "esc back");
-		const line = [work, nav, pages, back].join(this.theme.fg("muted", " • "));
+		const line = [nav, pages, back].join(this.theme.fg("muted", " • "));
 		return truncateToWidth(line, width);
 	}
 
@@ -2529,11 +2524,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 
 				const handleActionSelection = async (record: TodoRecord, action: TodoMenuAction) => {
 					if (action === "view") {
-						const overlayAction = await openTodoOverlay(record);
-						if (overlayAction === "work") {
-							await applyTodoAction(record, "work");
-							return;
-						}
+						await openTodoOverlay(record);
 						if (actionMenu) {
 							setActiveComponent(actionMenu);
 						}
