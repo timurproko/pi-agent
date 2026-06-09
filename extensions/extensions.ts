@@ -56,7 +56,12 @@ interface ExtensionInfo {
 }
 
 const SELF_DIRNAME = "pi-extensions";
-const SELF_FILENAME = "extension-manager.ts";
+const SELF_FILENAMES = new Set([
+	"extension-manager.ts",
+	"extension-manager.js",
+	"extensions.ts",
+	"extensions.js",
+]);
 const PI_MCP_DIRNAME = "pi-mcp";
 const PI_MCP_STATUS_PATCH_KEY = "__piMcpStatusPatch";
 
@@ -191,15 +196,16 @@ function discoverNpmExtensions(): ExtensionInfo[] {
 			const hasDisabled = !hasEnabled && fs.existsSync(disabledPath);
 			if (!hasEnabled && !hasDisabled) continue;
 
-			const displayName =
-				declared.length > 1 ? `${pkgName}/${path.basename(rel)}` : pkgName;
+			const entryBase = path.basename(rel);
+			const displayName = declared.length > 1 ? `${pkgName}/${entryBase}` : pkgName;
+			const isSelf = pkgName === SELF_DIRNAME || displayName.startsWith(`${SELF_DIRNAME}/`) || SELF_FILENAMES.has(entryBase);
 
 			out.push({
 				name: displayName,
 				scope: "global",
 				entryFile: enabledPath,
 				enabled: hasEnabled,
-				isSelf: false,
+				isSelf,
 			});
 		}
 	}
@@ -236,7 +242,7 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 				scope,
 				entryFile: entryPath,
 				enabled: true,
-				isSelf: entry.name === SELF_FILENAME,
+				isSelf: SELF_FILENAMES.has(entry.name),
 			});
 			continue;
 		}
@@ -248,7 +254,7 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 				scope,
 				entryFile: enabledPath,
 				enabled: false,
-				isSelf: originalName === SELF_FILENAME,
+				isSelf: SELF_FILENAMES.has(originalName),
 			});
 			continue;
 		}
@@ -388,14 +394,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 	pi.registerCommand("extensions", {
 		description: "Enable/disable extensions on the fly",
 		handler: async (_args, ctx: ExtensionCommandContext) => {
-			const exts = discoverAll(ctx.cwd);
-			// Sort so extension-manager itself is always at the bottom
-			exts.sort((a, b) => {
-				if (a.isSelf !== b.isSelf) return a.isSelf ? 1 : -1;
-				const scopeDiff = SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope];
-				if (scopeDiff !== 0) return scopeDiff;
-				return a.name.localeCompare(b.name);
-			});
+			const exts = discoverAll(ctx.cwd).filter((ext) => !ext.isSelf);
 
 			if (exts.length === 0) {
 				ctx.ui.notify("No extensions discovered.", "info");
@@ -417,7 +416,11 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 						lines.push(theme.fg("accent", theme.bold("Extensions")));
 						lines.push("");
 
-						for (let i = 0; i < exts.length; i++) {
+						const maxVisible = 10;
+						const startIndex = Math.max(0, Math.min(selectedIndex - Math.floor(maxVisible / 2), exts.length - maxVisible));
+						const endIndex = Math.min(startIndex + maxVisible, exts.length);
+
+						for (let i = startIndex; i < endIndex; i++) {
 							const ext = exts[i];
 							const isSelected = i === selectedIndex;
 							const isEnabled = desired.get(ext.entryFile) ?? ext.enabled;
@@ -437,6 +440,10 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 							} else {
 								lines.push(`${cursor}${ext.name} ${scopeTag} ${statusIcon}`);
 							}
+						}
+
+						if (exts.length > maxVisible) {
+							lines.push(theme.fg("dim", `  (${selectedIndex + 1}/${exts.length})`));
 						}
 
 						// Unsaved indicator

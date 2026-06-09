@@ -159,6 +159,11 @@ function formatTodoId(id: string): string {
 	return `${TODO_ID_PREFIX}${id}`;
 }
 
+function cyanTodoId(id: string): string {
+	// Match the hardcoded cyan used by the answer extension's "Questions" title.
+	return `\x1b[36m${formatTodoId(id)}\x1b[0m`;
+}
+
 function normalizeTodoId(id: string): string {
 	let trimmed = id.trim();
 	if (trimmed.startsWith("#")) {
@@ -694,6 +699,18 @@ class TodoSelectorComponent extends Container implements Focusable {
 		}
 	}
 
+	override render(width: number): string[] {
+		const sidePadding = 2;
+		const innerWidth = Math.max(1, width - sidePadding * 2);
+		const lines = super.render(innerWidth);
+		const left = " ".repeat(sidePadding);
+		const right = " ".repeat(sidePadding);
+		return lines.map((line) => {
+			const fill = Math.max(0, innerWidth - visibleWidth(line));
+			return left + line + " ".repeat(fill) + right;
+		});
+	}
+
 	handleInput(keyData: string): void {
 		const kb = this.keybindings;
 		if (kb.matches(keyData, "tui.select.up")) {
@@ -898,7 +915,7 @@ class TodoDetailOverlayComponent {
 		this.keybindings = keybindings;
 		this.todo = todo;
 		this.onAction = onAction;
-		this.markdown = new Markdown(this.getMarkdownText(), 1, 0, getMarkdownTheme());
+		this.markdown = new Markdown(this.getMarkdownText(), 0, 0, getMarkdownTheme());
 	}
 
 	private getMarkdownText(): string {
@@ -943,7 +960,16 @@ class TodoDetailOverlayComponent {
 		const innerWidth = Math.max(10, width - 2);
 		const contentHeight = Math.max(1, maxHeight - headerLines - footerLines - separatorLines - borderLines);
 
-		const markdownLines = this.markdown.render(innerWidth - 2);
+		let markdownWidth = Math.max(1, innerWidth - 2);
+		let markdownLines = this.markdown.render(markdownWidth);
+		let hasScrollableContent = markdownLines.length > contentHeight;
+		if (hasScrollableContent) {
+			// Reserve one column for the right-hand scrollbar track/thumb.
+			markdownWidth = Math.max(1, innerWidth - 3);
+			markdownLines = this.markdown.render(markdownWidth);
+			hasScrollableContent = markdownLines.length > contentHeight;
+		}
+
 		this.totalLines = markdownLines.length;
 		this.viewHeight = contentHeight;
 		const maxScroll = Math.max(0, this.totalLines - contentHeight);
@@ -951,8 +977,7 @@ class TodoDetailOverlayComponent {
 
 		const visibleLines = markdownLines.slice(this.scrollOffset, this.scrollOffset + contentHeight);
 
-		const borderColor = (text: string) => this.theme.fg("borderMuted", text);
-		const hasScrollableContent = this.totalLines > contentHeight;
+		const borderColor = (text: string) => this.theme.fg("dim", text);
 		const boxLine = (content: string): string => {
 			const truncated = truncateToWidth(content, innerWidth);
 			const padding = Math.max(0, innerWidth - visibleWidth(truncated));
@@ -974,10 +999,10 @@ class TodoDetailOverlayComponent {
 		output.push(borderColor(`╭${"─".repeat(innerWidth)}╮`));
 
 		// Title: TODO-id • title
-		const titleLine = this.theme.fg("accent", formatTodoId(this.todo.id)) +
+		const titleLine = cyanTodoId(this.todo.id) +
 			this.theme.fg("muted", " • ") +
 			this.theme.fg("text", this.todo.title || "(untitled)");
-		output.push(boxLine(` ${truncateToWidth(titleLine, innerWidth - 1)}`));
+		output.push(boxLine(`  ${truncateToWidth(titleLine, innerWidth - 2)}`));
 
 		// Subtitle: status • tags
 		const status = this.todo.status || "open";
@@ -986,23 +1011,23 @@ class TodoDetailOverlayComponent {
 		const subtitleLine = this.theme.fg(statusColor, status) +
 			this.theme.fg("muted", " • ") +
 			this.theme.fg("muted", tagText);
-		output.push(boxLine(` ${truncateToWidth(subtitleLine, innerWidth - 1)}`));
+		output.push(boxLine(`  ${truncateToWidth(subtitleLine, innerWidth - 2)}`));
 
 		// Separator
 		output.push(separator());
 
 		// Content
-		const lineContentWidth = hasScrollableContent ? Math.max(1, innerWidth - 2) : Math.max(1, innerWidth - 1);
+		const lineContentWidth = hasScrollableContent ? Math.max(1, innerWidth - 3) : Math.max(1, innerWidth - 2);
 		for (let i = 0; i < contentHeight; i++) {
 			const line = visibleLines[i] ?? "";
-			output.push(contentBoxLine(` ${truncateToWidth(line, lineContentWidth)}`, i));
+			output.push(contentBoxLine(`  ${truncateToWidth(line, lineContentWidth)}`, i));
 		}
 
 		// Separator before footer
 		output.push(separator());
 
 		// Footer shortcuts
-		output.push(boxLine(` ${this.buildActionLine(innerWidth - 2)}`));
+		output.push(boxLine(`  ${this.buildActionLine(innerWidth - 3)}`));
 
 		// Bottom border (rounded)
 		output.push(borderColor(`╰${"─".repeat(innerWidth)}╯`));
@@ -1011,7 +1036,7 @@ class TodoDetailOverlayComponent {
 	}
 
 	invalidate(): void {
-		this.markdown = new Markdown(this.getMarkdownText(), 1, 0, getMarkdownTheme());
+		this.markdown = new Markdown(this.getMarkdownText(), 0, 0, getMarkdownTheme());
 	}
 
 	private getMaxHeight(): number {
@@ -1041,7 +1066,7 @@ class TodoDetailOverlayComponent {
 		const statusColor = isTodoClosed(status) ? "dim" : "success";
 		const tagText = this.todo.tags.length ? this.todo.tags.join(", ") : "no tags";
 		const line =
-			this.theme.fg("accent", formatTodoId(this.todo.id)) +
+			cyanTodoId(this.todo.id) +
 			this.theme.fg("muted", " • ") +
 			this.theme.fg(statusColor, status) +
 			this.theme.fg("muted", " • ") +
@@ -1069,7 +1094,7 @@ class TodoDetailOverlayComponent {
 			? 0
 			: Math.round((this.scrollOffset / maxScroll) * maxThumbTop);
 		const isThumbRow = rowIndex >= thumbTop && rowIndex < thumbTop + thumbHeight;
-		return isThumbRow ? this.theme.fg("accent", "┃") : this.theme.fg("borderMuted", "│");
+		return isThumbRow ? this.theme.fg("accent", "┃") : this.theme.fg("dim", "│");
 	}
 
 	private scrollBy(delta: number): void {
@@ -1656,7 +1681,7 @@ function renderTodoHeading(theme: Theme, todo: TodoFrontMatter, currentSessionId
 	const tagText = todo.tags.length ? theme.fg("dim", ` [${todo.tags.join(", ")}]`) : "";
 	const assignmentText = renderAssignmentSuffix(theme, todo, currentSessionId);
 	return (
-		theme.fg("accent", formatTodoId(todo.id)) +
+		cyanTodoId(todo.id) +
 		" " +
 		theme.fg(titleColor, getTodoTitle(todo)) +
 		tagText +
@@ -2422,7 +2447,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 			const title = typeof args.title === "string" ? args.title : "";
 			let text = theme.fg("toolTitle", theme.bold("todo ")) + theme.fg("muted", action);
 			if (normalizedId) {
-				text += " " + theme.fg("accent", formatTodoId(normalizedId));
+				text += " " + cyanTodoId(normalizedId);
 			}
 			if (title) {
 				text += " " + theme.fg("dim", `"${title}"`);
