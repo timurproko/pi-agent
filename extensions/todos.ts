@@ -2437,21 +2437,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 					return record;
 				};
 
-				const openTodoOverlay = async (record: TodoRecord): Promise<TodoOverlayAction> => {
-					const action = await ctx.ui.custom<TodoOverlayAction>(
-						(overlayTui, overlayTheme, overlayKeybindings, overlayDone) =>
-							new TodoDetailOverlayComponent(
-								overlayTui,
-								overlayTheme,
-								overlayKeybindings,
-								record,
-								overlayDone,
-							),
-					);
-
-					return action ?? "back";
-				};
-
 				const applyTodoAction = async (
 					record: TodoRecord,
 					action: TodoMenuAction,
@@ -2524,10 +2509,17 @@ export default function todosExtension(pi: ExtensionAPI) {
 
 				const handleActionSelection = async (record: TodoRecord, action: TodoMenuAction) => {
 					if (action === "view") {
-						await openTodoOverlay(record);
-						if (actionMenu) {
-							setActiveComponent(actionMenu);
-						}
+						setActiveComponent(
+							new TodoDetailOverlayComponent(
+								tui,
+								theme,
+								keybindings,
+								record,
+								() => {
+									setActiveComponent(actionMenu);
+								},
+							),
+						);
 						return;
 					}
 
