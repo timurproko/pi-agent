@@ -335,14 +335,15 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 		lines.push("");
 		lines.push(this.theme.fg("accent", this.theme.bold("Todos")));
 		lines.push("");
-		const labelColumnWidth = 16;
+		const descriptionGap = 7;
+		const labelColumnWidth = Math.max(...this.items.map((item) => visibleWidth(item.label)));
 		for (let i = 0; i < this.items.length; i++) {
 			const item = this.items[i]!;
 			const selected = i === this.selectedIndex && !item.disabled;
 			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
 			const labelColor = item.disabled ? "dim" : selected ? "accent" : "text";
 			const descriptionColor = item.disabled ? "dim" : selected ? "accent" : "muted";
-			const padding = " ".repeat(Math.max(1, labelColumnWidth - visibleWidth(item.label)));
+			const padding = " ".repeat(Math.max(descriptionGap, labelColumnWidth - visibleWidth(item.label) + descriptionGap));
 			const label = this.theme.fg(labelColor, item.label);
 			const description = this.theme.fg(descriptionColor, item.description);
 			lines.push(prefix + label + padding + description);
