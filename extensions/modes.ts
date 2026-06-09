@@ -122,15 +122,95 @@ function listPlans(): string[] {
 
 function buildRefinePlanPrompt(planFile: string): string {
 	return (
-		`let's refine the plan at ${planFile}: ` +
+		`Let's refine the plan at ${planFile}: ` +
 		"Ask me for the missing details needed to refine the plan together. Do not rewrite the plan yet and do not make assumptions. " +
 		"Ask clear, concrete questions and wait for my answers before drafting any plan changes.\n"
 	);
 }
 
+function buildSuggestSpecificChangesPrompt(planFile: string, suggestion: string): string {
+	return [
+		`Apply these specific suggested changes to the plan at ${planFile}.`,
+		"Read the existing plan first, update that same plan file, and do not ask follow-up questions unless the suggestion is impossible to apply safely.",
+		"After updating the plan, briefly summarize what changed.",
+		"",
+		"Specific suggestion:",
+		suggestion,
+	].join("\n");
+}
+
 type KeybindingMatcher = {
 	matches: (keyData: string, keybindingId: string) => boolean;
 };
+
+type PlanAction =
+	| "Open plan for review"
+	| "Refine and suggest changes"
+	| "Suggest specific changes"
+	| "Accept plan and build";
+
+class PostPlanActionDialog {
+	focused = true;
+	private readonly actions: PlanAction[] = [
+		"Open plan for review",
+		"Refine and suggest changes",
+		"Suggest specific changes",
+		"Accept plan and build",
+	];
+	private selectedIndex = 0;
+
+	constructor(
+		private readonly tui: TUI,
+		private readonly theme: any,
+		private readonly keybindings: KeybindingMatcher,
+		private readonly onDone: (choice: PlanAction | undefined) => void,
+	) {}
+
+	handleInput(keyData: string): void {
+		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
+			this.onDone(undefined);
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.up") || matchesKey(keyData, Key.up)) {
+			this.selectedIndex = this.selectedIndex === 0 ? this.actions.length - 1 : this.selectedIndex - 1;
+			this.tui.requestRender();
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.down)) {
+			this.selectedIndex = this.selectedIndex === this.actions.length - 1 ? 0 : this.selectedIndex + 1;
+			this.tui.requestRender();
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
+			this.onDone(this.actions[this.selectedIndex]);
+		}
+	}
+
+	render(width: number): string[] {
+		const lines: string[] = [];
+		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
+		const push = (line = "") => lines.push(truncateToWidth(line, width));
+
+		push(border);
+		push();
+		push(this.theme.fg("accent", this.theme.bold("Plan saved! What would you like to do?")));
+		push();
+
+		for (let i = 0; i < this.actions.length; i++) {
+			const selected = i === this.selectedIndex;
+			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
+			const label = this.theme.fg(selected ? "accent" : "text", this.actions[i]);
+			push(prefix + label);
+		}
+
+		push();
+		push(this.theme.fg("dim", "↑↓ navigate • enter select • esc cancel"));
+		push(border);
+		return lines;
+	}
+
+	invalidate(): void {}
+}
 
 class PlanReviewDialog {
 	focused = true;
@@ -315,6 +395,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	let lastWrittenPlanFile: string | null = null;
 	let postPlanPromptScheduled = false;
 	let pendingAutoAnswerForRefine = false;
+	let pendingAutoAnswerPlanFile: string | null = null;
 	let autoAnswerScheduled = false;
 	let editorDraftIsBash = false;
 
@@ -477,11 +558,9 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 
 	async function showPostPlanPrompt(planFile: string, ctx: ExtensionContext): Promise<void> {
 		while (mode === "plan") {
-			const choice = await ctx.ui.select("Plan saved! What would you like to do?", [
-				"Open plan for review",
-				"Refine and suggest changes",
-				"Accept plan and build",
-			]);
+			const choice = await ctx.ui.custom<PlanAction | undefined>((tui, theme, keybindings, done) => {
+				return new PostPlanActionDialog(tui, theme, keybindings, done);
+			});
 
 			if (choice === "Open plan for review") {
 				try {
@@ -498,7 +577,20 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 
 			if (choice === "Refine and suggest changes") {
 				pendingAutoAnswerForRefine = true;
+				pendingAutoAnswerPlanFile = planFile;
 				await pi.sendUserMessage(buildRefinePlanPrompt(planFile));
+				return;
+			}
+
+			if (choice === "Suggest specific changes") {
+				const suggestion = await ctx.ui.editor(
+					"Suggest specific changes to apply to the plan:",
+					"",
+				);
+				if (!suggestion?.trim()) {
+					continue;
+				}
+				await pi.sendUserMessage(buildSuggestSpecificChangesPrompt(planFile, suggestion.trim()));
 				return;
 			}
 
@@ -537,7 +629,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		setTimeout(waitForFinished, 0);
 	}
 
-	function scheduleAutoAnswerForRefine(ctx: ExtensionContext): void {
+	function scheduleAutoAnswerForRefine(ctx: ExtensionContext, planFile: string): void {
 		if (autoAnswerScheduled) return;
 		autoAnswerScheduled = true;
 
@@ -555,7 +647,10 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 						ctx.ui.notify("Could not auto-open answer UI: /answer handler is not loaded", "error");
 						return;
 					}
-					await answerHandler(ctx);
+					const result = await answerHandler(ctx, { cancelMessage: false, cancelControlLabel: "back to plan" });
+					if (result === "cancelled" && mode === "plan") {
+						await showPostPlanPrompt(planFile, ctx);
+					}
 				} finally {
 					autoAnswerScheduled = false;
 				}
@@ -571,7 +666,11 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 
 		if (pendingAutoAnswerForRefine) {
 			pendingAutoAnswerForRefine = false;
-			scheduleAutoAnswerForRefine(ctx);
+			const planFile = pendingAutoAnswerPlanFile;
+			pendingAutoAnswerPlanFile = null;
+			if (planFile) {
+				scheduleAutoAnswerForRefine(ctx, planFile);
+			}
 			return;
 		}
 

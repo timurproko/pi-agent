@@ -35,6 +35,13 @@ interface ExtractionResult {
 	questions: ExtractedQuestion[];
 }
 
+type AnswerHandlerResult = "submitted" | "cancelled" | "unavailable" | "error" | "no_questions";
+
+interface AnswerHandlerOptions {
+	cancelMessage?: string | false;
+	cancelControlLabel?: string;
+}
+
 const SYSTEM_PROMPT = `You are a question extractor. Given text from a conversation, extract any questions that need answering.
 
 Output a JSON object with this structure:
@@ -150,6 +157,7 @@ class QnAComponent implements Component {
 		questions: ExtractedQuestion[],
 		tui: TUI,
 		onDone: (result: string | null) => void,
+		private readonly cancelControlLabel: string = "cancel",
 	) {
 		this.questions = questions;
 		this.answers = questions.map(() => "");
@@ -300,7 +308,10 @@ class QnAComponent implements Component {
 			const paddedContent = " ".repeat(leftPad) + content;
 			const contentLen = visibleWidth(paddedContent);
 			const rightPad = Math.max(0, boxWidth - contentLen - 2);
-			return this.dim("│") + paddedContent + " ".repeat(rightPad) + this.dim("│");
+			// Always reset after arbitrary content before padding/border. Some wrapped
+			// ANSI strings (notably question context/description text) can otherwise
+			// leak their color into the rest of the dialog line.
+			return this.dim("│") + paddedContent + "\x1b[0m" + " ".repeat(rightPad) + this.dim("│");
 		};
 
 		const emptyBoxLine = (): string => {
@@ -342,13 +353,13 @@ class QnAComponent implements Component {
 			lines.push(padToWidth(boxLine(line)));
 		}
 
-		// Context if present
+		// Context if present. Wrap plain text first, then color each rendered line
+		// independently so context color cannot carry across wrapped lines.
 		if (q.context) {
 			lines.push(padToWidth(emptyBoxLine()));
-			const contextText = this.gray(`> ${q.context}`);
-			const wrappedContext = wrapTextWithAnsi(contextText, contentWidth - 2);
+			const wrappedContext = wrapTextWithAnsi(`> ${q.context}`, contentWidth - 2);
 			for (const line of wrappedContext) {
-				lines.push(padToWidth(boxLine(line)));
+				lines.push(padToWidth(boxLine(this.gray(line))));
 			}
 		}
 
@@ -378,7 +389,7 @@ class QnAComponent implements Component {
 			lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, contentWidth))));
 		} else {
 			lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
-			const controls = this.dim("←→ navigate · enter next · shift+enter newline · esc cancel");
+			const controls = this.dim(`←→ navigate · enter next · shift+enter newline · esc ${this.cancelControlLabel}`);
 			lines.push(padToWidth(boxLine(truncateToWidth(controls, contentWidth))));
 		}
 		lines.push(padToWidth(this.dim("╰" + horizontalLine(boxWidth - 2) + "╯")));
@@ -390,16 +401,17 @@ class QnAComponent implements Component {
 }
 
 export default function (pi: ExtensionAPI) {
-	const answerHandler = async (ctx: ExtensionContext) => {
+	const answerHandler = async (ctx: ExtensionContext, options: AnswerHandlerOptions = {}): Promise<AnswerHandlerResult> => {
+		let restoreStatus = () => {};
 		try {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("answer requires interactive mode", "error");
-				return;
+				return "unavailable";
 			}
 
 			if (!ctx.model) {
 				ctx.ui.notify("No model selected", "error");
-				return;
+				return "unavailable";
 			}
 
 			// Find the last assistant message on the current branch
@@ -424,7 +436,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (!lastAssistantText) {
 				ctx.ui.notify("No assistant messages found", "error");
-				return;
+				return "unavailable";
 			}
 
 			// Use the current model for extraction
@@ -443,7 +455,7 @@ export default function (pi: ExtensionAPI) {
 			// Hide mcp status during extraction
 			ctx.ui.setStatus("mcp", undefined);
 
-			const restoreStatus = () => {
+			restoreStatus = () => {
 				clearInterval(pulseTimer);
 				ctx.ui.setStatus("aaa-pi-plan-mode", ctx.ui.theme.fg("piPlanCmdMode", "cmd"));
 			};
@@ -453,7 +465,7 @@ export default function (pi: ExtensionAPI) {
 			if (auth.ok === false) {
 				restoreStatus();
 				ctx.ui.notify(`Auth failed for ${extractionModel.id}: ${auth.error}`, "error");
-				return;
+				return "error";
 			}
 
 			// Run extraction directly (no loader UI)
@@ -474,7 +486,7 @@ export default function (pi: ExtensionAPI) {
 				restoreStatus();
 				const msg = err instanceof Error ? err.message : String(err);
 				ctx.ui.notify(`API call failed: ${msg}`, "error");
-				return;
+				return "error";
 			}
 
 			restoreStatus();
@@ -500,23 +512,25 @@ export default function (pi: ExtensionAPI) {
 			if (!extractionResult) {
 				const errMsg = (response as any).errorMessage || '';
 				ctx.ui.notify(`Failed to parse: content=[${contentTypes}] stop=${response.stopReason} err=${errMsg} text=${responseText.slice(0, 100)}`, "error");
-				return;
+				return "error";
 			}
 
 			if (extractionResult.questions.length === 0) {
 				ctx.ui.notify("No questions found in the last message", "info");
-				return;
+				return "no_questions";
 			}
 
 			// Show the Q&A component
 			restoreStatus();
 			const answersResult = await ctx.ui.custom<string | null>((tui, _theme, _kb, done) => {
-				return new QnAComponent(extractionResult.questions, tui, done);
+				return new QnAComponent(extractionResult.questions, tui, done, options.cancelControlLabel);
 			});
 
 			if (answersResult === null) {
-				ctx.ui.notify("Cancelled", "info");
-				return;
+				if (options.cancelMessage !== false) {
+					ctx.ui.notify(options.cancelMessage ?? "Cancelled", "info");
+				}
+				return "cancelled";
 			}
 
 			// Send the answers directly as a message and trigger a turn
@@ -528,10 +542,12 @@ export default function (pi: ExtensionAPI) {
 				},
 				{ triggerTurn: true },
 			);
+			return "submitted";
 		} catch (err) {
 			restoreStatus();
 			const msg = err instanceof Error ? err.message : String(err);
 			ctx.ui.notify(`Answer extension error: ${msg}`, "error");
+			return "error";
 		}
 	};
 
