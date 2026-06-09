@@ -535,6 +535,8 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
+	(globalThis as any).__piAnswerHandler = answerHandler;
+
 	pi.registerCommand("answer", {
 		description: "Extract questions from last assistant message into interactive Q&A",
 		handler: (_args, ctx) => answerHandler(ctx),

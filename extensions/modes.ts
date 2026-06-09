@@ -21,10 +21,10 @@
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { chainEditor } from "./_editor-chain.ts";
 import type { TUI } from "@earendil-works/pi-tui";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -120,11 +120,202 @@ function listPlans(): string[] {
 		.sort();
 }
 
+function buildRefinePlanPrompt(planFile: string): string {
+	return (
+		`let's refine the plan at ${planFile}: ` +
+		"Ask me for the missing details needed to refine the plan together. Do not rewrite the plan yet and do not make assumptions. " +
+		"Ask clear, concrete questions and wait for my answers before drafting any plan changes.\n"
+	);
+}
+
+type KeybindingMatcher = {
+	matches: (keyData: string, keybindingId: string) => boolean;
+};
+
+class PlanReviewDialog {
+	focused = true;
+	private markdown: Markdown;
+	private scrollOffset = 0;
+	private viewHeight = 0;
+	private totalLines = 0;
+	private readonly planTitle: string;
+	private readonly reviewContent: string;
+	private readonly sectionHeadings: Set<string>;
+
+	constructor(
+		private readonly tui: TUI,
+		private readonly theme: any,
+		private readonly keybindings: KeybindingMatcher,
+		private readonly planFile: string,
+		private readonly content: string,
+		private readonly onClose: () => void,
+	) {
+		this.planTitle = this.extractPlanTitle();
+		this.reviewContent = this.stripTitleFromContent();
+		this.sectionHeadings = this.extractSectionHeadings();
+		this.markdown = new Markdown(this.reviewContent, 0, 0, getMarkdownTheme());
+	}
+
+	private extractPlanTitle(): string {
+		const heading = this.content.match(/^#\s+(.+)\s*$/m)?.[1]?.trim();
+		if (heading) return heading;
+		return path.basename(this.planFile, path.extname(this.planFile));
+	}
+
+	private stripTitleFromContent(): string {
+		const withoutTitle = this.content.replace(/^#\s+.+\s*\r?\n?/, "").replace(/^\s*\r?\n/, "");
+		const compactHeadings = withoutTitle.replace(/^(#{2,6}\s+.+)\r?\n[ \t]*\r?\n/gm, "$1\n");
+		return compactHeadings.trim().length > 0 ? compactHeadings : "_No plan content._";
+	}
+
+	private extractSectionHeadings(): Set<string> {
+		const headings = new Set<string>();
+		const pattern = /^#{2,6}\s+(.+)\s*$/gm;
+		let match: RegExpExecArray | null;
+		while ((match = pattern.exec(this.reviewContent)) !== null) {
+			const heading = match[1]?.trim();
+			if (heading) headings.add(heading);
+		}
+		return headings;
+	}
+
+	private stripAnsi(text: string): string {
+		return text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
+	}
+
+	private compactRenderedHeadingSpacing(lines: string[]): string[] {
+		if (this.sectionHeadings.size === 0) return lines;
+		const compacted: string[] = [];
+		for (const line of lines) {
+			const previous = compacted[compacted.length - 1];
+			const previousText = previous ? this.stripAnsi(previous).trim() : "";
+			const currentText = this.stripAnsi(line).trim();
+			if (!currentText && previousText && this.sectionHeadings.has(previousText)) {
+				continue;
+			}
+			compacted.push(line);
+		}
+		return compacted;
+	}
+
+	handleInput(keyData: string): void {
+		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
+			this.onClose();
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.up") || matchesKey(keyData, Key.up)) {
+			this.scrollBy(-1);
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.down)) {
+			this.scrollBy(1);
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.pageUp")) {
+			this.scrollBy(-this.viewHeight || -1);
+			return;
+		}
+		if (this.keybindings.matches(keyData, "tui.select.pageDown")) {
+			this.scrollBy(this.viewHeight || 1);
+		}
+	}
+
+	render(width: number): string[] {
+		const maxHeight = this.getMaxHeight();
+		const innerWidth = Math.max(10, width - 2);
+		const chromeLines = 7; // top/title/path/separator/footer/separator/bottom
+		const contentHeight = Math.max(1, maxHeight - chromeLines);
+
+		let markdownWidth = Math.max(1, innerWidth - 4);
+		let markdownLines = this.compactRenderedHeadingSpacing(this.markdown.render(markdownWidth));
+		let hasScrollableContent = markdownLines.length > contentHeight;
+		if (hasScrollableContent) {
+			markdownWidth = Math.max(1, innerWidth - 5);
+			markdownLines = this.compactRenderedHeadingSpacing(this.markdown.render(markdownWidth));
+			hasScrollableContent = markdownLines.length > contentHeight;
+		}
+
+		this.totalLines = markdownLines.length;
+		this.viewHeight = contentHeight;
+		const maxScroll = Math.max(0, this.totalLines - contentHeight);
+		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, maxScroll));
+
+		const visibleLines = markdownLines.slice(this.scrollOffset, this.scrollOffset + contentHeight);
+		const borderColor = (text: string) => this.theme.fg("dim", text);
+		const boxLine = (content: string): string => {
+			const truncated = truncateToWidth(content, innerWidth);
+			const padding = Math.max(0, innerWidth - visibleWidth(truncated));
+			return borderColor("│") + truncated + " ".repeat(padding) + borderColor("│");
+		};
+		const contentBoxLine = (content: string, rowIndex: number): string => {
+			if (!hasScrollableContent) return boxLine(content);
+			const contentWidth = Math.max(1, innerWidth - 1);
+			const truncated = truncateToWidth(content, contentWidth);
+			const padding = Math.max(0, contentWidth - visibleWidth(truncated));
+			return borderColor("│") + truncated + " ".repeat(padding) + this.getScrollIndicatorForRow(rowIndex, contentHeight) + borderColor("│");
+		};
+		const separator = (): string => borderColor(`├${"─".repeat(innerWidth)}┤`);
+
+		const title = this.theme.fg("accent", this.planTitle);
+		const pathLabel = this.theme.fg("muted", this.planFile);
+		const footer = [
+			this.theme.fg("dim", "↑↓ scroll"),
+			this.theme.fg("dim", "pgup/pgdn page"),
+			this.theme.fg("dim", "esc back"),
+		].join(this.theme.fg("muted", " • "));
+
+		const output: string[] = [];
+		output.push(borderColor(`╭${"─".repeat(innerWidth)}╮`));
+		output.push(boxLine(`  ${title}`));
+		output.push(boxLine(`  ${pathLabel}`));
+		output.push(separator());
+		const lineContentWidth = hasScrollableContent ? Math.max(1, innerWidth - 5) : Math.max(1, innerWidth - 4);
+		for (let i = 0; i < contentHeight; i++) {
+			const line = visibleLines[i] ?? "";
+			output.push(contentBoxLine(`  ${truncateToWidth(line, lineContentWidth)}`, i));
+		}
+		output.push(separator());
+		output.push(boxLine(`  ${footer}`));
+		output.push(borderColor(`╰${"─".repeat(innerWidth)}╯`));
+		return output.map((line) => truncateToWidth(line, width));
+	}
+
+	invalidate(): void {
+		this.markdown = new Markdown(this.reviewContent, 0, 0, getMarkdownTheme());
+	}
+
+	private getMaxHeight(): number {
+		const rows = this.tui.terminal.rows || 24;
+		// Fill the screen area above pi's footer/status line instead of using a compact editor dialog.
+		return Math.max(10, rows - 4);
+	}
+
+	private getScrollIndicatorForRow(rowIndex: number, trackHeight: number): string {
+		if (this.totalLines <= this.viewHeight || trackHeight <= 0) return " ";
+		const maxScroll = Math.max(0, this.totalLines - this.viewHeight);
+		const thumbHeight = Math.max(1, Math.round((this.viewHeight / this.totalLines) * trackHeight));
+		const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+		const thumbTop = maxScroll === 0
+			? 0
+			: Math.round((this.scrollOffset / maxScroll) * maxThumbTop);
+		const isThumbRow = rowIndex >= thumbTop && rowIndex < thumbTop + thumbHeight;
+		return isThumbRow ? this.theme.fg("accent", "┃") : this.theme.fg("dim", "│");
+	}
+
+	private scrollBy(delta: number): void {
+		const maxScroll = Math.max(0, this.totalLines - this.viewHeight);
+		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset + delta, maxScroll));
+		this.tui.requestRender();
+	}
+}
+
 export default function piPlanExtension(pi: ExtensionAPI): void {
 	let mode: Mode = "command";
 	let activeTui: TUI | undefined;
 	let lastWrittenPlanFile: string | null = null;
 	let postPlanPromptScheduled = false;
+	let pendingAutoAnswerForRefine = false;
+	let autoAnswerScheduled = false;
 	let editorDraftIsBash = false;
 
 	// ---- status bar ----
@@ -241,7 +432,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 
 		// mode === "plan"
 		// In Plan mode the assistant may read/search the codebase freely,
-		// but is only allowed to *write* into ~/.pi/agent/plans/. No bash, no edits.
+		// but is only allowed to create/refine Markdown plans under ~/.pi/agent/plans/.
 		if (toolName === "bash") {
 			return {
 				block: true,
@@ -254,9 +445,12 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 			if (!target || !isInsidePlansDir(target)) {
 				return {
 					block: true,
-					reason: "Plan mode: edits are only allowed inside ~/.pi/agent/plans/. Save your plan there.",
+					reason: "Plan mode: edits are only allowed inside ~/.pi/agent/plans/. Use this to refine an existing plan there.",
 				};
 			}
+			// Track refined plan files too, so the post-plan prompt appears after edits,
+			// not only after first-time writes.
+			lastWrittenPlanFile = target;
 			return;
 		}
 		if (toolName === "write") {
@@ -282,24 +476,41 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	});
 
 	async function showPostPlanPrompt(planFile: string, ctx: ExtensionContext): Promise<void> {
-		const choice = await ctx.ui.select("Plan saved! What would you like to do?", [
-			"Accept plan and build",
-			"Suggest changes",
-			"xit plan mode and I will prompt myself",
-		]);
+		while (mode === "plan") {
+			const choice = await ctx.ui.select("Plan saved! What would you like to do?", [
+				"Open plan for review",
+				"Refine and suggest changes",
+				"Accept plan and build",
+			]);
 
-		if (choice === "Accept and build") {
-			setMode("command", ctx, false);
-			await pi.sendUserMessage(`Execute the plan at ${planFile}. Read it first, then follow its Steps section.`);
-		} else if (choice === "Exit plan mode") {
-			setMode("command", ctx, false);
-		} else if (choice === "Suggest changes") {
-			const suggestions = await ctx.ui.input("Enter your suggestions:");
-			if (suggestions) {
-				await pi.sendUserMessage(suggestions);
+			if (choice === "Open plan for review") {
+				try {
+					const content = fs.readFileSync(planFile, "utf8");
+					await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
+						return new PlanReviewDialog(tui, theme, keybindings, planFile, content, () => done());
+					});
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					ctx.ui.notify(`Could not open plan for review: ${message}`, "error");
+				}
+				continue;
 			}
+
+			if (choice === "Refine and suggest changes") {
+				pendingAutoAnswerForRefine = true;
+				await pi.sendUserMessage(buildRefinePlanPrompt(planFile));
+				return;
+			}
+
+			if (choice === "Accept plan and build") {
+				setMode("command", ctx, false);
+				await pi.sendUserMessage(`Execute the plan at ${planFile}. Read it first, then follow its Steps section.`);
+				return;
+			}
+
+			// If undefined (Escape), do nothing — stay in plan mode
+			return;
 		}
-		// If undefined (Escape), do nothing — stay in plan mode
 	}
 
 	function schedulePostPlanPrompt(planFile: string, ctx: ExtensionContext): void {
@@ -326,15 +537,51 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		setTimeout(waitForFinished, 0);
 	}
 
+	function scheduleAutoAnswerForRefine(ctx: ExtensionContext): void {
+		if (autoAnswerScheduled) return;
+		autoAnswerScheduled = true;
+
+		const waitForFinished = () => {
+			if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+				setTimeout(waitForFinished, 100);
+				return;
+			}
+
+			void (async () => {
+				try {
+					if (mode !== "plan") return;
+					const answerHandler = (globalThis as any).__piAnswerHandler;
+					if (typeof answerHandler !== "function") {
+						ctx.ui.notify("Could not auto-open answer UI: /answer handler is not loaded", "error");
+						return;
+					}
+					await answerHandler(ctx);
+				} finally {
+					autoAnswerScheduled = false;
+				}
+			})();
+		};
+
+		setTimeout(waitForFinished, 0);
+	}
+
 	// ---- post-plan review prompt ----
 	pi.on("agent_end", async (_event, ctx) => {
-		if (mode !== "plan" || !lastWrittenPlanFile) return;
+		if (mode !== "plan") return;
+
+		if (pendingAutoAnswerForRefine) {
+			pendingAutoAnswerForRefine = false;
+			scheduleAutoAnswerForRefine(ctx);
+			return;
+		}
+
+		if (!lastWrittenPlanFile) return;
 
 		const planFile = lastWrittenPlanFile;
 		lastWrittenPlanFile = null;
 
 		// `agent_end` fires before the session fully leaves its streaming state.
-		// If the accept dialog is shown immediately, selecting "Accept and build"
+		// If the post-plan dialog is shown immediately, selecting "Accept plan and build"
 		// can race with the still-processing agent turn and trigger:
 		// "Agent is already processing. Specify streamingBehavior...".
 		// Defer the dialog until pi reports that the agent is completely idle.
@@ -364,22 +611,24 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		} else if (mode === "plan") {
 			directive = [
 				"[PI-PLAN MODE: PLAN]",
-				"You are in Plan mode. Your job is to PRODUCE A PLAN, not to execute it.",
+				"You are in Plan mode. Your job is to PRODUCE OR REFINE A PLAN, not to execute it.",
 				"",
 				"Rules:",
 				"  - Do NOT run bash.",
 				"  - Do NOT edit or write any file outside of `~/.pi/agent/plans/`.",
-				"  - You MAY use read / grep / find / ls to investigate the codebase.",
-				"  - When the plan is ready, save it as Markdown using the `write` tool to:",
+				"  - You MAY use read/search tools to investigate the codebase and existing plan files.",
+				"  - When creating a new plan, save it as Markdown using the `write` tool to:",
 				"      ~/.pi/agent/plans/<short-kebab-case-name>.md",
+				"  - When refining an existing plan, read the plan first and update that same file under `~/.pi/agent/plans/` using `edit` or `write`.",
+				"  - If the user asks to refine a plan but missing details would materially change the plan, ask clear questions and wait for answers before editing.",
 				"  - The plan file should contain:",
 				"      # Title",
 				"      ## Goal        (1-3 sentences)",
 				"      ## Context     (key files / constraints)",
 				"      ## Steps       (numbered, actionable, ordered)",
 				"      ## Verification (how to confirm success)",
-				"  - After saving, briefly tell the user the plan path and a short summary.",
-				"  - The user will be prompted to accept and build, exit plan mode, or suggest changes.",
+				"  - After saving or refining, briefly tell the user the plan path and a short summary.",
+				"  - The user will be prompted to open the plan for review, refine and suggest changes, or accept and build.",
 				"",
 				"Existing plans in this project:",
 				planList,
