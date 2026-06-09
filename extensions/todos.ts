@@ -270,15 +270,13 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 	constructor(
 		private theme: Theme,
 		private keybindings: KeybindingMatcher,
-		openCount: number,
-		allCount: number,
 		private onSelectCallback: (action: TodoHomeAction) => void,
 		private onCancelCallback: () => void,
 	) {
 		super();
 		this.items = [
-			{ action: "view", label: `View (${openCount})` },
-			{ action: "clearAll", label: `Clear (${allCount})` },
+			{ action: "view", label: "View" },
+			{ action: "clearAll", label: "Delete" },
 			{ action: "settings", label: "Settings" },
 		];
 		this.selectedIndex = this.firstEnabledIndex();
@@ -2312,13 +2310,10 @@ export default function todosExtension(pi: ExtensionAPI) {
 			return;
 		}
 
-		const openCount = todos.filter((todo) => !isTodoClosed(getTodoStatus(todo))).length;
 		const homeAction = await ctx.ui.custom<TodoHomeAction>((_tui, theme, keybindings, done) =>
 			new TodoHomeMenuComponent(
 				theme,
 				keybindings,
-				openCount,
-				todos.length,
 				(action) => done(action),
 				() => done(),
 			),
@@ -2334,10 +2329,10 @@ export default function todosExtension(pi: ExtensionAPI) {
 				new TodoDeleteConfirmComponent(
 					theme,
 					keybindings,
-					"Clear all todos",
+					"Delete todos",
 					(confirmed) => done(confirmed),
 					{
-						subtitle: `Delete all ${todos.length} todos? This cannot be undone.`,
+						subtitle: `Delete ${todos.length} todos? This cannot be undone.`,
 						cancelLabel: "cancel",
 					},
 				),
