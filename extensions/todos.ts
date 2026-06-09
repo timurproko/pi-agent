@@ -275,9 +275,9 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 	) {
 		super();
 		this.items = [
-			{ action: "view", label: "View" },
-			{ action: "clearAll", label: "Delete" },
-			{ action: "settings", label: "Settings" },
+			{ action: "view", label: "View todos" },
+			{ action: "clearAll", label: "Delete todos" },
+			{ action: "settings", label: "Extension settings" },
 		];
 		this.selectedIndex = this.firstEnabledIndex();
 	}
@@ -413,7 +413,7 @@ class TodoSettingsMenuComponent extends Container implements Focusable {
 			["Max visible todos in widget", String(this.settings.maxVisibleTodosInWidget)],
 			["Widget sort order", this.settings.widgetSortOrder],
 		] as const;
-		const lines = [border, "", this.theme.fg("accent", this.theme.bold("Todo settings")), ""];
+		const lines = [border, "", this.theme.fg("accent", this.theme.bold("Extension settings")), ""];
 		for (let i = 0; i < rows.length; i++) {
 			const [label, value] = rows[i]!;
 			const selected = i === this.selectedIndex;
