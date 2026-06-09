@@ -57,8 +57,6 @@ const TODO_PATH_ENV = "PI_TODO_PATH";
 const TODO_ID_PREFIX = "TODO-";
 const TODO_ID_PATTERN = /^[a-f0-9]{8}$/i;
 const DEFAULT_TODO_SETTINGS = {
-	deleteCompletedTodosOnStartup: true,
-	completedTodoRetentionDays: 7,
 	saveTodosInCurrentWorkingDirectory: true,
 	maxVisibleTodosInWidget: TODO_WIDGET_MAX_VISIBLE,
 	widgetSortOrder: "time" as "id" | "time",
@@ -86,8 +84,6 @@ interface LockInfo {
 }
 
 interface TodoSettings {
-	deleteCompletedTodosOnStartup: boolean;
-	completedTodoRetentionDays: number;
 	saveTodosInCurrentWorkingDirectory: boolean;
 	maxVisibleTodosInWidget: number;
 	widgetSortOrder: "id" | "time";
@@ -334,16 +330,15 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 	constructor(
 		private theme: Theme,
 		private keybindings: KeybindingMatcher,
-		openCount: number,
 		allCount: number,
 		private onSelectCallback: (action: TodoHomeAction) => void,
 		private onCancelCallback: () => void,
 	) {
 		super();
 		this.items = [
-			{ action: "create", label: "Create todo" },
-			{ action: "view", label: `View all (${allCount})` },
-			{ action: "clearAll", label: `Clear all (${allCount})` },
+			{ action: "create", label: "Create" },
+			{ action: "view", label: `View (${allCount})` },
+			{ action: "clearAll", label: `Clear (${allCount})` },
 			{ action: "settings", label: "Settings" },
 		];
 		this.selectedIndex = this.firstEnabledIndex();
@@ -391,7 +386,7 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
 		lines.push(border);
 		lines.push("");
-		lines.push(this.theme.fg("accent", this.theme.bold("View all todos")));
+		lines.push(this.theme.fg("accent", this.theme.bold("Todos")));
 		lines.push("");
 		for (let i = 0; i < this.items.length; i++) {
 			const item = this.items[i]!;
@@ -432,7 +427,7 @@ class TodoSettingsMenuComponent extends Container implements Focusable {
 	}
 
 	private updateSelected(delta: number): void {
-		this.selectedIndex = (this.selectedIndex + delta + 5) % 5;
+		this.selectedIndex = (this.selectedIndex + delta + 3) % 3;
 	}
 
 	private changeValue(delta = 1): void {
@@ -442,10 +437,6 @@ class TodoSettingsMenuComponent extends Container implements Focusable {
 			this.settings.maxVisibleTodosInWidget = Math.max(1, Math.min(100, this.settings.maxVisibleTodosInWidget + delta));
 		} else if (this.selectedIndex === 2) {
 			this.settings.widgetSortOrder = this.settings.widgetSortOrder === "id" ? "time" : "id";
-		} else if (this.selectedIndex === 3) {
-			this.settings.deleteCompletedTodosOnStartup = !this.settings.deleteCompletedTodosOnStartup;
-		} else {
-			this.settings.completedTodoRetentionDays = Math.max(0, Math.min(365, this.settings.completedTodoRetentionDays + delta));
 		}
 		this.onChange(this.settings);
 	}
@@ -483,8 +474,6 @@ class TodoSettingsMenuComponent extends Container implements Focusable {
 			["Save in PWD directory", this.settings.saveTodosInCurrentWorkingDirectory ? "yes" : "no"],
 			["Max visible todos in widget", String(this.settings.maxVisibleTodosInWidget)],
 			["Widget sort order", this.settings.widgetSortOrder],
-			["Delete completed todos on startup", this.settings.deleteCompletedTodosOnStartup ? "yes" : "no"],
-			["Completed todo retention days", String(this.settings.completedTodoRetentionDays)],
 		] as const;
 		const lines = [border, "", this.theme.fg("accent", this.theme.bold("Todo settings")), ""];
 		for (let i = 0; i < rows.length; i++) {
@@ -1135,12 +1124,6 @@ function getAgentSettingsPath(): string {
 type RawTodoSettings = Partial<TodoSettings> & Record<string, any>;
 
 function normalizeTodoSettings(raw: RawTodoSettings): TodoSettings {
-	const deleteCompletedTodosOnStartup = raw.deleteCompletedTodosOnStartup ?? raw.gc ?? DEFAULT_TODO_SETTINGS.deleteCompletedTodosOnStartup;
-	const completedTodoRetentionDays = Number.isFinite(raw.completedTodoRetentionDays)
-		? raw.completedTodoRetentionDays
-		: Number.isFinite(raw.gcDays)
-			? raw.gcDays
-			: DEFAULT_TODO_SETTINGS.completedTodoRetentionDays;
 	const maxVisibleTodosInWidget = Number.isFinite(raw.maxVisibleTodosInWidget)
 		? raw.maxVisibleTodosInWidget
 		: Number.isFinite(raw.widgetMaxVisible)
@@ -1150,8 +1133,6 @@ function normalizeTodoSettings(raw: RawTodoSettings): TodoSettings {
 		? raw.widgetSortOrder
 		: DEFAULT_TODO_SETTINGS.widgetSortOrder;
 	return {
-		deleteCompletedTodosOnStartup: Boolean(deleteCompletedTodosOnStartup),
-		completedTodoRetentionDays: Math.max(0, Math.floor(completedTodoRetentionDays)),
 		saveTodosInCurrentWorkingDirectory: Boolean(raw.saveTodosInCurrentWorkingDirectory ?? raw.saveInPwdDirectory ?? DEFAULT_TODO_SETTINGS.saveTodosInCurrentWorkingDirectory),
 		maxVisibleTodosInWidget: Math.max(1, Math.min(100, Math.floor(maxVisibleTodosInWidget))),
 		widgetSortOrder,
@@ -1190,40 +1171,6 @@ async function writeTodoSettings(_todosDir: string, settings: TodoSettings): Pro
 	rootSettings.todos = normalizeTodoSettings(settings as RawTodoSettings);
 	await fs.mkdir(path.dirname(settingsPath), { recursive: true });
 	await fs.writeFile(settingsPath, JSON.stringify(rootSettings, null, 2) + "\n", "utf8");
-}
-
-async function garbageCollectTodos(todosDir: string, settings: TodoSettings): Promise<void> {
-	if (!settings.deleteCompletedTodosOnStartup) return;
-
-	let entries: string[] = [];
-	try {
-		entries = await fs.readdir(todosDir);
-	} catch {
-		return;
-	}
-
-	const cutoff = Date.now() - settings.completedTodoRetentionDays * 24 * 60 * 60 * 1000;
-	await Promise.all(
-		entries
-			.filter((entry) => entry.endsWith(".md"))
-			.map(async (entry) => {
-				const id = entry.slice(0, -3);
-				const filePath = path.join(todosDir, entry);
-				try {
-					const content = await fs.readFile(filePath, "utf8");
-					const { frontMatter } = splitFrontMatter(content);
-					const parsed = parseFrontMatter(frontMatter, id);
-					if (!isTodoClosed(parsed.status)) return;
-					const createdAt = Date.parse(parsed.created_at);
-					if (!Number.isFinite(createdAt)) return;
-					if (createdAt < cutoff) {
-						await fs.unlink(filePath);
-					}
-				} catch {
-					// ignore unreadable todo
-				}
-			}),
-	);
 }
 
 function getTodoPath(todosDir: string, id: string): string {
@@ -2077,8 +2024,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		const todosDir = getTodosDir(ctx.cwd);
 		await ensureTodosDir(todosDir);
-		const settings = await readTodoSettings(todosDir);
-		await garbageCollectTodos(todosDir, settings);
 		updateTodoWidget(ctx);
 	});
 
@@ -2524,14 +2469,11 @@ export default function todosExtension(pi: ExtensionAPI) {
 			return;
 		}
 
-		const openCount = todos.filter((todo) => !isTodoClosed(getTodoStatus(todo))).length;
-		const allCount = todos.length;
 		const homeAction = await ctx.ui.custom<TodoHomeAction>((_tui, theme, keybindings, done) =>
 			new TodoHomeMenuComponent(
 				theme,
 				keybindings,
-				openCount,
-				allCount,
+				todos.length,
 				(action) => done(action),
 				() => done(),
 			),
@@ -2568,7 +2510,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 					"Clear all todos",
 					(confirmed) => done(confirmed),
 					{
-						subtitle: `Delete all ${allCount} todos? This cannot be undone.`,
+						subtitle: `Delete all ${todos.length} todos? This cannot be undone.`,
 						cancelLabel: "cancel",
 					},
 				),

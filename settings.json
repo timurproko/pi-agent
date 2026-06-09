@@ -19,8 +19,6 @@
   ],
   "doubleEscapeAction": "none",
   "todos": {
-    "deleteCompletedTodosOnStartup": true,
-    "completedTodoRetentionDays": 7,
     "saveTodosInCurrentWorkingDirectory": false,
     "maxVisibleTodosInWidget": 8,
     "widgetSortOrder": "time"
