@@ -124,6 +124,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	let mode: Mode = "command";
 	let activeTui: TUI | undefined;
 	let lastWrittenPlanFile: string | null = null;
+	let postPlanPromptScheduled = false;
 	let editorDraftIsBash = false;
 
 	// ---- status bar ----
@@ -280,6 +281,51 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		lastWrittenPlanFile = null;
 	});
 
+	async function showPostPlanPrompt(planFile: string, ctx: ExtensionContext): Promise<void> {
+		const choice = await ctx.ui.select("Plan saved! What would you like to do?", [
+			"Accept plan and build",
+			"Suggest changes",
+			"xit plan mode and I will prompt myself",
+		]);
+
+		if (choice === "Accept and build") {
+			setMode("command", ctx, false);
+			await pi.sendUserMessage(`Execute the plan at ${planFile}. Read it first, then follow its Steps section.`);
+		} else if (choice === "Exit plan mode") {
+			setMode("command", ctx, false);
+		} else if (choice === "Suggest changes") {
+			const suggestions = await ctx.ui.input("Enter your suggestions:");
+			if (suggestions) {
+				await pi.sendUserMessage(suggestions);
+			}
+		}
+		// If undefined (Escape), do nothing — stay in plan mode
+	}
+
+	function schedulePostPlanPrompt(planFile: string, ctx: ExtensionContext): void {
+		if (postPlanPromptScheduled) return;
+		postPlanPromptScheduled = true;
+
+		const waitForFinished = () => {
+			if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+				setTimeout(waitForFinished, 100);
+				return;
+			}
+
+			void (async () => {
+				try {
+					if (mode === "plan") {
+						await showPostPlanPrompt(planFile, ctx);
+					}
+				} finally {
+					postPlanPromptScheduled = false;
+				}
+			})();
+		};
+
+		setTimeout(waitForFinished, 0);
+	}
+
 	// ---- post-plan review prompt ----
 	pi.on("agent_end", async (_event, ctx) => {
 		if (mode !== "plan" || !lastWrittenPlanFile) return;
@@ -287,24 +333,12 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		const planFile = lastWrittenPlanFile;
 		lastWrittenPlanFile = null;
 
-		const choice = await ctx.ui.select("Plan saved! What would you like to do?", [
-			"Accept and build",
-			"Suggest changes",
-			"Exit plan mode",
-		]);
-
-		if (choice === "Accept and build") {
-			setMode("command", ctx, false);
-			pi.sendUserMessage(`Execute the plan at ${planFile}. Read it first, then follow its Steps section.`);
-		} else if (choice === "Exit plan mode") {
-			setMode("command", ctx, false);
-		} else if (choice === "Suggest changes") {
-			const suggestions = await ctx.ui.input("Enter your suggestions:");
-			if (suggestions) {
-				pi.sendUserMessage(suggestions);
-			}
-		}
-		// If undefined (Escape), do nothing — stay in plan mode
+		// `agent_end` fires before the session fully leaves its streaming state.
+		// If the accept dialog is shown immediately, selecting "Accept and build"
+		// can race with the still-processing agent turn and trigger:
+		// "Agent is already processing. Specify streamingBehavior...".
+		// Defer the dialog until pi reports that the agent is completely idle.
+		schedulePostPlanPrompt(planFile, ctx);
 	});
 
 	// ---- inject per-mode guidance for the LLM via the system prompt ----
