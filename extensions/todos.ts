@@ -2423,6 +2423,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 
 		todos = await listTodos(todosDir);
 		let nextPrompt: string | null = null;
+		let nextPromptAutoSend = false;
 		let rootTui: TUI | null = null;
 		let goBackToHome = false;
 		await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
@@ -2502,6 +2503,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 					if (action === "refine") {
 						const title = record.title || "(untitled)";
 						nextPrompt = buildRefinePrompt(record.id, title);
+						nextPromptAutoSend = true;
 						done();
 						return "exit";
 					}
@@ -2678,10 +2680,10 @@ export default function todosExtension(pi: ExtensionAPI) {
 					currentSessionId,
 					(todo, action) => {
 						const title = todo.title || "(untitled)";
-						nextPrompt =
-							action === "refine"
-								? buildRefinePrompt(todo.id, title)
-								: `work on todo ${formatTodoId(todo.id)} "${title}"`;
+						nextPromptAutoSend = action === "refine";
+						nextPrompt = nextPromptAutoSend
+							? buildRefinePrompt(todo.id, title)
+							: `work on todo ${formatTodoId(todo.id)} "${title}"`;
 						done();
 					},
 				);
@@ -2718,8 +2720,12 @@ export default function todosExtension(pi: ExtensionAPI) {
 		}
 
 		if (nextPrompt) {
-			ctx.ui.setEditorText(nextPrompt);
-			rootTui?.requestRender();
+			if (nextPromptAutoSend) {
+				await pi.sendUserMessage(nextPrompt);
+			} else {
+				ctx.ui.setEditorText(nextPrompt);
+				rootTui?.requestRender();
+			}
 		}
 
 		// Refresh widget after /todos command (user may have changed state)
