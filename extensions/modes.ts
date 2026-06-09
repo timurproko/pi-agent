@@ -23,8 +23,8 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { chainEditor } from "./_editor-chain.ts";
-import type { TUI } from "@earendil-works/pi-tui";
-import { Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
+import { Input, Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -145,7 +145,7 @@ type KeybindingMatcher = {
 
 type PlanAction =
 	| "Open plan for review"
-	| "Refine and suggest changes"
+	| "Refine with Q&A session"
 	| "Suggest specific changes"
 	| "Accept plan and build";
 
@@ -153,7 +153,7 @@ class PostPlanActionDialog {
 	focused = true;
 	private readonly actions: PlanAction[] = [
 		"Open plan for review",
-		"Refine and suggest changes",
+		"Refine with Q&A session",
 		"Suggest specific changes",
 		"Accept plan and build",
 	];
@@ -210,6 +210,60 @@ class PostPlanActionDialog {
 	}
 
 	invalidate(): void {}
+}
+
+class SpecificSuggestionDialog implements Component, Focusable {
+	private readonly input = new Input();
+	private _focused = false;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+		this.input.focused = value;
+	}
+
+	constructor(
+		private readonly tui: TUI,
+		private readonly theme: any,
+		private readonly keybindings: KeybindingMatcher,
+		private readonly onDone: (suggestion: string | undefined) => void,
+	) {
+		this.input.onSubmit = (value) => this.onDone(value);
+		this.input.onEscape = () => this.onDone(undefined);
+	}
+
+	handleInput(keyData: string): void {
+		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
+			this.onDone(undefined);
+			return;
+		}
+		this.input.handleInput(keyData);
+		this.tui.requestRender();
+	}
+
+	render(width: number): string[] {
+		const lines: string[] = [];
+		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
+		const push = (line = "") => lines.push(truncateToWidth(line, width));
+
+		push(border);
+		push();
+		push(this.theme.fg("accent", this.theme.bold("Suggest specific changes")));
+		push();
+		for (const line of this.input.render(width)) {
+			push(line);
+		}
+		push();
+		push(this.theme.fg("dim", "enter submit • esc cancel"));
+		push(border);
+		return lines;
+	}
+
+	invalidate(): void {
+		this.input.invalidate();
+	}
 }
 
 class PlanReviewDialog {
@@ -396,6 +450,8 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	let postPlanPromptScheduled = false;
 	let pendingAutoAnswerForRefine = false;
 	let pendingAutoAnswerPlanFile: string | null = null;
+	let cachedRefineQuestions: any[] | null = null;
+	let cachedRefineQuestionsPlanFile: string | null = null;
 	let autoAnswerScheduled = false;
 	let editorDraftIsBash = false;
 
@@ -557,7 +613,9 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	});
 
 	async function showPostPlanPrompt(planFile: string, ctx: ExtensionContext): Promise<void> {
+		renderStatus(ctx);
 		while (mode === "plan") {
+			renderStatus(ctx);
 			const choice = await ctx.ui.custom<PlanAction | undefined>((tui, theme, keybindings, done) => {
 				return new PostPlanActionDialog(tui, theme, keybindings, done);
 			});
@@ -575,18 +633,23 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 				continue;
 			}
 
-			if (choice === "Refine and suggest changes") {
+			if (choice === "Refine with Q&A session") {
 				pendingAutoAnswerForRefine = true;
 				pendingAutoAnswerPlanFile = planFile;
+				if (cachedRefineQuestionsPlanFile === planFile && cachedRefineQuestions?.length) {
+					pendingAutoAnswerForRefine = false;
+					pendingAutoAnswerPlanFile = null;
+					await runAnswerForRefine(ctx, planFile);
+					return;
+				}
 				await pi.sendUserMessage(buildRefinePlanPrompt(planFile));
 				return;
 			}
 
 			if (choice === "Suggest specific changes") {
-				const suggestion = await ctx.ui.editor(
-					"Suggest specific changes to apply to the plan:",
-					"",
-				);
+				const suggestion = await ctx.ui.custom<string | undefined>((tui, theme, keybindings, done) => {
+					return new SpecificSuggestionDialog(tui, theme, keybindings, done);
+				});
 				if (!suggestion?.trim()) {
 					continue;
 				}
@@ -629,6 +692,32 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		setTimeout(waitForFinished, 0);
 	}
 
+	async function runAnswerForRefine(ctx: ExtensionContext, planFile: string): Promise<void> {
+		if (mode !== "plan") return;
+		const answerHandler = (globalThis as any).__piAnswerHandler;
+		if (typeof answerHandler !== "function") {
+			ctx.ui.notify("Could not auto-open answer UI: /answer handler is not loaded", "error");
+			return;
+		}
+		const result = await answerHandler(ctx, {
+			cancelMessage: false,
+			cancelControlLabel: "back to plan",
+			statusLabel: "plan",
+			questions: cachedRefineQuestionsPlanFile === planFile ? cachedRefineQuestions ?? undefined : undefined,
+			onQuestions: (questions: any[]) => {
+				cachedRefineQuestions = questions;
+				cachedRefineQuestionsPlanFile = planFile;
+			},
+		});
+		if (result === "submitted") {
+			cachedRefineQuestions = null;
+			cachedRefineQuestionsPlanFile = null;
+		}
+		if (result === "cancelled" && mode === "plan") {
+			await showPostPlanPrompt(planFile, ctx);
+		}
+	}
+
 	function scheduleAutoAnswerForRefine(ctx: ExtensionContext, planFile: string): void {
 		if (autoAnswerScheduled) return;
 		autoAnswerScheduled = true;
@@ -641,16 +730,7 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 
 			void (async () => {
 				try {
-					if (mode !== "plan") return;
-					const answerHandler = (globalThis as any).__piAnswerHandler;
-					if (typeof answerHandler !== "function") {
-						ctx.ui.notify("Could not auto-open answer UI: /answer handler is not loaded", "error");
-						return;
-					}
-					const result = await answerHandler(ctx, { cancelMessage: false, cancelControlLabel: "back to plan" });
-					if (result === "cancelled" && mode === "plan") {
-						await showPostPlanPrompt(planFile, ctx);
-					}
+					await runAnswerForRefine(ctx, planFile);
 				} finally {
 					autoAnswerScheduled = false;
 				}

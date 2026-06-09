@@ -40,6 +40,9 @@ type AnswerHandlerResult = "submitted" | "cancelled" | "unavailable" | "error" |
 interface AnswerHandlerOptions {
 	cancelMessage?: string | false;
 	cancelControlLabel?: string;
+	statusLabel?: string;
+	questions?: ExtractedQuestion[];
+	onQuestions?: (questions: ExtractedQuestion[]) => void;
 }
 
 const SYSTEM_PROMPT = `You are a question extractor. Given text from a conversation, extract any questions that need answering.
@@ -414,6 +417,34 @@ export default function (pi: ExtensionAPI) {
 				return "unavailable";
 			}
 
+			const showQuestions = async (questions: ExtractedQuestion[]): Promise<AnswerHandlerResult> => {
+				options.onQuestions?.(questions);
+				const answersResult = await ctx.ui.custom<string | null>((tui, _theme, _kb, done) => {
+					return new QnAComponent(questions, tui, done, options.cancelControlLabel);
+				});
+
+				if (answersResult === null) {
+					if (options.cancelMessage !== false) {
+						ctx.ui.notify(options.cancelMessage ?? "Cancelled", "info");
+					}
+					return "cancelled";
+				}
+
+				pi.sendMessage(
+					{
+						customType: "answers",
+						content: "I answered your questions in the following way:\n\n" + answersResult,
+						display: true,
+					},
+					{ triggerTurn: true },
+				);
+				return "submitted";
+			};
+
+			if (options.questions?.length) {
+				return await showQuestions(options.questions);
+			}
+
 			// Find the last assistant message on the current branch
 			const branch = ctx.sessionManager.getBranch();
 			let lastAssistantText: string | undefined;
@@ -457,7 +488,8 @@ export default function (pi: ExtensionAPI) {
 
 			restoreStatus = () => {
 				clearInterval(pulseTimer);
-				ctx.ui.setStatus("aaa-pi-plan-mode", ctx.ui.theme.fg("piPlanCmdMode", "cmd"));
+				const label = options.statusLabel ?? "cmd";
+				ctx.ui.setStatus("aaa-pi-plan-mode", ctx.ui.theme.fg(label === "plan" ? "accent" : "piPlanCmdMode", label));
 			};
 
 			// Get auth
@@ -522,27 +554,7 @@ export default function (pi: ExtensionAPI) {
 
 			// Show the Q&A component
 			restoreStatus();
-			const answersResult = await ctx.ui.custom<string | null>((tui, _theme, _kb, done) => {
-				return new QnAComponent(extractionResult.questions, tui, done, options.cancelControlLabel);
-			});
-
-			if (answersResult === null) {
-				if (options.cancelMessage !== false) {
-					ctx.ui.notify(options.cancelMessage ?? "Cancelled", "info");
-				}
-				return "cancelled";
-			}
-
-			// Send the answers directly as a message and trigger a turn
-			pi.sendMessage(
-				{
-					customType: "answers",
-					content: "I answered your questions in the following way:\n\n" + answersResult,
-					display: true,
-				},
-				{ triggerTurn: true },
-			);
-			return "submitted";
+			return await showQuestions(extractionResult.questions);
 		} catch (err) {
 			restoreStatus();
 			const msg = err instanceof Error ? err.message : String(err);
