@@ -688,18 +688,6 @@ class TodoSelectorComponent extends Container implements Focusable {
 		}
 	}
 
-	override render(width: number): string[] {
-		const sidePadding = 2;
-		const innerWidth = Math.max(1, width - sidePadding * 2);
-		const lines = super.render(innerWidth);
-		const left = " ".repeat(sidePadding);
-		const right = " ".repeat(sidePadding);
-		return lines.map((line) => {
-			const fill = Math.max(0, innerWidth - visibleWidth(line));
-			return left + line + " ".repeat(fill) + right;
-		});
-	}
-
 	handleInput(keyData: string): void {
 		const kb = this.keybindings;
 		if (kb.matches(keyData, "tui.select.up")) {
