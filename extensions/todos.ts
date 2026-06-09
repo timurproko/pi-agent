@@ -155,9 +155,18 @@ function formatTodoId(id: string): string {
 	return `${TODO_ID_PREFIX}${id}`;
 }
 
-function cyanTodoId(id: string): string {
+function cyan(text: string): string {
 	// Match the hardcoded cyan used by the answer extension's "Questions" title.
-	return `\x1b[36m${formatTodoId(id)}\x1b[0m`;
+	return `\x1b[36m${text}\x1b[0m`;
+}
+
+function cyanTodoId(id: string): string {
+	return cyan(formatTodoId(id));
+}
+
+function cyanTodoViewTitle(todo: TodoFrontMatter): string {
+	const title = todo.title || "(untitled)";
+	return cyan(`#${normalizeTodoId(todo.id)} ${title}`);
 }
 
 function normalizeTodoId(id: string): string {
@@ -277,7 +286,7 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 		this.items = [
 			{ action: "view", label: "View todos" },
 			{ action: "clearAll", label: "Delete all todos" },
-			{ action: "settings", label: "Extension settings" },
+			{ action: "settings", label: "Settings" },
 		];
 		this.selectedIndex = this.firstEnabledIndex();
 	}
@@ -413,7 +422,7 @@ class TodoSettingsMenuComponent extends Container implements Focusable {
 			["Max visible todos in widget", String(this.settings.maxVisibleTodosInWidget)],
 			["Widget sort order", this.settings.widgetSortOrder],
 		] as const;
-		const lines = [border, "", this.theme.fg("accent", this.theme.bold("Extension settings")), ""];
+		const lines = [border, "", this.theme.fg("accent", this.theme.bold("Settings")), ""];
 		for (let i = 0; i < rows.length; i++) {
 			const [label, value] = rows[i]!;
 			const selected = i === this.selectedIndex;
@@ -906,10 +915,8 @@ class TodoDetailOverlayComponent {
 		// Top border (rounded)
 		output.push(borderColor(`╭${"─".repeat(innerWidth)}╮`));
 
-		// Title: TODO-id • title
-		const titleLine = cyanTodoId(this.todo.id) +
-			this.theme.fg("muted", " • ") +
-			this.theme.fg("text", this.todo.title || "(untitled)");
+		// Title: #id title, all cyan.
+		const titleLine = cyanTodoViewTitle(this.todo);
 		output.push(boxLine(`  ${truncateToWidth(titleLine, innerWidth - 2)}`));
 
 		// Subtitle: status • tags
@@ -983,8 +990,8 @@ class TodoDetailOverlayComponent {
 	}
 
 	private buildActionLine(width: number): string {
-		const nav = this.theme.fg("dim", "↑↓ navigate");
-		const pages = this.theme.fg("dim", "←→ pages");
+		const nav = this.theme.fg("dim", "↑↓ scroll");
+		const pages = this.theme.fg("dim", "←→ navigate");
 		const back = this.theme.fg("dim", "esc back");
 		const line = [nav, pages, back].join(this.theme.fg("muted", " • "));
 		return truncateToWidth(line, width);
