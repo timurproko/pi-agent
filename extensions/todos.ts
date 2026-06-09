@@ -1915,6 +1915,57 @@ function updateTodoWidget(ctx: ExtensionContext): void {
 }
 
 export default function todosExtension(pi: ExtensionAPI) {
+	let pendingAutoAnswerForRefineTodo = false;
+	let pendingAutoAnswerTodoId: string | null = null;
+	let cachedRefineQuestions: any[] | null = null;
+	let cachedRefineQuestionsTodoId: string | null = null;
+	let autoAnswerScheduled = false;
+
+	async function runAnswerForTodoRefine(ctx: ExtensionContext, todoId: string): Promise<void> {
+		const answerHandler = (globalThis as any).__piAnswerHandler;
+		if (typeof answerHandler !== "function") {
+			ctx.ui.notify("Could not auto-open answer UI: /answer handler is not loaded", "error");
+			return;
+		}
+
+		const result = await answerHandler(ctx, {
+			cancelMessage: false,
+			cancelControlLabel: "cancel",
+			questions: cachedRefineQuestionsTodoId === todoId ? cachedRefineQuestions ?? undefined : undefined,
+			onQuestions: (questions: any[]) => {
+				cachedRefineQuestions = questions;
+				cachedRefineQuestionsTodoId = todoId;
+			},
+		});
+
+		if (result === "submitted") {
+			cachedRefineQuestions = null;
+			cachedRefineQuestionsTodoId = null;
+		}
+	}
+
+	function scheduleAutoAnswerForTodoRefine(ctx: ExtensionContext, todoId: string): void {
+		if (autoAnswerScheduled) return;
+		autoAnswerScheduled = true;
+
+		const waitForFinished = () => {
+			if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+				setTimeout(waitForFinished, 100);
+				return;
+			}
+
+			void (async () => {
+				try {
+					await runAnswerForTodoRefine(ctx, todoId);
+				} finally {
+					autoAnswerScheduled = false;
+				}
+			})();
+		};
+
+		setTimeout(waitForFinished, 0);
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		const todosDir = getTodosDir(ctx.cwd);
 		await ensureTodosDir(todosDir);
@@ -1939,6 +1990,16 @@ export default function todosExtension(pi: ExtensionAPI) {
 		if (event.toolName !== "subagent") return;
 		const changed = await closeTodosForCompletedSubagentResults(event.partialResult?.details, ctx);
 		if (changed) updateTodoWidget(ctx);
+	});
+
+	pi.on("agent_end", async (_event, ctx) => {
+		if (!pendingAutoAnswerForRefineTodo) return;
+		pendingAutoAnswerForRefineTodo = false;
+		const todoId = pendingAutoAnswerTodoId;
+		pendingAutoAnswerTodoId = null;
+		if (todoId) {
+			scheduleAutoAnswerForTodoRefine(ctx, todoId);
+		}
 	});
 
 	// Auto-claim todos when subagent tasks reference them
@@ -2424,6 +2485,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 		todos = await listTodos(todosDir);
 		let nextPrompt: string | null = null;
 		let nextPromptAutoSend = false;
+		let nextPromptRefineTodoId: string | null = null;
 		let rootTui: TUI | null = null;
 		let goBackToHome = false;
 		await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
@@ -2504,6 +2566,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 						const title = record.title || "(untitled)";
 						nextPrompt = buildRefinePrompt(record.id, title);
 						nextPromptAutoSend = true;
+						nextPromptRefineTodoId = record.id;
 						done();
 						return "exit";
 					}
@@ -2681,6 +2744,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 					(todo, action) => {
 						const title = todo.title || "(untitled)";
 						nextPromptAutoSend = action === "refine";
+						nextPromptRefineTodoId = nextPromptAutoSend ? todo.id : null;
 						nextPrompt = nextPromptAutoSend
 							? buildRefinePrompt(todo.id, title)
 							: `work on todo ${formatTodoId(todo.id)} "${title}"`;
@@ -2721,7 +2785,24 @@ export default function todosExtension(pi: ExtensionAPI) {
 
 		if (nextPrompt) {
 			if (nextPromptAutoSend) {
-				await pi.sendUserMessage(nextPrompt);
+				const refineTodoId = nextPromptRefineTodoId;
+				if (refineTodoId && cachedRefineQuestionsTodoId === refineTodoId && cachedRefineQuestions?.length) {
+					await runAnswerForTodoRefine(ctx, refineTodoId);
+				} else {
+					if (refineTodoId) {
+						pendingAutoAnswerForRefineTodo = true;
+						pendingAutoAnswerTodoId = refineTodoId;
+					}
+					try {
+						await pi.sendUserMessage(nextPrompt);
+					} catch (error) {
+						if (refineTodoId && pendingAutoAnswerTodoId === refineTodoId) {
+							pendingAutoAnswerForRefineTodo = false;
+							pendingAutoAnswerTodoId = null;
+						}
+						throw error;
+					}
+				}
 			} else {
 				ctx.ui.setEditorText(nextPrompt);
 				rootTui?.requestRender();
