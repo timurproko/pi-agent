@@ -130,7 +130,7 @@ type TodoAction =
 
 type TodoOverlayAction = "back" | "work";
 
-type TodoHomeAction = "view" | "create" | "clearAll" | "settings";
+type TodoHomeAction = "view" | "clearAll" | "settings";
 
 type TodoMenuAction =
 	| "work"
@@ -255,66 +255,6 @@ function filterTodos(todos: TodoFrontMatter[], query: string): TodoFrontMatter[]
 
 type TodoScope = "open" | "closed";
 
-class TodoTextInputComponent extends Container implements Focusable {
-	private input: Input;
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-		this.input.focused = value;
-	}
-
-	constructor(
-		private theme: Theme,
-		private keybindings: KeybindingMatcher,
-		private title: string,
-		private onSubmit: (value: string) => void,
-		private onCancel: () => void,
-		initialValue = "",
-		private description?: string,
-	) {
-		super();
-		this.input = new Input();
-		if (initialValue) this.input.setValue(initialValue);
-		this.input.onSubmit = () => this.onSubmit(this.input.getValue());
-	}
-
-	handleInput(keyData: string): void {
-		const kb = this.keybindings;
-		if (kb.matches(keyData, "tui.select.cancel")) {
-			this.onCancel();
-			return;
-		}
-		this.input.handleInput(keyData);
-	}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		lines.push(border);
-		lines.push("");
-		lines.push(this.theme.fg("accent", this.theme.bold(this.title)));
-		if (this.description) {
-			lines.push(this.theme.fg("dim", this.description));
-		}
-		lines.push("");
-		lines.push(...this.input.render(width));
-		lines.push("");
-		lines.push(
-			this.theme.fg("dim", "enter submit") +
-			this.theme.fg("dim", " • ") +
-			this.theme.fg("dim", "esc back"),
-		);
-		lines.push(border);
-		return lines;
-	}
-
-	override invalidate(): void {}
-}
-
 class TodoHomeMenuComponent extends Container implements Focusable {
 	private selectedIndex = 0;
 	private items: Array<{ action: TodoHomeAction; label: string; disabled?: boolean }>;
@@ -337,7 +277,6 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 	) {
 		super();
 		this.items = [
-			{ action: "create", label: "Create" },
 			{ action: "view", label: `View (${openCount})` },
 			{ action: "clearAll", label: `Clear (${allCount})` },
 			{ action: "settings", label: "Settings" },
@@ -1687,60 +1626,6 @@ function appendExpandHint(theme: Theme, text: string): string {
 	return `${text}\n${theme.fg("dim", `(${keyHint("app.tools.expand", "to expand")})`)}`;
 }
 
-function generateTodoTitleFromDescription(description: string): string {
-	const normalized = description
-		.replace(/```[\s\S]*?```/g, " ")
-		.replace(/[`*_#>\[\](),.:;!?]+/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
-	if (!normalized) return "Untitled task";
-
-	const folderName = normalized.match(/\b[A-Za-z]*XX\b/)?.[0];
-	if (/\bcreate\b/i.test(normalized) && /\bfolders?\b/i.test(normalized) && /\bdesktop\b/i.test(normalized)) {
-		return ["Create", folderName, "desktop folders"].filter(Boolean).join(" ");
-	}
-
-	const words = normalized.split(/\s+/).filter(Boolean);
-	const stopWords = new Set([
-		"a", "an", "and", "are", "as", "based", "be", "by", "for", "from", "i", "in", "is", "it", "its",
-		"me", "my", "of", "on", "or", "please", "that", "the", "this", "to", "with", "where", "which", "you",
-		"index", "name", "named", "task", "todo",
-	]);
-	const verbs = new Set(["add", "build", "change", "create", "delete", "fix", "implement", "make", "remove", "rename", "test", "update", "write"]);
-	const titleWords: string[] = [];
-	const firstVerb = words.find((word) => verbs.has(word.toLowerCase().replace(/[^a-z]/g, "")));
-	if (firstVerb) titleWords.push(firstVerb);
-	for (const word of words) {
-		const key = word.toLowerCase().replace(/[^a-z0-9]/g, "");
-		if (!key || stopWords.has(key)) continue;
-		if (titleWords.some((existing) => existing.toLowerCase() === word.toLowerCase())) continue;
-		titleWords.push(word);
-		if (titleWords.length >= 6) break;
-	}
-
-	let title = (titleWords.length ? titleWords : words.slice(0, 5)).join(" ").trim();
-	while (title.length > 48 && title.includes(" ")) {
-		title = title.replace(/\s+\S+$/, "");
-	}
-	if (!title) title = normalized.slice(0, 48).trim();
-	return title.charAt(0).toUpperCase() + title.slice(1);
-}
-
-async function promptTodoText(ctx: ExtensionContext, title: string, initialValue = "", description?: string): Promise<string | null> {
-	const result = await ctx.ui.custom<string | null>((_tui, theme, keybindings, done) =>
-		new TodoTextInputComponent(
-			theme,
-			keybindings,
-			title,
-			(value) => done(value),
-			() => done(null),
-			initialValue,
-			description,
-		),
-	);
-	return result ?? null;
-}
-
 async function ensureTodoExists(filePath: string, id: string): Promise<TodoRecord | null> {
 	if (!existsSync(filePath)) return null;
 	return readTodoFile(filePath, id);
@@ -1750,34 +1635,6 @@ async function appendTodoBody(filePath: string, todo: TodoRecord, text: string):
 	const spacer = todo.body.trim().length ? "\n\n" : "";
 	todo.body = `${todo.body.replace(/\s+$/, "")}${spacer}${text.trim()}\n`;
 	await writeTodoFile(filePath, todo);
-	return todo;
-}
-
-async function createTodoRecord(
-	todosDir: string,
-	input: { title: string; body?: string; tags?: string[]; status?: string },
-	ctx: ExtensionContext,
-): Promise<TodoRecord | { error: string }> {
-	const title = input.title.trim();
-	if (!title) return { error: "title required" };
-	await ensureTodosDir(todosDir);
-	const id = await generateTodoId(todosDir);
-	const filePath = getTodoPath(todosDir, id);
-	const todo: TodoRecord = {
-		id,
-		title,
-		tags: input.tags ?? [],
-		status: input.status ?? "open",
-		created_at: new Date().toISOString(),
-		body: input.body ?? "",
-	};
-
-	const result = await withTodoLock(todosDir, id, ctx, async () => {
-		await writeTodoFile(filePath, todo);
-		return todo;
-	});
-
-	if (typeof result === "object" && "error" in result) return { error: result.error };
 	return todo;
 }
 
@@ -2468,24 +2325,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 		);
 
 		if (!homeAction) {
-			updateTodoWidget(ctx);
-			return;
-		}
-
-		if (homeAction === "create") {
-			const details = await promptTodoText(ctx, "Create todo", "", "Describe task details.");
-			const body = details?.trim();
-			if (!body) {
-				await openTodosCommand(args, ctx);
-				return;
-			}
-			const title = generateTodoTitleFromDescription(body);
-			const result = await createTodoRecord(todosDir, { title, body }, ctx);
-			if ("error" in result) {
-				ctx.ui.notify(result.error, "error");
-				return;
-			}
-			ctx.ui.notify(`Created todo ${formatTodoId(result.id)}`, "info");
 			updateTodoWidget(ctx);
 			return;
 		}
