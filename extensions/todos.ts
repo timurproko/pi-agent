@@ -266,7 +266,7 @@ type TodoScope = "open" | "closed";
 
 class TodoHomeMenuComponent extends Container implements Focusable {
 	private selectedIndex = 0;
-	private items: Array<{ action: TodoHomeAction; label: string; disabled?: boolean }>;
+	private items: Array<{ action: TodoHomeAction; label: string; description: string; disabled?: boolean }>;
 	private _focused = false;
 
 	get focused(): boolean {
@@ -284,9 +284,9 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 	) {
 		super();
 		this.items = [
-			{ action: "view", label: "View todos" },
-			{ action: "clearAll", label: "Delete all todos" },
-			{ action: "settings", label: "Settings" },
+			{ action: "view", label: "View", description: "View todos list" },
+			{ action: "clearAll", label: "Delete", description: "Delete all todos" },
+			{ action: "settings", label: "Settings", description: "Extension settings" },
 		];
 		this.selectedIndex = this.firstEnabledIndex();
 	}
@@ -335,13 +335,17 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 		lines.push("");
 		lines.push(this.theme.fg("accent", this.theme.bold("Todos")));
 		lines.push("");
+		const labelColumnWidth = 16;
 		for (let i = 0; i < this.items.length; i++) {
 			const item = this.items[i]!;
 			const selected = i === this.selectedIndex && !item.disabled;
 			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
 			const labelColor = item.disabled ? "dim" : selected ? "accent" : "text";
+			const descriptionColor = item.disabled ? "dim" : selected ? "accent" : "muted";
+			const padding = " ".repeat(Math.max(1, labelColumnWidth - visibleWidth(item.label)));
 			const label = this.theme.fg(labelColor, item.label);
-			lines.push(prefix + label);
+			const description = this.theme.fg(descriptionColor, item.description);
+			lines.push(prefix + label + padding + description);
 		}
 		lines.push("");
 		lines.push(this.theme.fg("dim", "↑↓ navigate • enter select • esc close"));
@@ -618,7 +622,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 			} else if (todo.assigned_to_session) {
 				icon = this.theme.fg("accent", "◼");
 			} else {
-				icon = "◻";
+				icon = isSelected ? this.theme.fg("accent", "◻") : "◻";
 			}
 
 			const idText = closed
@@ -628,9 +632,11 @@ class TodoSelectorComponent extends Container implements Focusable {
 			const line =
 				prefix +
 				icon + " " +
-				idText +
-				" " +
 				this.theme.fg(titleColor, todo.title || "(untitled)") +
+				" " +
+				this.theme.fg("dim", "(") +
+				idText +
+				this.theme.fg("dim", ")") +
 				this.theme.fg("muted", tagText) +
 				assignmentText;
 			this.listContainer.addChild(new Text(line, 0, 0));
@@ -720,14 +726,18 @@ class TodoActionMenuComponent extends Container {
 		];
 
 		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
+		this.addChild(new Spacer(1));
 		this.addChild(
 			new Text(
 				theme.fg(
 					"accent",
-					theme.bold(`Actions for ${displayTodoId(todo.id)}: "${title}"`),
+					theme.bold(`Actions for "${title}"`),
 				),
+				0,
+				0,
 			),
 		);
+		this.addChild(new Spacer(1));
 
 		this.selectList = new SelectList(options, options.length, {
 			selectedPrefix: (text) => theme.fg("accent", text),
@@ -2371,7 +2381,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 				new TodoDeleteConfirmComponent(
 					theme,
 					keybindings,
-					"Delete all todos",
+					"Delete todos",
 					(confirmed) => done(confirmed),
 					{
 						subtitle: `Delete ${todos.length} todos? This cannot be undone.`,
@@ -2617,7 +2627,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 						deleteConfirm = new TodoDeleteConfirmComponent(
 							theme,
 							keybindings,
-							"Delete Todo",
+							"Delete todo",
 							(confirmed) => {
 								if (!confirmed) {
 									setActiveComponent(actionMenu);
