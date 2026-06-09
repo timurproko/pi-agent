@@ -253,7 +253,7 @@ function filterTodos(todos: TodoFrontMatter[], query: string): TodoFrontMatter[]
 		.map((match) => match.todo);
 }
 
-type TodoScope = "all" | "open" | "closed";
+type TodoScope = "open" | "closed";
 
 class TodoTextInputComponent extends Container implements Focusable {
 	private input: Input;
@@ -330,6 +330,7 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 	constructor(
 		private theme: Theme,
 		private keybindings: KeybindingMatcher,
+		openCount: number,
 		allCount: number,
 		private onSelectCallback: (action: TodoHomeAction) => void,
 		private onCancelCallback: () => void,
@@ -337,7 +338,7 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 		super();
 		this.items = [
 			{ action: "create", label: "Create" },
-			{ action: "view", label: `View (${allCount})` },
+			{ action: "view", label: `View (${openCount})` },
 			{ action: "clearAll", label: `Clear (${allCount})` },
 			{ action: "settings", label: "Settings" },
 		];
@@ -502,7 +503,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 	private onSelectCallback: (todo: TodoFrontMatter) => void;
 	private onCancelCallback: () => void;
 	private tui: TUI;
-	private scope: TodoScope = "all";
+	private scope: TodoScope = "open";
 	private theme: Theme;
 	private keybindings: KeybindingMatcher;
 	private headerText: Text;
@@ -591,13 +592,10 @@ class TodoSelectorComponent extends Container implements Focusable {
 	}
 
 	private updateHeader(): void {
-		this.headerText.setText(this.theme.fg("accent", this.theme.bold("View all todos")));
+		this.headerText.setText(this.theme.fg("accent", this.theme.bold("View todos")));
 	}
 
 	private updateScope(): void {
-		const allLabel = this.scope === "all"
-			? this.theme.fg("accent", "all")
-			: this.theme.fg("dim", "all");
 		const openLabel = this.scope === "open"
 			? this.theme.fg("accent", "open")
 			: this.theme.fg("dim", "open");
@@ -605,15 +603,15 @@ class TodoSelectorComponent extends Container implements Focusable {
 			? this.theme.fg("accent", "closed")
 			: this.theme.fg("dim", "closed");
 		const sep = this.theme.fg("dim", " | ");
-		this.scopeText.setText(this.theme.fg("dim", "Scope: ") + allLabel + sep + openLabel + sep + closedLabel);
-		this.scopeHintText.setText(this.theme.fg("dim", "tab scope (all/open/closed)"));
+		this.scopeText.setText(this.theme.fg("dim", "Filter: ") + openLabel + sep + closedLabel);
+		this.scopeHintText.setText(this.theme.fg("dim", "tab filter (open/closed)"));
 	}
 
 	private updateHints(): void {
 		this.hintText.setText(
 			this.theme.fg(
 				"dim",
-				"type to search • ↑↓ navigate • tab scope • enter actions • esc back",
+				"type to search • ↑↓ navigate • tab filter • enter actions • esc back",
 			),
 		);
 	}
@@ -622,7 +620,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 		let todos = this.allTodos;
 		if (this.scope === "open") {
 			todos = todos.filter((t) => !isTodoClosed(t.status));
-		} else if (this.scope === "closed") {
+		} else {
 			todos = todos.filter((t) => isTodoClosed(t.status));
 		}
 		this.filteredTodos = filterTodos(todos, query);
@@ -712,7 +710,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 			return;
 		}
 		if (keyData === "\t") {
-			this.scope = this.scope === "all" ? "open" : this.scope === "open" ? "closed" : "all";
+			this.scope = this.scope === "open" ? "closed" : "open";
 			this.selectedIndex = 0;
 			this.updateHeader();
 			this.updateScope();
@@ -2457,10 +2455,12 @@ export default function todosExtension(pi: ExtensionAPI) {
 			return;
 		}
 
+		const openCount = todos.filter((todo) => !isTodoClosed(getTodoStatus(todo))).length;
 		const homeAction = await ctx.ui.custom<TodoHomeAction>((_tui, theme, keybindings, done) =>
 			new TodoHomeMenuComponent(
 				theme,
 				keybindings,
+				openCount,
 				todos.length,
 				(action) => done(action),
 				() => done(),
