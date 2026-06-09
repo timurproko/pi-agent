@@ -276,7 +276,7 @@ class TodoHomeMenuComponent extends Container implements Focusable {
 		super();
 		this.items = [
 			{ action: "view", label: "View todos" },
-			{ action: "clearAll", label: "Delete todos" },
+			{ action: "clearAll", label: "Delete all todos" },
 			{ action: "settings", label: "Extension settings" },
 		];
 		this.selectedIndex = this.firstEnabledIndex();
@@ -2329,7 +2329,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 				new TodoDeleteConfirmComponent(
 					theme,
 					keybindings,
-					"Delete todos",
+					"Delete all todos",
 					(confirmed) => done(confirmed),
 					{
 						subtitle: `Delete ${todos.length} todos? This cannot be undone.`,
