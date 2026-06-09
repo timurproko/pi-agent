@@ -448,11 +448,6 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	let activeTui: TUI | undefined;
 	let lastWrittenPlanFile: string | null = null;
 	let postPlanPromptScheduled = false;
-	let pendingAutoAnswerForRefine = false;
-	let pendingAutoAnswerPlanFile: string | null = null;
-	let cachedRefineQuestions: any[] | null = null;
-	let cachedRefineQuestionsPlanFile: string | null = null;
-	let autoAnswerScheduled = false;
 	let editorDraftIsBash = false;
 
 	// ---- status bar ----
@@ -634,15 +629,23 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 			}
 
 			if (choice === "Refine with Q&A session") {
-				pendingAutoAnswerForRefine = true;
-				pendingAutoAnswerPlanFile = planFile;
-				if (cachedRefineQuestionsPlanFile === planFile && cachedRefineQuestions?.length) {
-					pendingAutoAnswerForRefine = false;
-					pendingAutoAnswerPlanFile = null;
-					await runAnswerForRefine(ctx, planFile);
+				const refineFlow = (globalThis as any).__piAnswerRefineFlow;
+				if (typeof refineFlow?.start !== "function") {
+					ctx.ui.notify("Could not auto-open answer UI: /answer refine flow is not loaded", "error");
 					return;
 				}
-				await pi.sendUserMessage(buildRefinePlanPrompt(planFile));
+				await refineFlow.start(ctx, {
+					key: `plan:${path.resolve(planFile)}`,
+					prompt: buildRefinePlanPrompt(planFile),
+					cancelMessage: false,
+					cancelControlLabel: "back to plan",
+					statusLabel: "plan",
+					onCancelled: async (cancelCtx: ExtensionContext) => {
+						if (mode === "plan") {
+							await showPostPlanPrompt(planFile, cancelCtx);
+						}
+					},
+				});
 				return;
 			}
 
@@ -692,67 +695,10 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		setTimeout(waitForFinished, 0);
 	}
 
-	async function runAnswerForRefine(ctx: ExtensionContext, planFile: string): Promise<void> {
-		if (mode !== "plan") return;
-		const answerHandler = (globalThis as any).__piAnswerHandler;
-		if (typeof answerHandler !== "function") {
-			ctx.ui.notify("Could not auto-open answer UI: /answer handler is not loaded", "error");
-			return;
-		}
-		const result = await answerHandler(ctx, {
-			cancelMessage: false,
-			cancelControlLabel: "back to plan",
-			statusLabel: "plan",
-			questions: cachedRefineQuestionsPlanFile === planFile ? cachedRefineQuestions ?? undefined : undefined,
-			onQuestions: (questions: any[]) => {
-				cachedRefineQuestions = questions;
-				cachedRefineQuestionsPlanFile = planFile;
-			},
-		});
-		if (result === "submitted") {
-			cachedRefineQuestions = null;
-			cachedRefineQuestionsPlanFile = null;
-		}
-		if (result === "cancelled" && mode === "plan") {
-			await showPostPlanPrompt(planFile, ctx);
-		}
-	}
-
-	function scheduleAutoAnswerForRefine(ctx: ExtensionContext, planFile: string): void {
-		if (autoAnswerScheduled) return;
-		autoAnswerScheduled = true;
-
-		const waitForFinished = () => {
-			if (!ctx.isIdle() || ctx.hasPendingMessages()) {
-				setTimeout(waitForFinished, 100);
-				return;
-			}
-
-			void (async () => {
-				try {
-					await runAnswerForRefine(ctx, planFile);
-				} finally {
-					autoAnswerScheduled = false;
-				}
-			})();
-		};
-
-		setTimeout(waitForFinished, 0);
-	}
 
 	// ---- post-plan review prompt ----
 	pi.on("agent_end", async (_event, ctx) => {
 		if (mode !== "plan") return;
-
-		if (pendingAutoAnswerForRefine) {
-			pendingAutoAnswerForRefine = false;
-			const planFile = pendingAutoAnswerPlanFile;
-			pendingAutoAnswerPlanFile = null;
-			if (planFile) {
-				scheduleAutoAnswerForRefine(ctx, planFile);
-			}
-			return;
-		}
 
 		if (!lastWrittenPlanFile) return;
 

@@ -34,6 +34,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import crypto from "node:crypto";
 import {
 	Container,
+	type Component,
 	type Focusable,
 	Input,
 	Key,
@@ -62,6 +63,11 @@ const DEFAULT_TODO_SETTINGS = {
 	widgetSortOrder: "time" as "id" | "time",
 };
 const LOCK_TTL_MS = 30 * 60 * 1000;
+const MAX_TODO_TAGS = 5;
+const MAX_TODO_TAG_LENGTH = 24;
+const TODO_TAG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,23}$/;
+const TODO_TAG_CONTRACT =
+	`Tags must be at most ${MAX_TODO_TAGS} short one-word labels; each tag must be ${MAX_TODO_TAG_LENGTH} characters or less and contain only letters, numbers, hyphens, or underscores. Do not use spaces, other punctuation, sentences, paths, or plan names as tags.`;
 
 interface TodoFrontMatter {
 	id: string;
@@ -110,7 +116,17 @@ const TodoParams = Type.Object({
 	),
 	title: Type.Optional(Type.String({ description: "Short summary shown in lists" })),
 	status: Type.Optional(Type.String({ description: "Todo status" })),
-	tags: Type.Optional(Type.Array(Type.String({ description: "Todo tag" }))),
+	tags: Type.Optional(Type.Array(
+		Type.String({
+			description: `Todo tag. ${TODO_TAG_CONTRACT}`,
+			maxLength: MAX_TODO_TAG_LENGTH,
+			pattern: TODO_TAG_PATTERN.source,
+		}),
+		{
+			description: TODO_TAG_CONTRACT,
+			maxItems: MAX_TODO_TAGS,
+		},
+	)),
 	body: Type.Optional(
 		Type.String({ description: "Long-form details (markdown). Update replaces; append adds." }),
 	),
@@ -186,6 +202,28 @@ function validateTodoId(id: string): { id: string } | { error: string } {
 		return { error: "Invalid todo id. Expected TODO-<hex>." };
 	}
 	return { id: normalized.toLowerCase() };
+}
+
+function validateTodoTags(tags: readonly unknown[]): { tags: string[] } | { error: string } {
+	if (tags.length > MAX_TODO_TAGS) {
+		return { error: `Invalid todo tags: expected no more than ${MAX_TODO_TAGS} tags. ${TODO_TAG_CONTRACT}` };
+	}
+
+	const normalizedTags: string[] = [];
+	for (const rawTag of tags) {
+		if (typeof rawTag !== "string") {
+			return { error: `Invalid todo tag: tags must be strings. ${TODO_TAG_CONTRACT}` };
+		}
+		const tag = rawTag.trim();
+		if (!TODO_TAG_PATTERN.test(tag)) {
+			return {
+				error: `Invalid todo tag "${rawTag}": tags must be short one-word labels. ${TODO_TAG_CONTRACT}`,
+			};
+		}
+		normalizedTags.push(tag);
+	}
+
+	return { tags: normalizedTags };
 }
 
 function displayTodoId(id: string): string {
@@ -445,6 +483,21 @@ class TodoSettingsMenuComponent extends Container implements Focusable {
 	override invalidate(): void {}
 }
 
+class RightAlignedText implements Component {
+	constructor(private text: string) {}
+
+	setText(text: string): void {
+		this.text = text;
+	}
+
+	render(width: number): string[] {
+		const line = truncateToWidth(this.text, width);
+		return [" ".repeat(Math.max(0, width - visibleWidth(line))) + line];
+	}
+
+	invalidate(): void {}
+}
+
 class TodoSelectorComponent extends Container implements Focusable {
 	private searchInput: Input;
 	private listContainer: Container;
@@ -646,9 +699,9 @@ class TodoSelectorComponent extends Container implements Focusable {
 		if (startIndex > 0 || endIndex < this.filteredTodos.length) {
 			const scrollInfo = this.theme.fg(
 				"dim",
-				`  (${this.selectedIndex + 1}/${this.filteredTodos.length})`,
+				`(${this.selectedIndex + 1}/${this.filteredTodos.length})`,
 			);
-			this.listContainer.addChild(new Text(scrollInfo, 0, 0));
+			this.listContainer.addChild(new RightAlignedText(scrollInfo));
 		}
 	}
 
@@ -943,6 +996,13 @@ class TodoDetailOverlayComponent {
 			const padding = Math.max(0, innerWidth - visibleWidth(truncated));
 			return borderColor("│") + truncated + " ".repeat(padding) + borderColor("│");
 		};
+		const boxLineWithRight = (left: string, right: string): string => {
+			const rightWidth = visibleWidth(right);
+			const gap = rightWidth > 0 ? 1 : 0;
+			const truncatedLeft = truncateToWidth(left, Math.max(0, innerWidth - rightWidth - gap));
+			const padding = Math.max(gap, innerWidth - visibleWidth(truncatedLeft) - rightWidth);
+			return borderColor("│") + truncatedLeft + " ".repeat(padding) + right + borderColor("│");
+		};
 		const contentBoxLine = (content: string, rowIndex: number): string => {
 			if (!hasScrollableContent) return boxLine(content);
 			const contentWidth = Math.max(1, innerWidth - 1);
@@ -958,9 +1018,8 @@ class TodoDetailOverlayComponent {
 		// Top border (rounded)
 		output.push(borderColor(`╭${"─".repeat(innerWidth)}╮`));
 
-		// Title: #id title plus an optional todo-position counter.
-		const titleLine = cyanTodoViewTitle(this.todo) + this.buildCounterText();
-		output.push(boxLine(`  ${truncateToWidth(titleLine, innerWidth - 2)}`));
+		// Title: #id title plus an optional right-aligned todo-position counter.
+		output.push(boxLineWithRight(`  ${cyanTodoViewTitle(this.todo)}`, this.buildCounterText()));
 
 		// Subtitle: status • tags
 		const status = this.todo.status || "open";
@@ -1044,7 +1103,7 @@ class TodoDetailOverlayComponent {
 		if (!this.navigation || this.navigation.total <= 0 || this.navigation.currentIndex < 0) {
 			return "";
 		}
-		return this.theme.fg("dim", ` (${this.navigation.currentIndex + 1}/${this.navigation.total})`);
+		return this.theme.fg("dim", `(${this.navigation.currentIndex + 1}/${this.navigation.total})`);
 	}
 
 	private getScrollIndicatorForRow(rowIndex: number, trackHeight: number): string {
@@ -1915,57 +1974,6 @@ function updateTodoWidget(ctx: ExtensionContext): void {
 }
 
 export default function todosExtension(pi: ExtensionAPI) {
-	let pendingAutoAnswerForRefineTodo = false;
-	let pendingAutoAnswerTodoId: string | null = null;
-	let cachedRefineQuestions: any[] | null = null;
-	let cachedRefineQuestionsTodoId: string | null = null;
-	let autoAnswerScheduled = false;
-
-	async function runAnswerForTodoRefine(ctx: ExtensionContext, todoId: string): Promise<void> {
-		const answerHandler = (globalThis as any).__piAnswerHandler;
-		if (typeof answerHandler !== "function") {
-			ctx.ui.notify("Could not auto-open answer UI: /answer handler is not loaded", "error");
-			return;
-		}
-
-		const result = await answerHandler(ctx, {
-			cancelMessage: false,
-			cancelControlLabel: "cancel",
-			questions: cachedRefineQuestionsTodoId === todoId ? cachedRefineQuestions ?? undefined : undefined,
-			onQuestions: (questions: any[]) => {
-				cachedRefineQuestions = questions;
-				cachedRefineQuestionsTodoId = todoId;
-			},
-		});
-
-		if (result === "submitted") {
-			cachedRefineQuestions = null;
-			cachedRefineQuestionsTodoId = null;
-		}
-	}
-
-	function scheduleAutoAnswerForTodoRefine(ctx: ExtensionContext, todoId: string): void {
-		if (autoAnswerScheduled) return;
-		autoAnswerScheduled = true;
-
-		const waitForFinished = () => {
-			if (!ctx.isIdle() || ctx.hasPendingMessages()) {
-				setTimeout(waitForFinished, 100);
-				return;
-			}
-
-			void (async () => {
-				try {
-					await runAnswerForTodoRefine(ctx, todoId);
-				} finally {
-					autoAnswerScheduled = false;
-				}
-			})();
-		};
-
-		setTimeout(waitForFinished, 0);
-	}
-
 	pi.on("session_start", async (_event, ctx) => {
 		const todosDir = getTodosDir(ctx.cwd);
 		await ensureTodosDir(todosDir);
@@ -1992,15 +2000,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 		if (changed) updateTodoWidget(ctx);
 	});
 
-	pi.on("agent_end", async (_event, ctx) => {
-		if (!pendingAutoAnswerForRefineTodo) return;
-		pendingAutoAnswerForRefineTodo = false;
-		const todoId = pendingAutoAnswerTodoId;
-		pendingAutoAnswerTodoId = null;
-		if (todoId) {
-			scheduleAutoAnswerForTodoRefine(ctx, todoId);
-		}
-	});
 
 	// Auto-claim todos when subagent tasks reference them
 	pi.on("tool_call", async (event: any, ctx) => {
@@ -2060,8 +2059,9 @@ export default function todosExtension(pi: ExtensionAPI) {
 		description:
 			`Manage file-based todos in ${todosDirLabel} (list, list-all, get, create, update, append, delete, claim, release). ` +
 			"Title is the short summary; body is long-form markdown notes (update replaces, append adds). " +
+			TODO_TAG_CONTRACT + " " +
 			"Todo ids are shown as TODO-<hex>; id parameters accept TODO-<hex> or the raw hex filename. " +
-			"Claim tasks before working on them to avoid conflicts, and close them when complete.", 
+			"Claim tasks before working on them to avoid conflicts, and close them when complete.",
 		parameters: TodoParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -2126,13 +2126,20 @@ export default function todosExtension(pi: ExtensionAPI) {
 							details: { action: "create", error: "title required" },
 						};
 					}
+					const tagValidation = validateTodoTags(params.tags ?? []);
+					if ("error" in tagValidation) {
+						return {
+							content: [{ type: "text", text: tagValidation.error }],
+							details: { action: "create", error: tagValidation.error },
+						};
+					}
 					await ensureTodosDir(todosDir);
 					const id = await generateTodoId(todosDir);
 					const filePath = getTodoPath(todosDir, id);
 					const todo: TodoRecord = {
 						id,
 						title: params.title,
-						tags: params.tags ?? [],
+						tags: tagValidation.tags,
 						status: params.status ?? "open",
 						created_at: new Date().toISOString(),
 						body: params.body ?? "",
@@ -2172,6 +2179,13 @@ export default function todosExtension(pi: ExtensionAPI) {
 					}
 					const normalizedId = validated.id;
 					const displayId = formatTodoId(normalizedId);
+					const tagValidation = params.tags === undefined ? undefined : validateTodoTags(params.tags);
+					if (tagValidation && "error" in tagValidation) {
+						return {
+							content: [{ type: "text", text: tagValidation.error }],
+							details: { action: "update", error: tagValidation.error },
+						};
+					}
 					const filePath = getTodoPath(todosDir, normalizedId);
 					if (!existsSync(filePath)) {
 						return {
@@ -2186,7 +2200,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 						existing.id = normalizedId;
 						if (params.title !== undefined) existing.title = params.title;
 						if (params.status !== undefined) existing.status = params.status;
-						if (params.tags !== undefined) existing.tags = params.tags;
+						if (tagValidation !== undefined && !("error" in tagValidation)) existing.tags = tagValidation.tags;
 						if (params.body !== undefined) existing.body = params.body;
 						if (!existing.created_at) existing.created_at = new Date().toISOString();
 						clearAssignmentIfClosed(existing);
@@ -2786,22 +2800,19 @@ export default function todosExtension(pi: ExtensionAPI) {
 		if (nextPrompt) {
 			if (nextPromptAutoSend) {
 				const refineTodoId = nextPromptRefineTodoId;
-				if (refineTodoId && cachedRefineQuestionsTodoId === refineTodoId && cachedRefineQuestions?.length) {
-					await runAnswerForTodoRefine(ctx, refineTodoId);
+				const refineFlow = (globalThis as any).__piAnswerRefineFlow;
+				if (refineTodoId && typeof refineFlow?.start === "function") {
+					await refineFlow.start(ctx, {
+						key: `todo:${normalizeTodoId(refineTodoId)}`,
+						prompt: nextPrompt,
+						cancelMessage: false,
+						cancelControlLabel: "cancel",
+					});
 				} else {
 					if (refineTodoId) {
-						pendingAutoAnswerForRefineTodo = true;
-						pendingAutoAnswerTodoId = refineTodoId;
+						ctx.ui.notify("Could not auto-open answer UI: /answer refine flow is not loaded", "error");
 					}
-					try {
-						await pi.sendUserMessage(nextPrompt);
-					} catch (error) {
-						if (refineTodoId && pendingAutoAnswerTodoId === refineTodoId) {
-							pendingAutoAnswerForRefineTodo = false;
-							pendingAutoAnswerTodoId = null;
-						}
-						throw error;
-					}
+					await pi.sendUserMessage(nextPrompt);
 				}
 			} else {
 				ctx.ui.setEditorText(nextPrompt);

@@ -45,6 +45,15 @@ interface AnswerHandlerOptions {
 	onQuestions?: (questions: ExtractedQuestion[]) => void;
 }
 
+interface RefineAnswerFlowOptions {
+	key: string;
+	prompt: string;
+	cancelMessage?: string | false;
+	cancelControlLabel?: string;
+	statusLabel?: string;
+	onCancelled?: (ctx: ExtensionContext) => void | Promise<void>;
+}
+
 const SYSTEM_PROMPT = `You are a question extractor. Given text from a conversation, extract any questions that need answering.
 
 Output a JSON object with this structure:
@@ -317,6 +326,15 @@ class QnAComponent implements Component {
 			return this.dim("│") + paddedContent + "\x1b[0m" + " ".repeat(rightPad) + this.dim("│");
 		};
 
+		const boxLineWithRight = (left: string, right: string, leftPad: number = 2): string => {
+			const rightLen = visibleWidth(right);
+			const gap = rightLen > 0 ? 1 : 0;
+			const maxLeftWidth = Math.max(0, boxWidth - 2 - leftPad - rightLen - gap);
+			const paddedLeft = " ".repeat(leftPad) + truncateToWidth(left, maxLeftWidth);
+			const middlePad = Math.max(gap, boxWidth - visibleWidth(paddedLeft) - rightLen - 2);
+			return this.dim("│") + paddedLeft + "\x1b[0m" + " ".repeat(middlePad) + right + "\x1b[0m" + this.dim("│");
+		};
+
 		const emptyBoxLine = (): string => {
 			return this.dim("│") + " ".repeat(boxWidth - 2) + this.dim("│");
 		};
@@ -328,8 +346,9 @@ class QnAComponent implements Component {
 
 		// Title
 		lines.push(padToWidth(this.dim("╭" + horizontalLine(boxWidth - 2) + "╮")));
-		const title = `${this.bold(this.cyan("Questions"))} ${this.dim(`(${this.currentIndex + 1}/${this.questions.length})`)}`;
-		lines.push(padToWidth(boxLine(title)));
+		const title = this.bold(this.cyan("Questions"));
+		const counter = this.dim(`(${this.currentIndex + 1}/${this.questions.length})`);
+		lines.push(padToWidth(boxLineWithRight(title, counter)));
 		lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
 
 		// Progress indicator
@@ -563,7 +582,81 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
+	const refineQuestionCache = new Map<string, ExtractedQuestion[]>();
+	let pendingRefine: RefineAnswerFlowOptions | null = null;
+	let autoAnswerScheduled = false;
+
+	const runRefineAnswer = async (ctx: ExtensionContext, options: RefineAnswerFlowOptions): Promise<AnswerHandlerResult> => {
+		const result = await answerHandler(ctx, {
+			cancelMessage: options.cancelMessage ?? false,
+			cancelControlLabel: options.cancelControlLabel,
+			statusLabel: options.statusLabel,
+			questions: refineQuestionCache.get(options.key),
+			onQuestions: (questions) => refineQuestionCache.set(options.key, questions),
+		});
+
+		if (result === "submitted") {
+			refineQuestionCache.delete(options.key);
+		}
+		if (result === "cancelled") {
+			await options.onCancelled?.(ctx);
+		}
+		return result;
+	};
+
+	const scheduleRefineAnswer = (ctx: ExtensionContext, options: RefineAnswerFlowOptions): void => {
+		if (autoAnswerScheduled) return;
+		autoAnswerScheduled = true;
+
+		const waitForFinished = () => {
+			if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+				setTimeout(waitForFinished, 100);
+				return;
+			}
+
+			void (async () => {
+				try {
+					await runRefineAnswer(ctx, options);
+				} finally {
+					autoAnswerScheduled = false;
+				}
+			})();
+		};
+
+		setTimeout(waitForFinished, 0);
+	};
+
+	const refineAnswerFlow = {
+		start: async (ctx: ExtensionContext, options: RefineAnswerFlowOptions): Promise<AnswerHandlerResult | "sent"> => {
+			if (refineQuestionCache.has(options.key)) {
+				return await runRefineAnswer(ctx, options);
+			}
+
+			pendingRefine = options;
+			try {
+				await pi.sendUserMessage(options.prompt);
+				return "sent";
+			} catch (error) {
+				if (pendingRefine === options) {
+					pendingRefine = null;
+				}
+				throw error;
+			}
+		},
+		run: runRefineAnswer,
+		hasCachedQuestions: (key: string): boolean => refineQuestionCache.has(key),
+		clearCachedQuestions: (key: string): void => refineQuestionCache.delete(key),
+	};
+
 	(globalThis as any).__piAnswerHandler = answerHandler;
+	(globalThis as any).__piAnswerRefineFlow = refineAnswerFlow;
+
+	pi.on("agent_end", async (_event, ctx) => {
+		const options = pendingRefine;
+		if (!options) return;
+		pendingRefine = null;
+		scheduleRefineAnswer(ctx, options);
+	});
 
 	pi.registerCommand("answer", {
 		description: "Extract questions from last assistant message into interactive Q&A",
