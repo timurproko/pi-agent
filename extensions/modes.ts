@@ -1,12 +1,11 @@
 /**
- * pi-plan extension
+ * pi modes extension
  *
- * Adds three operating modes to pi:
+ * Adds input modes to pi:
  *   - Cmd (default): pi works normally - user asks, ai executes.
- *   - Plan: ai writes a markdown plan into `~/.pi/agent/plans/` (the plan folder).
- *           No bash / write / edit outside of `~/.pi/agent/plans/` is allowed.
- *           pi can later read & execute that plan in Cmd mode.
  *   - Ask:  ai just answers. No bash. No edits. No writes. Pure chat.
+ *
+ * Other extensions can register additional modes through `globalThis.__piModeWorkflow`.
  *
  * Cycle modes with: Shift+Tab
  * The current mode is shown in the status bar, just before the model entry,
@@ -15,35 +14,25 @@
  * Commands:
  *   /mode            -> show current mode
  *   /mode cmd        -> switch to Cmd mode
- *   /mode plan       -> switch to Plan mode
  *   /mode ask        -> switch to Ask mode
- *   /plans           -> list existing plans in ~/.pi/agent/plans/
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { chainEditor } from "./_editor-chain.ts";
-import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
-import { Input, Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import * as fs from "node:fs";
+import type { TUI } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import * as os from "node:os";
 import * as path from "node:path";
 
-type Mode = "command" | "plan" | "ask";
+type Mode = string;
 
-const MODES: Mode[] = ["command", "plan", "ask"];
-
-const MODE_LABEL: Record<Mode, string> = {
-	command: "cmd",
-	plan: "plan",
-	ask: "ask",
-};
-
-const MODE_LABEL_TITLE: Record<Mode, string> = {
-	command: "Cmd",
-	plan: "Plan",
-	ask: "Ask",
-};
+interface ModeDefinition {
+	id: string;
+	label: string;
+	title: string;
+	colorToken: string;
+}
 
 // ─── All custom colors in one place ──────────────────────────────────
 // Each entry has a theme token (used with theme.fg()) and an optional hex
@@ -51,7 +40,6 @@ const MODE_LABEL_TITLE: Record<Mode, string> = {
 const COLORS = {
 	// Mode label & input border per mode
 	cmd:             { token: "piPlanCmdMode",            hex: "#979BA1", fallback: "dim"          }, // light gray
-	plan:            { token: "accent"                                                             }, // cyan (built-in)
 	ask:             { token: "success"                                                             }, // green (built-in)
 
 	// Bash-prefix mode (when input starts with `!`)
@@ -62,16 +50,11 @@ const COLORS = {
 	thinkingBright:  { token: "piPlanThinkingBrightest",   hex: "#ff79e1", fallback: "thinkingXhigh"  }, // bright pink/magenta
 } as const;
 
-const MODE_COLOR: Record<Mode, string> = {
-	command: COLORS.cmd.token,
-	plan: COLORS.plan.token,
-	ask: COLORS.ask.token,
-};
+const modeDefinitions = new Map<string, ModeDefinition>([
+	["command", { id: "command", label: "cmd", title: "Cmd", colorToken: COLORS.cmd.token }],
+	["ask", { id: "ask", label: "ask", title: "Ask", colorToken: COLORS.ask.token }],
+]);
 
-
-
-// Tools considered "mutating" - blocked in Ask mode, restricted in Plan mode.
-const MUTATING_TOOLS = new Set(["bash", "write", "edit", "multi_edit"]);
 // Tools that only write/modify - always blocked in Ask mode.
 const WRITE_ONLY_TOOLS = new Set(["write", "edit", "multi_edit"]);
 
@@ -94,678 +77,36 @@ function isSafeBashCommand(command: string): boolean {
 	});
 }
 
-function plansDir(): string {
-	return path.join(os.homedir(), ".pi", "agent", "plans");
-}
-
-function ensurePlansDir(): string {
-	const dir = plansDir();
-	fs.mkdirSync(dir, { recursive: true });
-	return dir;
-}
-
-function isInsidePlansDir(targetPath: string): boolean {
-	const abs = path.resolve(targetPath);
-	const dir = path.resolve(plansDir());
-	const rel = path.relative(dir, abs);
-	return !rel.startsWith("..") && !path.isAbsolute(rel);
-}
-
-function listPlans(): string[] {
-	const dir = plansDir();
-	if (!fs.existsSync(dir)) return [];
-	return fs
-		.readdirSync(dir)
-		.filter((f) => f.endsWith(".md"))
-		.sort();
-}
-
-function planPath(planName: string): string {
-	return path.join(plansDir(), planName);
-}
-
-interface PlanListItem {
-	name: string;
-	path: string;
-	title: string;
-}
-
-function readPlanTitle(filePath: string, fallbackName: string): string {
-	try {
-		const content = fs.readFileSync(filePath, "utf8");
-		const heading = content.match(/^#\s+(.+)\s*$/m)?.[1]?.trim();
-		if (heading) return heading;
-	} catch {
-		// If the file cannot be read, fall back to the filename so the list still works.
-	}
-	return fallbackName;
-}
-
-function listPlanItems(): PlanListItem[] {
-	return listPlans().map((name) => {
-		const fullPath = planPath(name);
-		return { name, path: fullPath, title: readPlanTitle(fullPath, name) };
-	});
-}
-
-function filterPlanItems(plans: PlanListItem[], query: string): PlanListItem[] {
-	const normalizedQuery = query.trim().toLowerCase();
-	if (!normalizedQuery) return plans;
-	return plans.filter((plan) =>
-		`${plan.name} ${plan.title} ${plan.path}`.toLowerCase().includes(normalizedQuery),
-	);
-}
-
-function buildRefinePlanPrompt(planFile: string): string {
-	return (
-		`Let's refine the plan at ${planFile}: ` +
-		"Ask me for the missing details needed to refine the plan together. Do not rewrite the plan yet and do not make assumptions. " +
-		"Ask clear, concrete questions and wait for my answers before drafting any plan changes.\n"
-	);
-}
-
-function buildSuggestSpecificChangesPrompt(planFile: string, suggestion: string): string {
-	return [
-		`Apply these specific suggested changes to the plan at ${planFile}.`,
-		"Read the existing plan first, update that same plan file, and do not ask follow-up questions unless the suggestion is impossible to apply safely.",
-		"After updating the plan, briefly summarize what changed.",
-		"",
-		"Specific suggestion:",
-		suggestion,
-	].join("\n");
-}
-
-type KeybindingMatcher = {
-	matches: (keyData: string, keybindingId: string) => boolean;
-};
-
-type PlanAction = "view" | "refine" | "update" | "work";
-
-type PlanMenuAction = PlanAction | "delete";
-
-interface PlanSelectorResult {
-	plan: PlanListItem;
-	query: string;
-}
-
-class PlanSelectorDialog implements Component, Focusable {
-	private readonly input = new Input();
-	private filteredPlans: PlanListItem[];
-	private selectedIndex = 0;
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-		this.input.focused = value;
-	}
-
-	constructor(
-		private readonly tui: TUI,
-		private readonly theme: any,
-		private readonly keybindings: KeybindingMatcher,
-		private readonly plans: PlanListItem[],
-		private readonly onDone: (result: PlanSelectorResult | undefined) => void,
-		initialQuery = "",
-	) {
-		this.filteredPlans = plans;
-		if (initialQuery) this.input.setValue(initialQuery);
-		this.input.onSubmit = () => this.selectCurrent();
-		this.applyFilter(this.input.getValue());
-	}
-
-	private applyFilter(query: string): void {
-		this.filteredPlans = filterPlanItems(this.plans, query);
-		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredPlans.length - 1));
-	}
-
-	private selectCurrent(): void {
-		const plan = this.filteredPlans[this.selectedIndex];
-		if (plan) this.onDone({ plan, query: this.input.getValue() });
-	}
-
-	handleInput(keyData: string): void {
-		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
-			this.onDone(undefined);
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.up") || matchesKey(keyData, Key.up)) {
-			if (this.filteredPlans.length > 0) {
-				this.selectedIndex = this.selectedIndex === 0 ? this.filteredPlans.length - 1 : this.selectedIndex - 1;
-				this.tui.requestRender();
-			}
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.down)) {
-			if (this.filteredPlans.length > 0) {
-				this.selectedIndex = this.selectedIndex === this.filteredPlans.length - 1 ? 0 : this.selectedIndex + 1;
-				this.tui.requestRender();
-			}
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
-			this.selectCurrent();
-			return;
-		}
-
-		this.input.handleInput(keyData);
-		this.applyFilter(this.input.getValue());
-		this.tui.requestRender();
-	}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const push = (line = "") => lines.push(truncateToWidth(line, width));
-		const maxVisible = 10;
-		const startIndex = Math.max(
-			0,
-			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredPlans.length - maxVisible),
-		);
-		const endIndex = Math.min(startIndex + maxVisible, this.filteredPlans.length);
-
-		push(border);
-		push();
-		push(this.theme.fg("accent", this.theme.bold("Plans")));
-		push();
-		for (const line of this.input.render(width)) push(line);
-		push();
-
-		if (this.filteredPlans.length === 0) {
-			push(this.theme.fg("muted", "  No matching plans"));
-		} else {
-			const visiblePlans = this.filteredPlans.slice(startIndex, endIndex);
-			const maxTitleWidth = Math.max(...visiblePlans.map((plan) => visibleWidth(plan.title || plan.name)));
-			// Keep the file name in a stable description-style column, matching the
-			// /skills layout, while preserving one cell of margin to avoid wrapping.
-			const rowWidth = Math.max(1, width - 1);
-			const prefixWidth = 2;
-			const gapWidth = 2;
-			const minFileNameWidth = Math.min(24, Math.max(0, rowWidth - prefixWidth - gapWidth - 1));
-			const titleColumnWidth = Math.min(
-				maxTitleWidth,
-				Math.max(1, rowWidth - prefixWidth - gapWidth - minFileNameWidth),
-			);
-			const fileNameWidth = Math.max(0, rowWidth - prefixWidth - titleColumnWidth - gapWidth);
-
-			for (let i = startIndex; i < endIndex; i += 1) {
-				const plan = this.filteredPlans[i];
-				if (!plan) continue;
-				const selected = i === this.selectedIndex;
-				const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-				const rawTitle = truncateToWidth(plan.title || plan.name, titleColumnWidth);
-				const titlePadding = " ".repeat(Math.max(0, titleColumnWidth - visibleWidth(rawTitle)));
-				const title = this.theme.fg(selected ? "accent" : "text", rawTitle + titlePadding);
-				const fileName = this.theme.fg("dim", truncateToWidth(plan.name, fileNameWidth));
-				push(prefix + title + "  " + fileName);
-			}
-			if (startIndex > 0 || endIndex < this.filteredPlans.length) {
-				push(this.theme.fg("dim", `  (${this.selectedIndex + 1}/${this.filteredPlans.length})`));
-			}
-		}
-
-		push();
-		push(this.theme.fg("dim", "type to search • ↑↓ navigate • enter actions • esc back"));
-		push(border);
-		return lines;
-	}
-
-	invalidate(): void {
-		this.input.invalidate();
-	}
-}
-
-class PlanActionMenuDialog implements Component, Focusable {
-	private readonly actions: Array<{ value: PlanMenuAction; label: string; description: string }> = [
-		{ value: "view", label: "View", description: "Open plan view" },
-		{ value: "refine", label: "Refine", description: "Refine plan" },
-		{ value: "update", label: "Update", description: "Suggest specific changes" },
-		{ value: "work", label: "Work", description: "Start implementation" },
-		{ value: "delete", label: "Delete", description: "Delete plan" },
-	];
-	private selectedIndex = 0;
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-	}
-
-	constructor(
-		private readonly tui: TUI,
-		private readonly theme: any,
-		private readonly keybindings: KeybindingMatcher,
-		private readonly plan: PlanListItem,
-		private readonly onDone: (action: PlanMenuAction | undefined) => void,
-	) {}
-
-	handleInput(keyData: string): void {
-		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
-			this.onDone(undefined);
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.up") || matchesKey(keyData, Key.up)) {
-			this.selectedIndex = this.selectedIndex === 0 ? this.actions.length - 1 : this.selectedIndex - 1;
-			this.tui.requestRender();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.down)) {
-			this.selectedIndex = this.selectedIndex === this.actions.length - 1 ? 0 : this.selectedIndex + 1;
-			this.tui.requestRender();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
-			this.onDone(this.actions[this.selectedIndex]?.value);
-		}
-	}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const push = (line = "") => lines.push(truncateToWidth(line, width));
-		const labelColumnWidth = Math.max(...this.actions.map((action) => visibleWidth(action.label)));
-
-		push(border);
-		push();
-		push(this.theme.fg("accent", this.theme.bold(`Actions for "${this.plan.title || this.plan.name}"`)));
-		push();
-		for (let i = 0; i < this.actions.length; i += 1) {
-			const action = this.actions[i]!;
-			const selected = i === this.selectedIndex;
-			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-			const label = this.theme.fg(selected ? "accent" : "text", action.label);
-			const padding = " ".repeat(Math.max(7, labelColumnWidth - visibleWidth(action.label) + 7));
-			const description = this.theme.fg(selected ? "accent" : "muted", action.description);
-			push(prefix + label + padding + description);
-		}
-		push();
-		push(this.theme.fg("dim", "↑↓ navigate • enter select • esc back"));
-		push(border);
-		return lines;
-	}
-
-	invalidate(): void {}
-}
-
-class PlanDeleteConfirmDialog implements Component, Focusable {
-	private selectedIndex = 0;
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-	}
-
-	constructor(
-		private readonly tui: TUI,
-		private readonly theme: any,
-		private readonly keybindings: KeybindingMatcher,
-		private readonly plan: PlanListItem,
-		private readonly onDone: (confirmed: boolean) => void,
-	) {}
-
-	handleInput(keyData: string): void {
-		if (this.keybindings.matches(keyData, "tui.select.up") || this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.up) || matchesKey(keyData, Key.down)) {
-			this.selectedIndex = this.selectedIndex === 0 ? 1 : 0;
-			this.tui.requestRender();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
-			this.onDone(this.selectedIndex === 0);
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
-			this.onDone(false);
-		}
-	}
-
-	render(width: number): string[] {
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const yesPrefix = this.selectedIndex === 0 ? this.theme.fg("accent", "→ ") : "  ";
-		const noPrefix = this.selectedIndex === 1 ? this.theme.fg("accent", "→ ") : "  ";
-		return [
-			border,
-			"",
-			this.theme.fg("accent", this.theme.bold("Delete plan")),
-			this.theme.fg("dim", `Delete ${this.plan.name}? This cannot be undone.`),
-			"",
-			yesPrefix + this.theme.fg(this.selectedIndex === 0 ? "accent" : "text", "Yes"),
-			noPrefix + this.theme.fg(this.selectedIndex === 1 ? "accent" : "text", "No"),
-			"",
-			this.theme.fg("dim", "↑↓ choose • enter confirm • esc no"),
-			border,
-		].map((line) => truncateToWidth(line, width));
-	}
-
-	invalidate(): void {}
-}
-
-class PostPlanActionDialog {
-	focused = true;
-	private readonly actions: Array<{ value: PlanAction; label: string; description: string }> = [
-		{ value: "view", label: "View", description: "Open plan view" },
-		{ value: "refine", label: "Refine", description: "Refine plan" },
-		{ value: "update", label: "Update", description: "Suggest specific changes" },
-		{ value: "work", label: "Work", description: "Start implementation" },
-	];
-	private selectedIndex = 0;
-
-	constructor(
-		private readonly tui: TUI,
-		private readonly theme: any,
-		private readonly keybindings: KeybindingMatcher,
-		private readonly onDone: (choice: PlanAction | undefined) => void,
-	) {}
-
-	handleInput(keyData: string): void {
-		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
-			this.onDone(undefined);
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.up") || matchesKey(keyData, Key.up)) {
-			this.selectedIndex = this.selectedIndex === 0 ? this.actions.length - 1 : this.selectedIndex - 1;
-			this.tui.requestRender();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.down)) {
-			this.selectedIndex = this.selectedIndex === this.actions.length - 1 ? 0 : this.selectedIndex + 1;
-			this.tui.requestRender();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
-			this.onDone(this.actions[this.selectedIndex]?.value);
-		}
-	}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const push = (line = "") => lines.push(truncateToWidth(line, width));
-
-		push(border);
-		push();
-		push(this.theme.fg("accent", this.theme.bold("Plan saved! What would you like to do?")));
-		push();
-
-		const labelColumnWidth = Math.max(...this.actions.map((action) => visibleWidth(action.label)));
-
-		for (let i = 0; i < this.actions.length; i++) {
-			const action = this.actions[i]!;
-			const selected = i === this.selectedIndex;
-			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-			const label = this.theme.fg(selected ? "accent" : "text", action.label);
-			const padding = " ".repeat(Math.max(7, labelColumnWidth - visibleWidth(action.label) + 7));
-			const description = this.theme.fg(selected ? "accent" : "muted", action.description);
-			push(prefix + label + padding + description);
-		}
-
-		push();
-		push(this.theme.fg("dim", "↑↓ navigate • enter select • esc cancel"));
-		push(border);
-		return lines;
-	}
-
-	invalidate(): void {}
-}
-
-class SpecificSuggestionDialog implements Component, Focusable {
-	private readonly input = new Input();
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-		this.input.focused = value;
-	}
-
-	constructor(
-		private readonly tui: TUI,
-		private readonly theme: any,
-		private readonly keybindings: KeybindingMatcher,
-		private readonly onDone: (suggestion: string | undefined) => void,
-	) {
-		this.input.onSubmit = (value) => this.onDone(value);
-		this.input.onEscape = () => this.onDone(undefined);
-	}
-
-	handleInput(keyData: string): void {
-		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
-			this.onDone(undefined);
-			return;
-		}
-		this.input.handleInput(keyData);
-		this.tui.requestRender();
-	}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const push = (line = "") => lines.push(truncateToWidth(line, width));
-
-		push(border);
-		push();
-		push(this.theme.fg("accent", this.theme.bold("Suggest specific changes")));
-		push();
-		for (const line of this.input.render(width)) {
-			push(line);
-		}
-		push();
-		push(this.theme.fg("dim", "enter submit • esc cancel"));
-		push(border);
-		return lines;
-	}
-
-	invalidate(): void {
-		this.input.invalidate();
-	}
-}
-
-class PlanReviewDialog {
-	focused = true;
-	private markdown: Markdown;
-	private scrollOffset = 0;
-	private viewHeight = 0;
-	private totalLines = 0;
-	private readonly planTitle: string;
-	private readonly reviewContent: string;
-	private readonly sectionHeadings: Set<string>;
-
-	constructor(
-		private readonly tui: TUI,
-		private readonly theme: any,
-		private readonly keybindings: KeybindingMatcher,
-		private readonly planFile: string,
-		private readonly content: string,
-		private readonly onClose: () => void,
-	) {
-		this.planTitle = this.extractPlanTitle();
-		this.reviewContent = this.stripTitleFromContent();
-		this.sectionHeadings = this.extractSectionHeadings();
-		this.markdown = new Markdown(this.reviewContent, 0, 0, getMarkdownTheme());
-	}
-
-	private extractPlanTitle(): string {
-		const heading = this.content.match(/^#\s+(.+)\s*$/m)?.[1]?.trim();
-		if (heading) return heading;
-		return path.basename(this.planFile, path.extname(this.planFile));
-	}
-
-	private stripTitleFromContent(): string {
-		const withoutTitle = this.content.replace(/^#\s+.+\s*\r?\n?/, "").replace(/^\s*\r?\n/, "");
-		const compactHeadings = withoutTitle.replace(/^(#{2,6}\s+.+)\r?\n[ \t]*\r?\n/gm, "$1\n");
-		return compactHeadings.trim().length > 0 ? compactHeadings : "_No plan content._";
-	}
-
-	private extractSectionHeadings(): Set<string> {
-		const headings = new Set<string>();
-		const pattern = /^#{2,6}\s+(.+)\s*$/gm;
-		let match: RegExpExecArray | null;
-		while ((match = pattern.exec(this.reviewContent)) !== null) {
-			const heading = match[1]?.trim();
-			if (heading) headings.add(heading);
-		}
-		return headings;
-	}
-
-	private stripAnsi(text: string): string {
-		return text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
-	}
-
-	private compactRenderedHeadingSpacing(lines: string[]): string[] {
-		if (this.sectionHeadings.size === 0) return lines;
-		const compacted: string[] = [];
-		for (const line of lines) {
-			const previous = compacted[compacted.length - 1];
-			const previousText = previous ? this.stripAnsi(previous).trim() : "";
-			const currentText = this.stripAnsi(line).trim();
-			if (!currentText && previousText && this.sectionHeadings.has(previousText)) {
-				continue;
-			}
-			compacted.push(line);
-		}
-		return compacted;
-	}
-
-	handleInput(keyData: string): void {
-		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
-			this.onClose();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.up") || matchesKey(keyData, Key.up)) {
-			this.scrollBy(-1);
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.down)) {
-			this.scrollBy(1);
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.pageUp")) {
-			this.scrollBy(-this.viewHeight || -1);
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.pageDown")) {
-			this.scrollBy(this.viewHeight || 1);
-		}
-	}
-
-	render(width: number): string[] {
-		const maxHeight = this.getMaxHeight();
-		const innerWidth = Math.max(10, width - 2);
-		const chromeLines = 7; // top/title/path/separator/footer/separator/bottom
-		const contentHeight = Math.max(1, maxHeight - chromeLines);
-
-		let markdownWidth = Math.max(1, innerWidth - 4);
-		let markdownLines = this.compactRenderedHeadingSpacing(this.markdown.render(markdownWidth));
-		let hasScrollableContent = markdownLines.length > contentHeight;
-		if (hasScrollableContent) {
-			markdownWidth = Math.max(1, innerWidth - 5);
-			markdownLines = this.compactRenderedHeadingSpacing(this.markdown.render(markdownWidth));
-			hasScrollableContent = markdownLines.length > contentHeight;
-		}
-
-		this.totalLines = markdownLines.length;
-		this.viewHeight = contentHeight;
-		const maxScroll = Math.max(0, this.totalLines - contentHeight);
-		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, maxScroll));
-
-		const visibleLines = markdownLines.slice(this.scrollOffset, this.scrollOffset + contentHeight);
-		const borderColor = (text: string) => this.theme.fg("dim", text);
-		const boxLine = (content: string): string => {
-			const truncated = truncateToWidth(content, innerWidth);
-			const padding = Math.max(0, innerWidth - visibleWidth(truncated));
-			return borderColor("│") + truncated + " ".repeat(padding) + borderColor("│");
-		};
-		const contentBoxLine = (content: string, rowIndex: number): string => {
-			if (!hasScrollableContent) return boxLine(content);
-			const contentWidth = Math.max(1, innerWidth - 1);
-			const truncated = truncateToWidth(content, contentWidth);
-			const padding = Math.max(0, contentWidth - visibleWidth(truncated));
-			return borderColor("│") + truncated + " ".repeat(padding) + this.getScrollIndicatorForRow(rowIndex, contentHeight) + borderColor("│");
-		};
-		const separator = (): string => borderColor(`├${"─".repeat(innerWidth)}┤`);
-
-		const title = this.theme.fg("accent", this.planTitle);
-		const pathLabel = this.theme.fg("muted", this.planFile);
-		const footer = [
-			this.theme.fg("dim", "↑↓ scroll"),
-			this.theme.fg("dim", "pgup/pgdn page"),
-			this.theme.fg("dim", "esc back"),
-		].join(this.theme.fg("muted", " • "));
-
-		const output: string[] = [];
-		output.push(borderColor(`╭${"─".repeat(innerWidth)}╮`));
-		output.push(boxLine(`  ${title}`));
-		output.push(boxLine(`  ${pathLabel}`));
-		output.push(separator());
-		const lineContentWidth = hasScrollableContent ? Math.max(1, innerWidth - 5) : Math.max(1, innerWidth - 4);
-		for (let i = 0; i < contentHeight; i++) {
-			const line = visibleLines[i] ?? "";
-			output.push(contentBoxLine(`  ${truncateToWidth(line, lineContentWidth)}`, i));
-		}
-		output.push(separator());
-		output.push(boxLine(`  ${footer}`));
-		output.push(borderColor(`╰${"─".repeat(innerWidth)}╯`));
-		return output.map((line) => truncateToWidth(line, width));
-	}
-
-	invalidate(): void {
-		this.markdown = new Markdown(this.reviewContent, 0, 0, getMarkdownTheme());
-	}
-
-	private getMaxHeight(): number {
-		const rows = this.tui.terminal.rows || 24;
-		// Fill the screen area above pi's footer/status line instead of using a compact editor dialog.
-		return Math.max(10, rows - 4);
-	}
-
-	private getScrollIndicatorForRow(rowIndex: number, trackHeight: number): string {
-		if (this.totalLines <= this.viewHeight || trackHeight <= 0) return " ";
-		const maxScroll = Math.max(0, this.totalLines - this.viewHeight);
-		const thumbHeight = Math.max(1, Math.round((this.viewHeight / this.totalLines) * trackHeight));
-		const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
-		const thumbTop = maxScroll === 0
-			? 0
-			: Math.round((this.scrollOffset / maxScroll) * maxThumbTop);
-		const isThumbRow = rowIndex >= thumbTop && rowIndex < thumbTop + thumbHeight;
-		return isThumbRow ? this.theme.fg("accent", "┃") : this.theme.fg("dim", "│");
-	}
-
-	private scrollBy(delta: number): void {
-		const maxScroll = Math.max(0, this.totalLines - this.viewHeight);
-		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset + delta, maxScroll));
-		this.tui.requestRender();
-	}
-}
-
-export default function piPlanExtension(pi: ExtensionAPI): void {
+export default function piModesExtension(pi: ExtensionAPI): void {
 	let mode: Mode = "command";
 	let activeTui: TUI | undefined;
-	let lastWrittenPlanFile: string | null = null;
-	let postPlanPromptScheduled = false;
 	let editorDraftIsBash = false;
 
 	// ---- status bar ----
 	// Use a key that sorts BEFORE "model" alphabetically so the mode badge
 	// appears to the left of the model entry on the right side of the bar.
-	// (pi orders status entries by registration order; we register early on
-	// session_start to be safe, and use a stable key.)
 	const STATUS_KEY = "aaa-pi-plan-mode";
 
+	function getModeDefinition(id = mode): ModeDefinition {
+		return modeDefinitions.get(id) ?? modeDefinitions.get("command")!;
+	}
+
+	function modeIds(): string[] {
+		return Array.from(modeDefinitions.keys());
+	}
+
+	function modeLabels(): string[] {
+		return Array.from(modeDefinitions.values()).map((m) => m.label);
+	}
+
 	function renderStatus(ctx: ExtensionContext): void {
-		const label = editorDraftIsBash ? "bash" : MODE_LABEL[mode];
+		const def = getModeDefinition();
+		const label = editorDraftIsBash ? "bash" : def.label;
 		let painted = label;
 		try {
 			painted = editorDraftIsBash
 				? ctx.ui.theme.fg(COLORS.bash.token, label)
-				: ctx.ui.theme.fg(MODE_COLOR[mode], label);
+				: ctx.ui.theme.fg(def.colorToken, label);
 		} catch {
 			/* theme not ready - fall back to plain */
 		}
@@ -777,337 +118,93 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	}
 
 	function setMode(next: Mode, ctx: ExtensionContext, _announce = true): void {
+		if (!modeDefinitions.has(next)) next = "command";
 		if (next === mode) return;
 		mode = next;
 		renderStatus(ctx);
 		persist();
 		activeTui?.requestRender();
-		ctx.ui.notify(`Switched to ${MODE_LABEL_TITLE[mode]} mode`);
+		ctx.ui.notify(`Switched to ${getModeDefinition().title} mode`);
 	}
 
 	function cycleMode(ctx: ExtensionContext): void {
-		const idx = MODES.indexOf(mode);
-		const next = MODES[(idx + 1) % MODES.length];
+		const ids = modeIds();
+		const idx = ids.indexOf(mode);
+		const next = ids[(idx + 1) % ids.length] ?? "command";
 		setMode(next, ctx);
 	}
+
+	(globalThis as any).__piModeWorkflow = {
+		getMode: () => mode,
+		setMode,
+		registerMode: (definition: ModeDefinition) => {
+			modeDefinitions.set(definition.id, definition);
+		},
+		unregisterMode: (id: string) => {
+			modeDefinitions.delete(id);
+			if (mode === id) mode = "command";
+		},
+		modeIds,
+	};
 
 	// ---- shortcut: Shift+Tab ----
 	// Note: also unbind `app.thinking.cycle` in ~/.pi/agent/keybindings.json
 	// so Shift+Tab doesn't double-fire the built-in thinking-level cycler.
 	pi.registerShortcut("shift+tab", {
-		description: "Cycle pi-plan mode (Cmd / Plan / Ask)",
+		description: "Cycle pi mode (Cmd / Ask plus registered modes)",
 		handler: async (ctx) => cycleMode(ctx),
 	});
 
 	// ---- /mode cmd ----
 	pi.registerCommand("mode", {
-		description: "Show or switch pi-plan mode (cmd | plan | ask)",
+		description: "Show or switch pi mode",
 		getArgumentCompletions: (prefix: string) => {
-			const items = MODES.map((m) => ({ value: MODE_LABEL[m], label: MODE_LABEL[m] }));
+			const items = Array.from(modeDefinitions.values()).map((m) => ({ value: m.label, label: m.label }));
 			const filtered = items.filter((i) => i.value.startsWith(prefix));
 			return filtered.length > 0 ? filtered : null;
 		},
 		handler: async (args, ctx) => {
 			const arg = (args || "").trim().toLowerCase();
 			if (!arg) {
-				ctx.ui.notify(`Current mode: ${MODE_LABEL[mode]}`, "info");
+				ctx.ui.notify(`Current mode: ${getModeDefinition().label}`, "info");
 				return;
 			}
-			const next = arg === "cmd" ? "command" : arg;
-			if (!MODES.includes(next as Mode)) {
-				ctx.ui.notify(`Unknown mode '${arg}'. Use: cmd, plan, ask`, "error");
+			const matchingMode = Array.from(modeDefinitions.values()).find((m) => m.id === arg || m.label === arg);
+			if (!matchingMode) {
+				ctx.ui.notify(`Unknown mode '${arg}'. Use: ${modeLabels().join(", ")}`, "error");
 				return;
 			}
-			setMode(next as Mode, ctx);
+			setMode(matchingMode.id, ctx);
 		},
 	});
 
-	// ---- /plans command ----
-	const openPlansCommand = async (_args: string | undefined, ctx: ExtensionContext): Promise<void> => {
-		if (!ctx.hasUI) {
-			const plans = listPlans();
-			ctx.ui.notify(plans.length > 0 ? `Plans (${plans.length}):\n${plans.map((p) => `  • ${p}`).join("\n")}` : "No plans yet.", "info");
-			return;
-		}
-
-		let searchQuery = (_args || "").trim();
-		while (true) {
-			const plans = listPlanItems();
-			if (plans.length === 0) {
-				ctx.ui.notify("No plans yet. Switch to Plan mode (Shift+Tab) and ask pi for a plan.", "info");
-				return;
-			}
-
-			const selected = await ctx.ui.custom<PlanSelectorResult | undefined>((tui, theme, keybindings, done) => {
-				return new PlanSelectorDialog(tui, theme, keybindings, plans, done, searchQuery);
-			});
-			if (!selected) return;
-			searchQuery = selected.query;
-
-			const action = await ctx.ui.custom<PlanMenuAction | undefined>((tui, theme, keybindings, done) => {
-				return new PlanActionMenuDialog(tui, theme, keybindings, selected.plan, done);
-			});
-			if (!action) continue;
-
-			if (action === "view") {
-				try {
-					const content = fs.readFileSync(selected.plan.path, "utf8");
-					await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
-						return new PlanReviewDialog(tui, theme, keybindings, selected.plan.path, content, () => done());
-					});
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					ctx.ui.notify(`Could not open plan: ${message}`, "error");
-				}
-				continue;
-			}
-
-			if (action === "refine") {
-				setMode("plan", ctx, false);
-				const refineFlow = (globalThis as any).__piAnswerRefineFlow;
-				if (typeof refineFlow?.start === "function") {
-					await refineFlow.start(ctx, {
-						key: `plan:${path.resolve(selected.plan.path)}`,
-						prompt: buildRefinePlanPrompt(selected.plan.path),
-						cancelMessage: false,
-						cancelControlLabel: "back to plans",
-						statusLabel: "plan",
-						onCancelled: async (cancelCtx: ExtensionContext) => {
-							if (mode === "plan") await openPlansCommand(undefined, cancelCtx);
-						},
-					});
-				} else {
-					ctx.ui.notify("Could not auto-open answer UI: /answer refine flow is not loaded", "error");
-					await pi.sendUserMessage(buildRefinePlanPrompt(selected.plan.path));
-				}
-				return;
-			}
-
-			if (action === "update") {
-				setMode("plan", ctx, false);
-				const suggestion = await ctx.ui.custom<string | undefined>((tui, theme, keybindings, done) => {
-					return new SpecificSuggestionDialog(tui, theme, keybindings, done);
-				});
-				if (!suggestion?.trim()) continue;
-				await pi.sendUserMessage(buildSuggestSpecificChangesPrompt(selected.plan.path, suggestion.trim()));
-				return;
-			}
-
-			if (action === "work") {
-				setMode("command", ctx, false);
-				await pi.sendUserMessage(`Execute the plan at ${selected.plan.path}. Read it first, then follow its Steps section.`);
-				return;
-			}
-
-			if (action === "delete") {
-				const confirmed = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => {
-					return new PlanDeleteConfirmDialog(tui, theme, keybindings, selected.plan, done);
-				});
-				if (!confirmed) continue;
-				try {
-					fs.unlinkSync(selected.plan.path);
-					ctx.ui.notify(`Deleted plan ${selected.plan.name}`, "info");
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					ctx.ui.notify(`Could not delete plan: ${message}`, "error");
-				}
-			}
-		}
-	};
-
-	pi.registerCommand("plans", {
-		description: "Open the plan manager",
-		handler: openPlansCommand,
-	});
-
 	// ---- gate tool calls based on mode ----
-	// (Note: bash/edit/write blocking enforces what the system-prompt directive
-	// merely advises - the LLM cannot bypass the gate even if it ignores prose.)
-	pi.on("tool_call", async (event, ctx) => {
-		if (mode === "command") return;
+	// Ask mode blocks mutations while still allowing safe read-only shell commands.
+	pi.on("tool_call", async (event, _ctx) => {
+		if (mode !== "ask") return;
 
 		const toolName = event.toolName;
-
-		if (mode === "ask") {
-			// Always block write/edit tools.
-			if (WRITE_ONLY_TOOLS.has(toolName)) {
-				return {
-					block: true,
-					reason: `Ask mode is active - the assistant must answer without running '${toolName}'. Switch modes with Shift+Tab (or /mode cmd) to allow it.`,
-				};
-			}
-			// Allow bash only for read-only/search commands.
-			if (toolName === "bash") {
-				const cmd = (event.input as { command?: string }).command ?? "";
-				if (!isSafeBashCommand(cmd)) {
-					return {
-						block: true,
-						reason: `Ask mode is active - only read-only commands (grep, find, ls, git log, etc.) are allowed. Switch modes with Shift+Tab (or /mode cmd) to run '${cmd.split(" ")[0]}'.`,
-					};
-				}
-			}
-			return;
-		}
-
-		// mode === "plan"
-		// In Plan mode the assistant may read/search the codebase freely,
-		// but is only allowed to create/refine Markdown plans under ~/.pi/agent/plans/.
-		if (toolName === "bash") {
+		if (WRITE_ONLY_TOOLS.has(toolName)) {
 			return {
 				block: true,
-				reason: "Plan mode: bash is disabled. Use the write tool to save your plan into ~/.pi/agent/plans/<name>.md instead.",
+				reason: `Ask mode is active - the assistant must answer without running '${toolName}'. Switch modes with Shift+Tab (or /mode cmd) to allow it.`,
 			};
 		}
-		if (toolName === "edit" || toolName === "multi_edit") {
-			const target = (event.input as { path?: string; file_path?: string }).path
-				?? (event.input as { path?: string; file_path?: string }).file_path;
-			if (!target || !isInsidePlansDir(target)) {
+		if (toolName === "bash") {
+			const cmd = (event.input as { command?: string }).command ?? "";
+			if (!isSafeBashCommand(cmd)) {
 				return {
 					block: true,
-					reason: "Plan mode: edits are only allowed inside ~/.pi/agent/plans/. Use this to refine an existing plan there.",
+					reason: `Ask mode is active - only read-only commands (grep, find, ls, git log, etc.) are allowed. Switch modes with Shift+Tab (or /mode cmd) to run '${cmd.split(" ")[0]}'.`,
 				};
 			}
-			// Track refined plan files too, so the post-plan prompt appears after edits,
-			// not only after first-time writes.
-			lastWrittenPlanFile = target;
-			return;
 		}
-		if (toolName === "write") {
-			const target = (event.input as { path?: string; file_path?: string }).path
-				?? (event.input as { path?: string; file_path?: string }).file_path;
-			if (!target || !isInsidePlansDir(target)) {
-				return {
-					block: true,
-					reason: "Plan mode: write is only allowed under ~/.pi/agent/plans/. Use a path like ~/.pi/agent/plans/<name>.md",
-				};
-			}
-			// Make sure the directory exists so write doesn't fail.
-			ensurePlansDir();
-			// Track the written plan file for the post-agent review prompt.
-			lastWrittenPlanFile = target;
-			return;
-		}
-	});
-
-	// ---- reset plan file tracking on each agent run ----
-	pi.on("agent_start", async (_event, _ctx) => {
-		lastWrittenPlanFile = null;
-	});
-
-	async function showPostPlanPrompt(planFile: string, ctx: ExtensionContext): Promise<void> {
-		renderStatus(ctx);
-		while (mode === "plan") {
-			renderStatus(ctx);
-			const choice = await ctx.ui.custom<PlanAction | undefined>((tui, theme, keybindings, done) => {
-				return new PostPlanActionDialog(tui, theme, keybindings, done);
-			});
-
-			if (choice === "view") {
-				try {
-					const content = fs.readFileSync(planFile, "utf8");
-					await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
-						return new PlanReviewDialog(tui, theme, keybindings, planFile, content, () => done());
-					});
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					ctx.ui.notify(`Could not open plan for review: ${message}`, "error");
-				}
-				continue;
-			}
-
-			if (choice === "refine") {
-				const refineFlow = (globalThis as any).__piAnswerRefineFlow;
-				if (typeof refineFlow?.start !== "function") {
-					ctx.ui.notify("Could not auto-open answer UI: /answer refine flow is not loaded", "error");
-					return;
-				}
-				await refineFlow.start(ctx, {
-					key: `plan:${path.resolve(planFile)}`,
-					prompt: buildRefinePlanPrompt(planFile),
-					cancelMessage: false,
-					cancelControlLabel: "back to plan",
-					statusLabel: "plan",
-					onCancelled: async (cancelCtx: ExtensionContext) => {
-						if (mode === "plan") {
-							await showPostPlanPrompt(planFile, cancelCtx);
-						}
-					},
-				});
-				return;
-			}
-
-			if (choice === "update") {
-				const suggestion = await ctx.ui.custom<string | undefined>((tui, theme, keybindings, done) => {
-					return new SpecificSuggestionDialog(tui, theme, keybindings, done);
-				});
-				if (!suggestion?.trim()) {
-					continue;
-				}
-				await pi.sendUserMessage(buildSuggestSpecificChangesPrompt(planFile, suggestion.trim()));
-				return;
-			}
-
-			if (choice === "work") {
-				setMode("command", ctx, false);
-				await pi.sendUserMessage(`Execute the plan at ${planFile}. Read it first, then follow its Steps section.`);
-				return;
-			}
-
-			// If undefined (Escape), do nothing — stay in plan mode
-			return;
-		}
-	}
-
-	function schedulePostPlanPrompt(planFile: string, ctx: ExtensionContext): void {
-		if (postPlanPromptScheduled) return;
-		postPlanPromptScheduled = true;
-
-		const waitForFinished = () => {
-			if (!ctx.isIdle() || ctx.hasPendingMessages()) {
-				setTimeout(waitForFinished, 100);
-				return;
-			}
-
-			void (async () => {
-				try {
-					if (mode === "plan") {
-						await showPostPlanPrompt(planFile, ctx);
-					}
-				} finally {
-					postPlanPromptScheduled = false;
-				}
-			})();
-		};
-
-		setTimeout(waitForFinished, 0);
-	}
-
-
-	// ---- post-plan review prompt ----
-	pi.on("agent_end", async (_event, ctx) => {
-		if (mode !== "plan") return;
-
-		if (!lastWrittenPlanFile) return;
-
-		const planFile = lastWrittenPlanFile;
-		lastWrittenPlanFile = null;
-
-		// `agent_end` fires before the session fully leaves its streaming state.
-		// If the post-plan dialog is shown immediately, selecting "Accept plan and build"
-		// can race with the still-processing agent turn and trigger:
-		// "Agent is already processing. Specify streamingBehavior...".
-		// Defer the dialog until pi reports that the agent is completely idle.
-		schedulePostPlanPrompt(planFile, ctx);
 	});
 
 	// ---- inject per-mode guidance for the LLM via the system prompt ----
 	// We append to event.systemPrompt instead of injecting a visible message,
 	// so nothing shows up above the prompt input.
-	pi.on("before_agent_start", async (event, ctx) => {
-		ensurePlansDir();
-		const plans = listPlans();
-		const planList = plans.length > 0 ? plans.map((p) => `  - ~/.pi/agent/plans/${p}`).join("\n") : "  (none yet)";
-
+	pi.on("before_agent_start", async (event, _ctx) => {
 		let directive: string;
 		if (mode === "ask") {
 			directive = [
@@ -1120,41 +217,13 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 				"Do NOT use bash for anything that writes, creates, deletes, or modifies files.",
 				"Prefer answering from your own knowledge first; search only when needed for accuracy.",
 			].join("\n");
-		} else if (mode === "plan") {
-			directive = [
-				"[PI-PLAN MODE: PLAN]",
-				"You are in Plan mode. Your job is to PRODUCE OR REFINE A PLAN, not to execute it.",
-				"",
-				"Rules:",
-				"  - Do NOT run bash.",
-				"  - Do NOT edit or write any file outside of `~/.pi/agent/plans/`.",
-				"  - You MAY use read/search tools to investigate the codebase and existing plan files.",
-				"  - When creating a new plan, save it as Markdown using the `write` tool to:",
-				"      ~/.pi/agent/plans/<short-kebab-case-name>.md",
-				"  - When refining an existing plan, read the plan first and update that same file under `~/.pi/agent/plans/` using `edit` or `write`.",
-				"  - If the user asks to refine a plan but missing details would materially change the plan, ask clear questions and wait for answers before editing.",
-				"  - The plan file should contain:",
-				"      # Title",
-				"      ## Goal        (1-3 sentences)",
-				"      ## Context     (key files / constraints)",
-				"      ## Steps       (numbered, actionable, ordered)",
-				"      ## Verification (how to confirm success)",
-				"  - After saving or refining, briefly tell the user the plan path and a short summary.",
-				"  - The user will be prompted to open the plan for review, refine and suggest changes, or accept and build.",
-				"",
-				"Existing plans in this project:",
-				planList,
-			].join("\n");
-		} else {
-			// cmd mode
+		} else if (mode === "command") {
 			directive = [
 				"[PI-PLAN MODE: CMD]",
 				"You have full tool access. Execute the user's request normally.",
-				"",
-				"If the user refers to 'the plan' or 'my plan', look under `~/.pi/agent/plans/`:",
-				planList,
-				"Read the relevant plan file and follow its Steps section.",
 			].join("\n");
+		} else {
+			return;
 		}
 
 		return {
@@ -1275,14 +344,15 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 		const entries = ctx.sessionManager.getEntries() as Array<{
 			type: string;
 			customType?: string;
-			data?: { mode?: Mode };
+			data?: { mode?: string };
 		}>;
 		const last = [...entries].reverse().find((e) => e.type === "custom" && e.customType === "pi-plan-mode");
-		if (last?.data?.mode && MODES.includes(last.data.mode)) {
+		if (last?.data?.mode && modeDefinitions.has(last.data.mode)) {
 			mode = last.data.mode;
+		} else if (!modeDefinitions.has(mode)) {
+			mode = "command";
 		}
 		editorDraftIsBash = false;
-		ensurePlansDir();
 		renderStatus(ctx);
 		installBrightestColor(ctx);
 		installFooter(ctx);
@@ -1295,11 +365,9 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 	function installEditor(ctx: ExtensionContext): void {
 		if (!ctx.hasUI) return;
 		const theme = ctx.ui.theme;
-		// Same color as the mode label but with ANSI dim (\x1b[2m) to desaturate.
-		const dim = (painted: string): string => `\x1b[2m${painted}\x1b[22m`;
 		const paintBorder = (text: string): string => {
 			try {
-				return theme.fg(MODE_COLOR[mode], text);
+				return theme.fg(getModeDefinition().colorToken, text);
 			} catch {
 				return text;
 			}
@@ -1521,10 +589,10 @@ export default function piPlanExtension(pi: ExtensionAPI): void {
 					};
 
 					// --- mode on top line, cwd + branch on bottom line ---
-					const modeLabel = MODE_LABEL[mode];
+					const modeLabel = getModeDefinition().label;
 					let modePainted = modeLabel;
 					try {
-						modePainted = theme.fg(MODE_COLOR[mode], modeLabel);
+						modePainted = theme.fg(getModeDefinition().colorToken, modeLabel);
 					} catch { /* */ }
 					// Show home-relative paths as ~\...; keep all other footer behavior unchanged.
 					let cwdDisplay = shortenUserPath(ctx.cwd);
