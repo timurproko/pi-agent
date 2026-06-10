@@ -62,7 +62,7 @@ export type EditorSettingValue = boolean | number | string;
 export interface EditorSettingField {
 	key: string;
 	label: string;
-	type: "boolean" | "number" | "enum" | "string";
+	type: "boolean" | "number" | "enum" | "string" | "action";
 	value: EditorSettingValue;
 	options?: string[];
 	min?: number;
@@ -78,7 +78,21 @@ export interface EditorSettingsModalOptions {
 	fields: EditorSettingField[];
 	shortcuts?: string;
 	onChange: (field: EditorSettingField, value: EditorSettingValue) => void;
+	onAction?: (field: EditorSettingField) => void;
 	onBack: () => void;
+}
+
+export interface EditorConfirmModalOptions {
+	tui: TUI;
+	theme: Theme;
+	keybindings: EditorUiKeybindings;
+	title: string;
+	subtitle?: string;
+	confirmLabel?: string;
+	cancelLabel?: string;
+	shortcuts?: string;
+	onConfirm: () => void;
+	onCancel: () => void;
 }
 
 export interface EditorSearchModalOptions<T = string> {
@@ -332,6 +346,25 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 	}
 }
 
+export class EditorConfirmModal extends EditorModal<boolean> {
+	constructor(options: EditorConfirmModalOptions) {
+		super({
+			tui: options.tui,
+			theme: options.theme,
+			keybindings: options.keybindings,
+			title: options.title,
+			subtitle: options.subtitle,
+			items: [
+				{ value: true, label: options.confirmLabel ?? "Yes" },
+				{ value: false, label: options.cancelLabel ?? "No" },
+			],
+			shortcuts: options.shortcuts ?? "↑↓ choose • enter confirm • esc no",
+			onSelect: (item) => item.value ? options.onConfirm() : options.onCancel(),
+			onCancel: options.onCancel,
+		});
+	}
+}
+
 export class EditorSettingsModal implements Component, Focusable {
 	private selectedIndex = 0;
 	private _focused = false;
@@ -367,6 +400,9 @@ export class EditorSettingsModal implements Component, Focusable {
 		} else if (field.type === "enum" && field.options?.length) {
 			const currentIndex = Math.max(0, field.options.indexOf(String(field.value)));
 			nextValue = field.options[(currentIndex + delta + field.options.length) % field.options.length] ?? field.value;
+		} else if (field.type === "action") {
+			this.options.onAction?.(field);
+			return;
 		} else {
 			return;
 		}

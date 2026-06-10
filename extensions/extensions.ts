@@ -23,11 +23,12 @@
  * changes we call `ctx.reload()` to re-run discovery.
  */
 
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, InteractiveMode } from "@earendil-works/pi-coding-agent";
-import { EditorModal, EditorSettingsModal, type EditorModalFilter, type EditorSettingField, type EditorSettingValue } from "./_editor-ui";
+import { EditorConfirmModal, EditorModal, EditorSettingsModal, type EditorModalFilter, type EditorSettingField, type EditorSettingValue } from "./_editor-ui";
 
 /**
  * Scope of a discovered extension:
@@ -59,6 +60,8 @@ interface ExtensionInfo {
 	isSelf: boolean;
 	/** Optional JSON settings file displayed from the extension list. */
 	settingsFile?: string;
+	/** Original npm package source from settings.json, used for uninstall. */
+	packageSource?: string;
 }
 
 const SELF_DIRNAME = "pi-extensions";
@@ -70,6 +73,7 @@ const SELF_FILENAMES = new Set([
 ]);
 const PI_MCP_DIRNAME = "pi-mcp";
 const PI_MCP_STATUS_PATCH_KEY = "__piMcpStatusPatch";
+const UNINSTALL_EXTENSION_FIELD_KEY = "__uninstallExtension";
 
 type PiMcpPatchableUi = ExtensionContext["ui"] & {
 	__piMcpStatusPatch?: {
@@ -178,15 +182,49 @@ function getPiNpmRoot(): string | null {
 	return fs.existsSync(root) ? root : null;
 }
 
-/** npm package names declared in settings.json `packages` (without `npm:` prefix). */
-function readConfiguredNpmPackageNames(): string[] {
+interface ConfiguredNpmPackage {
+	/** Original source string as it appears in settings.json, e.g. `npm:@scope/pkg@1.0.0`. */
+	source: string;
+	/** Install directory name under node_modules, e.g. `@scope/pkg`. */
+	packageName: string;
+}
+
+function parseNpmPackageName(source: string): string | null {
+	if (!source.startsWith("npm:")) return null;
+	const spec = source.slice("npm:".length);
+	if (!spec) return null;
+
+	if (spec.startsWith("@")) {
+		const slashIndex = spec.indexOf("/");
+		if (slashIndex < 0) return spec;
+		const versionIndex = spec.indexOf("@", slashIndex + 1);
+		return versionIndex >= 0 ? spec.slice(0, versionIndex) : spec;
+	}
+
+	const versionIndex = spec.indexOf("@");
+	return versionIndex >= 0 ? spec.slice(0, versionIndex) : spec;
+}
+
+/** npm packages declared in settings.json `packages`. */
+function readConfiguredNpmPackages(): ConfiguredNpmPackage[] {
 	try {
 		const settingsPath = path.join(getAgentDir(), "settings.json");
 		const raw = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as { packages?: unknown };
 		const pkgs = Array.isArray(raw.packages) ? raw.packages : [];
 		return pkgs
-			.filter((p): p is string => typeof p === "string" && p.startsWith("npm:"))
-			.map((p) => p.slice("npm:".length));
+			.map((p): string | undefined => {
+				if (typeof p === "string") return p;
+				if (p && typeof p === "object" && typeof (p as { source?: unknown }).source === "string") {
+					return (p as { source: string }).source;
+				}
+				return undefined;
+			})
+			.filter((source): source is string => typeof source === "string" && source.startsWith("npm:"))
+			.map((source) => {
+				const packageName = parseNpmPackageName(source);
+				return packageName ? { source, packageName } : undefined;
+			})
+			.filter((pkg): pkg is ConfiguredNpmPackage => !!pkg);
 	} catch {
 		return [];
 	}
@@ -204,8 +242,8 @@ function discoverNpmExtensions(): ExtensionInfo[] {
 	if (!root) return [];
 	const out: ExtensionInfo[] = [];
 
-	for (const pkgName of readConfiguredNpmPackageNames()) {
-		const pkgDir = path.join(root, pkgName);
+	for (const pkg of readConfiguredNpmPackages()) {
+		const pkgDir = path.join(root, pkg.packageName);
 		const pkgJson = path.join(pkgDir, "package.json");
 		if (!fs.existsSync(pkgJson)) continue;
 
@@ -220,8 +258,8 @@ function discoverNpmExtensions(): ExtensionInfo[] {
 			if (!hasEnabled && !hasDisabled) continue;
 
 			const entryBase = path.basename(rel);
-			const displayName = declared.length > 1 ? `${pkgName}/${entryBase}` : pkgName;
-			const isSelf = pkgName === SELF_DIRNAME || displayName.startsWith(`${SELF_DIRNAME}/`) || SELF_FILENAMES.has(entryBase);
+			const displayName = declared.length > 1 ? `${pkg.packageName}/${entryBase}` : pkg.packageName;
+			const isSelf = pkg.packageName === SELF_DIRNAME || displayName.startsWith(`${SELF_DIRNAME}/`) || SELF_FILENAMES.has(entryBase);
 
 			out.push({
 				name: displayName,
@@ -230,6 +268,7 @@ function discoverNpmExtensions(): ExtensionInfo[] {
 				enabled: hasEnabled,
 				isSelf,
 				settingsFile: resolveSettingsFile(enabledPath),
+				packageSource: pkg.source,
 			});
 		}
 	}
@@ -346,8 +385,12 @@ function capitalizeName(name: string): string {
 	return name.length > 0 ? name[0]!.toUpperCase() + name.slice(1) : name;
 }
 
+function hasExtensionSettings(ext: ExtensionInfo): boolean {
+	return !!ext.settingsFile || (ext.scope === "global" && !!ext.packageSource);
+}
+
 function formatExtensionListLabel(ext: ExtensionInfo): string {
-	return `${ext.name}${ext.settingsFile ? "⚙ " : ""}`;
+	return `${ext.name}${hasExtensionSettings(ext) ? "⚙ " : ""}`;
 }
 
 function formatSettingLabel(key: string): string {
@@ -382,8 +425,34 @@ function settingsFieldsFromObject(settings: Record<string, unknown>): EditorSett
 	return fields;
 }
 
+function settingsFieldsForExtension(ext: ExtensionInfo, settings: Record<string, unknown>): EditorSettingField[] {
+	const fields = settingsFieldsFromObject(settings);
+	if (ext.scope === "global" && ext.packageSource) {
+		fields.push({
+			key: UNINSTALL_EXTENSION_FIELD_KEY,
+			label: "Uninstall",
+			type: "action",
+			value: ext.packageSource,
+		});
+	}
+	return fields;
+}
+
 function writeSettingsObject(settingsFile: string, settings: Record<string, unknown>): void {
 	fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n", "utf8");
+}
+
+function uninstallGlobalExtension(source: string, cwd: string): { ok: boolean; message: string } {
+	const result = spawnSync("pi", ["uninstall", source], {
+		cwd,
+		encoding: "utf8",
+		shell: process.platform === "win32",
+	});
+	const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
+	const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
+	const message = [stdout, stderr].filter(Boolean).join("\n");
+	if (result.error) return { ok: false, message: result.error.message };
+	return { ok: result.status === 0, message: message || `pi uninstall ${source} exited with status ${result.status ?? "unknown"}` };
 }
 
 function isPiMcpDisabled(cwd: string): boolean {
@@ -535,7 +604,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 								activeFilter = filter ?? filterOptions[0]?.value;
 								activeEntryFile = selectedItem?.value;
 								const ext = exts.find((candidate) => candidate.entryFile === selectedItem?.value);
-								if (!ext?.settingsFile) {
+								if (!ext || !hasExtensionSettings(ext)) {
 									ctx.ui.notify(ext ? `${capitalizeName(ext.name)} has no settings.` : "No extension selected.", "info");
 									return true;
 								}
@@ -565,22 +634,48 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 
 				const entryFile = (result as { entryFile?: string }).entryFile;
 				const ext = exts.find((candidate) => candidate.entryFile === entryFile);
-				if (!ext?.settingsFile) continue;
+				if (!ext || !hasExtensionSettings(ext)) continue;
 
-				const settings = readSettingsObject(ext.settingsFile);
-				const fields = settingsFieldsFromObject(settings);
-				await ctx.ui.custom<void>((tui, theme, keybindings, done) => new EditorSettingsModal({
+				const settings = ext.settingsFile ? readSettingsObject(ext.settingsFile) : {};
+				const fields = settingsFieldsForExtension(ext, settings);
+				const settingsResult = await ctx.ui.custom<void | { action: "uninstall" }>((tui, theme, keybindings, done) => new EditorSettingsModal({
 					tui,
 					theme,
 					keybindings,
 					title: `${capitalizeName(ext.name)} settings`,
 					fields,
 					onChange: (field: EditorSettingField, value: EditorSettingValue) => {
+						if (!ext.settingsFile || field.key === UNINSTALL_EXTENSION_FIELD_KEY) return;
 						settings[field.key] = value;
-						writeSettingsObject(ext.settingsFile!, settings);
+						writeSettingsObject(ext.settingsFile, settings);
+					},
+					onAction: (field: EditorSettingField) => {
+						if (field.key === UNINSTALL_EXTENSION_FIELD_KEY) done({ action: "uninstall" });
 					},
 					onBack: () => done(),
 				}));
+
+				if (settingsResult && settingsResult.action === "uninstall" && ext.packageSource) {
+					const confirmed = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => new EditorConfirmModal({
+						tui,
+						theme,
+						keybindings,
+						title: "Uninstall extension",
+						subtitle: `Uninstall ${ext.name}? This will run: pi uninstall ${ext.packageSource}`,
+						onConfirm: () => done(true),
+						onCancel: () => done(false),
+					}));
+					if (!confirmed) continue;
+
+					const uninstallResult = uninstallGlobalExtension(ext.packageSource, ctx.cwd);
+					if (!uninstallResult.ok) {
+						ctx.ui.notify(`Failed to uninstall ${ext.name}: ${uninstallResult.message}`, "error");
+						continue;
+					}
+					ctx.ui.notify(`Uninstalled ${ext.name}, reloading...`, "info");
+					void ctx.reload();
+					return;
+				}
 			}
 
 			// Esc / cancel: do nothing, no reload

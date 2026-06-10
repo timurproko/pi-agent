@@ -18,9 +18,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Container, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
-import { EditorModal } from "./_editor-ui";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { EditorConfirmModal, EditorModal } from "./_editor-ui";
 
 const STATUS_KEY = "mcp";
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -60,47 +59,15 @@ function setDirectToolsEnabled(serverName: string, enabled: boolean): boolean {
 }
 
 async function askToEnableMcpServer(ctx: ExtensionContext, serverName: string): Promise<boolean> {
-	const items: SelectItem[] = [
-		{ value: "yes", label: "Yes" },
-		{ value: "no", label: "No" },
-	];
-
-	const result = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-		const container = new Container();
-		container.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
-		container.addChild(new Spacer(1));
-		container.addChild(new Text(theme.fg("accent", theme.bold("Enable MCP server")), 0, 0));
-		container.addChild(new Text(`Proceed to connect to ${serverName} server?`, 0, 0));
-		container.addChild(new Spacer(1));
-
-		const selectList = new SelectList(items, items.length, {
-			selectedPrefix: (t) => theme.fg("accent", t),
-			selectedText: (t) => theme.fg("accent", t),
-			description: (t) => theme.fg("dim", t),
-			scrollInfo: (t) => theme.fg("dim", t),
-			noMatch: (t) => theme.fg("warning", t),
-		});
-		selectList.onSelect = (item) => done(String(item.value));
-		selectList.onCancel = () => done(null);
-		container.addChild(selectList);
-
-		container.addChild(new Spacer(1));
-		container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc cancel"), 0, 0));
-		container.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
-
-		return {
-			render: (width: number) => container.render(width),
-			invalidate: () => container.invalidate(),
-			handleInput: (data: string) => {
-				// Ctrl+C is intentionally ignored here; Esc is the only cancel shortcut.
-				if (data === "\x03") return;
-				selectList.handleInput(data);
-				tui.requestRender();
-			},
-		};
-	});
-
-	return result === "yes";
+	return await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => new EditorConfirmModal({
+		tui,
+		theme,
+		keybindings,
+		title: "Enable MCP server",
+		subtitle: `Proceed to connect to ${serverName} server?`,
+		onConfirm: () => done(true),
+		onCancel: () => done(false),
+	}));
 }
 
 function readCache(): Record<string, { tools?: any[] }> {

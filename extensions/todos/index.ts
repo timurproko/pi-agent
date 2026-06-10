@@ -47,7 +47,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { EditorModal } from "../_editor-ui";
+import { EditorConfirmModal, EditorModal } from "../_editor-ui";
 
 const TODO_DIR_NAME = ".pi/todos";
 const AGENT_TODO_DIR_NAME = "todos";
@@ -1055,10 +1055,15 @@ async function acquireLock(
 			if (!ctx.hasUI) {
 				return { error: `Todo ${displayTodoId(id)} lock is stale; rerun in interactive mode to steal it.` };
 			}
-			const ok = await ctx.ui.confirm(
-				"Todo locked",
-				`Todo ${displayTodoId(id)} appears locked. Steal the lock?`,
-			);
+			const ok = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => new EditorConfirmModal({
+				tui,
+				theme,
+				keybindings,
+				title: "Todo locked",
+				subtitle: `Todo ${displayTodoId(id)} appears locked. Steal the lock?`,
+				onConfirm: () => done(true),
+				onCancel: () => done(false),
+			}));
 			if (!ok) {
 				return { error: `Todo ${displayTodoId(id)} remains locked.` };
 			}
@@ -2266,22 +2271,13 @@ export default function todosExtension(pi: ExtensionAPI) {
 					}
 
 					if (action === "delete") {
-						deleteConfirm = new EditorModal<boolean>({
+						deleteConfirm = new EditorConfirmModal({
 							tui,
 							theme,
 							keybindings,
 							title: "Delete todo",
 							subtitle: `Delete todo ${formatTodoId(record.id)}? This cannot be undone.`,
-							items: [
-								{ value: true, label: "Yes" },
-								{ value: false, label: "No" },
-							],
-							shortcuts: "↑↓ navigate • enter select • esc back",
-							onSelect: (item) => {
-								if (!item.value) {
-									setActiveComponent(actionMenu);
-									return;
-								}
+							onConfirm: () => {
 								void (async () => {
 									await applyTodoAction(record, "delete");
 									setActiveComponent(selector);

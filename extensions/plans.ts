@@ -12,7 +12,7 @@
 import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { Input, Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { EditorModal, type EditorModalItem } from "./_editor-ui";
+import { EditorConfirmModal, EditorModal, type EditorModalItem } from "./_editor-ui";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -610,22 +610,15 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 			}
 
 			if (action === "delete") {
-				const confirmed = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => {
-					return new EditorModal<boolean>({
-						tui,
-						theme,
-						keybindings,
-						title: "Delete plan",
-						subtitle: `Delete ${selected.plan.name}? This cannot be undone.`,
-						items: [
-							{ value: true, label: "Yes" },
-							{ value: false, label: "No" },
-						],
-						shortcuts: "↑↓ choose • enter confirm • esc no",
-						onSelect: (item) => done(item.value),
-						onCancel: () => done(false),
-					});
-				});
+				const confirmed = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => new EditorConfirmModal({
+					tui,
+					theme,
+					keybindings,
+					title: "Delete plan",
+					subtitle: `Delete ${selected.plan.name}? This cannot be undone.`,
+					onConfirm: () => done(true),
+					onCancel: () => done(false),
+				}));
 				if (!confirmed) continue;
 				try {
 					fs.unlinkSync(selected.plan.path);
