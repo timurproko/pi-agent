@@ -246,7 +246,8 @@ class PlanSelectorDialog implements Component, Focusable {
 		push();
 
 		if (this.filteredPlans.length === 0) {
-			push(this.theme.fg("muted", "  No matching plans"));
+			const emptyMessage = this.input.getValue().trim() ? "No matching plans" : "No plans yet";
+			push(this.theme.fg("muted", `  ${emptyMessage}`));
 		} else {
 			const visiblePlans = this.filteredPlans.slice(startIndex, endIndex);
 			const maxTitleWidth = Math.max(...visiblePlans.map((plan) => visibleWidth(plan.title || plan.name)));
@@ -279,7 +280,7 @@ class PlanSelectorDialog implements Component, Focusable {
 		}
 
 		push();
-		push(this.theme.fg("dim", "type to search • ↑↓ navigate • enter actions • esc back"));
+		push(this.theme.fg("dim", "type to search • ↑↓ navigate • enter actions • esc close"));
 		push(border);
 		return lines;
 	}
@@ -537,10 +538,6 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 		let searchQuery = (_args || "").trim();
 		while (true) {
 			const plans = listPlanItems();
-			if (plans.length === 0) {
-				ctx.ui.notify("No plans yet. Switch to Plan mode (Shift+Tab) and ask pi for a plan.", "info");
-				return;
-			}
 
 			const selected = await ctx.ui.custom<PlanSelectorResult | undefined>((tui, theme, keybindings, done) => {
 				return new PlanSelectorDialog(tui, theme, keybindings, plans, done, searchQuery);

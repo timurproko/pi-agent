@@ -461,7 +461,8 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.listContainer.clear();
 
 		if (this.filteredTodos.length === 0) {
-			this.listContainer.addChild(new Text(this.theme.fg("muted", "  No matching todos"), 0, 0));
+			const emptyMessage = this.searchInput.getValue().trim() ? "No matching todos" : "No todos yet";
+			this.listContainer.addChild(new Text(this.theme.fg("muted", `  ${emptyMessage}`), 0, 0));
 			return;
 		}
 
