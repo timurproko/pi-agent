@@ -337,8 +337,7 @@ class QnAComponent implements Component {
 				progressParts.push(this.dim("○"));
 			}
 		}
-		bodyLines.push(progressParts.join(" "));
-		bodyLines.push("");
+		const metaLines = [progressParts.join(" ")];
 
 		// Current question
 		const q = this.questions[this.currentIndex];
@@ -379,6 +378,7 @@ class QnAComponent implements Component {
 		const lines = dialog.render(width, {
 			title: "Questions",
 			titleSuffix: ` (${this.currentIndex + 1}/${this.questions.length})`,
+			metaLines,
 			bodyLines,
 			footerLines,
 		});

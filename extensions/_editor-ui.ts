@@ -133,6 +133,7 @@ export interface EditorDialogTemplateOptions {
 export interface EditorDialogRenderOptions {
 	title: string;
 	titleSuffix?: string;
+	metaLines?: string[];
 	bodyLines: string[];
 	footerLines?: string[];
 }
@@ -180,6 +181,10 @@ export class EditorDialogTemplate {
 		lines.push(padToWidth(border("╭" + horizontal + "╮")));
 		lines.push(padToWidth(boxLine(theme.fg("accent", theme.bold(options.title)) + theme.fg("dim", options.titleSuffix ?? ""))));
 		lines.push(separator());
+		if (options.metaLines && options.metaLines.length > 0) {
+			for (const line of options.metaLines) lines.push(padToWidth(boxLine(line)));
+			lines.push(padToWidth(boxLine("")));
+		}
 		for (const line of options.bodyLines) lines.push(padToWidth(boxLine(line)));
 		if (options.footerLines && options.footerLines.length > 0) {
 			lines.push(separator());
