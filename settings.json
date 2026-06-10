@@ -1,9 +1,10 @@
 {
   "quietStartup": true,
-  "lastChangelogVersion": "0.79.0",
+  "lastChangelogVersion": "0.79.1",
   "defaultProvider": "github-copilot",
   "defaultModel": "gpt-5.5",
   "defaultThinkingLevel": "medium",
+  "enableSkillCommands": false,
   "packages": [
     "npm:pi-mcp-adapter",
     "npm:context-mode",

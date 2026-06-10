@@ -268,7 +268,7 @@ class PlanSelectorDialog implements Component, Focusable {
 
 		push(border);
 		push();
-		push(this.theme.fg("accent", this.theme.bold("View plans")));
+		push(this.theme.fg("accent", this.theme.bold("Plans")));
 		push();
 		for (const line of this.input.render(width)) push(line);
 		push();
@@ -276,14 +276,30 @@ class PlanSelectorDialog implements Component, Focusable {
 		if (this.filteredPlans.length === 0) {
 			push(this.theme.fg("muted", "  No matching plans"));
 		} else {
+			const visiblePlans = this.filteredPlans.slice(startIndex, endIndex);
+			const maxTitleWidth = Math.max(...visiblePlans.map((plan) => visibleWidth(plan.title || plan.name)));
+			// Keep the file name in a stable description-style column, matching the
+			// /skills layout, while preserving one cell of margin to avoid wrapping.
+			const rowWidth = Math.max(1, width - 1);
+			const prefixWidth = 2;
+			const gapWidth = 2;
+			const minFileNameWidth = Math.min(24, Math.max(0, rowWidth - prefixWidth - gapWidth - 1));
+			const titleColumnWidth = Math.min(
+				maxTitleWidth,
+				Math.max(1, rowWidth - prefixWidth - gapWidth - minFileNameWidth),
+			);
+			const fileNameWidth = Math.max(0, rowWidth - prefixWidth - titleColumnWidth - gapWidth);
+
 			for (let i = startIndex; i < endIndex; i += 1) {
 				const plan = this.filteredPlans[i];
 				if (!plan) continue;
 				const selected = i === this.selectedIndex;
 				const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-				const title = this.theme.fg(selected ? "accent" : "text", plan.title || plan.name);
-				const fileName = this.theme.fg("dim", ` (${plan.name})`);
-				push(prefix + title + fileName);
+				const rawTitle = truncateToWidth(plan.title || plan.name, titleColumnWidth);
+				const titlePadding = " ".repeat(Math.max(0, titleColumnWidth - visibleWidth(rawTitle)));
+				const title = this.theme.fg(selected ? "accent" : "text", rawTitle + titlePadding);
+				const fileName = this.theme.fg("dim", truncateToWidth(plan.name, fileNameWidth));
+				push(prefix + title + "  " + fileName);
 			}
 			if (startIndex > 0 || endIndex < this.filteredPlans.length) {
 				push(this.theme.fg("dim", `  (${this.selectedIndex + 1}/${this.filteredPlans.length})`));
