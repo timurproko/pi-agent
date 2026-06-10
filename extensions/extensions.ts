@@ -536,7 +536,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 								activeEntryFile = selectedItem?.value;
 								const ext = exts.find((candidate) => candidate.entryFile === selectedItem?.value);
 								if (!ext?.settingsFile) {
-									ctx.ui.notify(ext ? `${ext.name} has no settings.` : "No extension selected.", "info");
+									ctx.ui.notify(ext ? `${capitalizeName(ext.name)} has no settings.` : "No extension selected.", "info");
 									return true;
 								}
 								done({ action: "settings", entryFile: ext.entryFile });
