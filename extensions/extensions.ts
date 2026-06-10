@@ -332,6 +332,12 @@ function filterExtensions(exts: ExtensionInfo[], filter: ExtensionFilter): Exten
 	return exts.filter((ext) => ext.scope === filter);
 }
 
+function matchesExtension(ext: ExtensionInfo, query: string): boolean {
+	const normalized = query.trim().toLowerCase();
+	if (!normalized) return true;
+	return `${ext.name} ${ext.scope} ${ext.entryFile}`.toLowerCase().includes(normalized);
+}
+
 function getExtensionFilterOptions(exts: ExtensionInfo[]): Array<EditorModalFilter<ExtensionFilter>> {
 	return getAvailableExtensionFilters(exts).map((scope) => ({ value: scope, label: scope }));
 }
@@ -477,11 +483,11 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("extensions", {
 		description: "Enable/disable extensions on the fly",
-		handler: async (_args, ctx: ExtensionCommandContext) => {
+		handler: async (args, ctx: ExtensionCommandContext) => {
 			const exts = discoverAll(ctx.cwd).filter((ext) => !ext.isSelf);
 
-			if (exts.length === 0) {
-				ctx.ui.notify("No extensions discovered.", "info");
+			if (exts.length === 0 && !ctx.hasUI) {
+				ctx.ui.notify("No extensions yet.", "info");
 				return;
 			}
 
@@ -491,6 +497,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 
 			let activeFilter: ExtensionFilter | undefined;
 			let activeEntryFile: string | undefined;
+			const initialQuery = args.trim();
 			let result: unknown;
 			while (true) {
 				result = await ctx.ui.custom((tui, theme, keybindings, done) => {
@@ -503,14 +510,18 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 						filters: filterOptions,
 						initialFilter: activeFilter ?? filterOptions[0]?.value,
 						initialSelectedValue: activeEntryFile,
-						shortcuts: "↑↓ navigate · tab filter · enter toggle · space settings · ctrl+s save · esc cancel",
-						noItemsText: "No matching extensions",
+						search: true,
+						initialQuery,
+						shortcuts: "type to search · ↑↓ navigate · tab filter · enter toggle · space settings · ctrl+s save · esc cancel",
+						noItemsText: (query) => query.trim() ? "No matching extensions" : "No extensions yet",
 						getStatusText: () => exts.some((ext) => (desired.get(ext.entryFile) ?? ext.enabled) !== ext.enabled) ? "(unsaved)" : undefined,
-						getItems: (filter) => filterExtensions(exts, filter ?? filterOptions[0]?.value ?? "global").map((ext) => ({
-							value: ext.entryFile,
-							label: formatExtensionListLabel(ext),
-							checked: desired.get(ext.entryFile) ?? ext.enabled,
-						})),
+						getItems: (filter, query = "") => filterExtensions(exts, filter ?? filterOptions[0]?.value ?? "global")
+							.filter((ext) => matchesExtension(ext, query))
+							.map((ext) => ({
+								value: ext.entryFile,
+								label: formatExtensionListLabel(ext),
+								checked: desired.get(ext.entryFile) ?? ext.enabled,
+							})),
 						onSelect: (item) => {
 							const current = desired.get(item.value) ?? false;
 							desired.set(item.value, !current);

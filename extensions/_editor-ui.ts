@@ -41,11 +41,13 @@ export interface EditorModalOptions<T = string, F extends string = string> {
 	initialFilter?: F;
 	initialSelectedValue?: T;
 	items?: Array<EditorModalItem<T>>;
-	getItems?: (filter?: F) => Array<EditorModalItem<T>>;
+	getItems?: (filter?: F, query?: string) => Array<EditorModalItem<T>>;
 	maxVisible?: number;
 	shortcuts?: string;
-	noItemsText?: string;
+	noItemsText?: string | ((query: string) => string);
 	descriptionGap?: number;
+	search?: boolean;
+	initialQuery?: string;
 	highlightDescription?: boolean;
 	getStatusText?: () => string | undefined;
 	showItemShortcuts?: boolean;
@@ -90,7 +92,7 @@ export interface EditorSearchModalOptions<T = string> {
 	filterItem?: (item: EditorModalItem<T>, query: string) => boolean;
 	maxVisible?: number;
 	shortcuts?: string;
-	noItemsText?: string;
+	noItemsText?: string | ((query: string) => string);
 	descriptionGap?: number;
 	onSelect: (item: EditorModalItem<T>, query: string) => void;
 	onCancel: () => void;
@@ -115,6 +117,7 @@ function getVisibleItemRange(itemCount: number, selectedIndex: number, maxVisibl
 }
 
 export class EditorModal<T = string, F extends string = string> implements Component, Focusable {
+	private readonly input = new Input();
 	private selectedIndex = 0;
 	private filter?: F;
 	private _focused = false;
@@ -125,9 +128,11 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 
 	set focused(value: boolean) {
 		this._focused = value;
+		if (this.options.search) this.input.focused = value;
 	}
 
 	constructor(private readonly options: EditorModalOptions<T, F>) {
+		if (options.initialQuery) this.input.setValue(options.initialQuery);
 		this.filter = options.initialFilter ?? options.filters?.[0]?.value;
 		if (options.initialSelectedValue !== undefined) {
 			const selectedIndex = this.getItems().findIndex((item) => item.value === options.initialSelectedValue);
@@ -135,8 +140,12 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 		}
 	}
 
+	private getQuery(): string {
+		return this.options.search ? this.input.getValue() : "";
+	}
+
 	private getItems(): Array<EditorModalItem<T>> {
-		return this.options.getItems?.(this.filter) ?? this.options.items ?? [];
+		return this.options.getItems?.(this.filter, this.getQuery()) ?? this.options.items ?? [];
 	}
 
 	private clampSelection(items = this.getItems()): void {
@@ -209,8 +218,15 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 			this.options.tui.requestRender();
 			return;
 		}
-		if (kb.matches(keyData, "tui.select.cancel") || keyData === "q") {
+		if (kb.matches(keyData, "tui.select.cancel") || (!this.options.search && keyData === "q")) {
 			this.options.onCancel();
+			return;
+		}
+		if (this.options.search) {
+			const before = this.getQuery();
+			this.input.handleInput(keyData);
+			if (this.getQuery() !== before) this.selectedIndex = 0;
+			this.options.tui.requestRender();
 		}
 	}
 
@@ -240,6 +256,11 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 			push();
 		}
 
+		if (this.options.search) {
+			for (const line of this.input.render(width)) push(line);
+			push();
+		}
+
 		this.renderItems(push, items);
 		push();
 		push(theme.fg("dim", this.options.shortcuts ?? "↑↓ navigate • enter select • esc back"));
@@ -252,7 +273,10 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 	private renderItems(push: (line?: string) => void, items: Array<EditorModalItem<T>>): void {
 		const theme = this.options.theme;
 		if (items.length === 0) {
-			push(theme.fg("muted", `  ${this.options.noItemsText ?? "No matching items"}`));
+			const noItemsText = typeof this.options.noItemsText === "function"
+				? this.options.noItemsText(this.getQuery())
+				: this.options.noItemsText;
+			push(theme.fg("muted", `  ${noItemsText ?? "No matching items"}`));
 			return;
 		}
 
@@ -303,7 +327,9 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 		}
 	}
 
-	invalidate(): void {}
+	invalidate(): void {
+		this.input.invalidate();
+	}
 }
 
 export class EditorSettingsModal implements Component, Focusable {
@@ -527,7 +553,10 @@ export class EditorSearchModal<T = string> implements Component, Focusable {
 	private renderItems(push: (line?: string) => void, items: Array<EditorModalItem<T>>): void {
 		const theme = this.options.theme;
 		if (items.length === 0) {
-			push(theme.fg("muted", `  ${this.options.noItemsText ?? "No matching items"}`));
+			const noItemsText = typeof this.options.noItemsText === "function"
+				? this.options.noItemsText(this.getQuery())
+				: this.options.noItemsText;
+			push(theme.fg("muted", `  ${noItemsText ?? "No matching items"}`));
 			return;
 		}
 

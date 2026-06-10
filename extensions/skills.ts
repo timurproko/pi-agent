@@ -23,13 +23,14 @@ function matchesSkill(skill: Skill, query: string): boolean {
 		|| oneLineDescription(skill).toLowerCase().includes(normalized);
 }
 
-async function selectSkill(ctx: ExtensionCommandContext, skills: Skill[]): Promise<Skill | undefined> {
+async function selectSkill(ctx: ExtensionCommandContext, skills: Skill[], initialQuery = ""): Promise<Skill | undefined> {
 	return ctx.ui.custom<Skill | undefined>((tui, theme, keybindings, done) =>
 		new EditorSearchModal<Skill>({
 			tui,
 			theme,
 			keybindings,
 			title: "Skills",
+			initialQuery,
 			getItems: (query) => skills
 				.filter((skill) => matchesSkill(skill, query))
 				.map((skill) => ({
@@ -37,8 +38,8 @@ async function selectSkill(ctx: ExtensionCommandContext, skills: Skill[]): Promi
 					label: skillCommandName(skill),
 					description: oneLineDescription(skill),
 				})),
-			noItemsText: "no skills match your search",
-			shortcuts: "type to search • ↑↓ navigate • enter actions • esc back",
+			noItemsText: (query) => query.trim() ? "No matching skills" : "No skills yet",
+			shortcuts: "type to search • ↑↓ navigate • enter actions • esc close",
 			onSelect: (item) => done(item.value),
 			onCancel: () => done(undefined),
 		}),
@@ -83,8 +84,8 @@ export default function skillsExtension(pi: ExtensionAPI) {
 		},
 		handler: async (args, ctx) => {
 			const skills = getSkills(ctx);
-			if (skills.length === 0) {
-				ctx.ui.notify("No skills discovered.", "info");
+			if (skills.length === 0 && !ctx.hasUI) {
+				ctx.ui.notify("No skills yet.", "info");
 				return;
 			}
 
@@ -106,7 +107,7 @@ export default function skillsExtension(pi: ExtensionAPI) {
 			}
 
 			if (!selectedSkill) {
-				selectedSkill = await selectSkill(ctx, skills);
+				selectedSkill = await selectSkill(ctx, skills, userArgs);
 				if (!selectedSkill) return;
 			}
 
