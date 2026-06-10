@@ -124,6 +124,72 @@ function isInlineDescription(description?: string): boolean {
 
 const ITEM_SHORTCUT_KEYS = "abcdefghijklmnoprstuvwxyz".split("");
 
+export interface EditorDialogTemplateOptions {
+	theme: Theme;
+	horizontalPadding?: number;
+	borderColor?: EditorColor;
+}
+
+export interface EditorDialogRenderOptions {
+	title: string;
+	titleSuffix?: string;
+	bodyLines: string[];
+	footerLines?: string[];
+}
+
+/**
+ * Shared full-width bordered dialog frame used by custom editor UIs.
+ *
+ * Callers provide already-rendered body/footer lines; the template owns the
+ * border, title row, separators, padding, and width clamping so individual
+ * dialogs do not duplicate box drawing code.
+ */
+export class EditorDialogTemplate {
+	private readonly horizontalPadding: number;
+
+	constructor(private readonly options: EditorDialogTemplateOptions) {
+		this.horizontalPadding = options.horizontalPadding ?? 2;
+	}
+
+	contentWidth(width: number): number {
+		return Math.max(1, width - 2 - (this.horizontalPadding * 2));
+	}
+
+	render(width: number, options: EditorDialogRenderOptions): string[] {
+		const theme = this.options.theme;
+		const lines: string[] = [];
+		const boxWidth = Math.max(2, width);
+		const innerWidth = Math.max(0, boxWidth - 2);
+		const horizontal = "─".repeat(innerWidth);
+		// Match the todo detail dialog: dialog chrome should be subtle/dim,
+		// not the bright blue border color used by selectable modals.
+		const borderColor = this.options.borderColor ?? "dim";
+		const border = (value: string) => theme.fg(borderColor, value);
+		const padToWidth = (line: string): string => line + " ".repeat(Math.max(0, width - visibleWidth(line)));
+		const boxLine = (content = ""): string => {
+			const truncated = truncateToWidth(content, this.contentWidth(width));
+			const paddedContent = " ".repeat(this.horizontalPadding) + truncated;
+			const contentLen = visibleWidth(paddedContent);
+			const rightPad = Math.max(0, boxWidth - contentLen - 2);
+			// Reset after arbitrary ANSI content before padding/border so colors from
+			// caller-rendered lines cannot leak into the frame.
+			return border("│") + paddedContent + "\x1b[0m" + " ".repeat(rightPad) + border("│");
+		};
+		const separator = () => padToWidth(border("├" + horizontal + "┤"));
+
+		lines.push(padToWidth(border("╭" + horizontal + "╮")));
+		lines.push(padToWidth(boxLine(theme.fg("accent", theme.bold(options.title)) + theme.fg("dim", options.titleSuffix ?? ""))));
+		lines.push(separator());
+		for (const line of options.bodyLines) lines.push(padToWidth(boxLine(line)));
+		if (options.footerLines && options.footerLines.length > 0) {
+			lines.push(separator());
+			for (const line of options.footerLines) lines.push(padToWidth(boxLine(line)));
+		}
+		lines.push(padToWidth(border("╰" + horizontal + "╯")));
+		return lines;
+	}
+}
+
 function getVisibleItemRange(itemCount: number, selectedIndex: number, maxVisible: number): { startIndex: number; endIndex: number } {
 	const startIndex = Math.max(0, Math.min(selectedIndex - Math.floor(maxVisible / 2), itemCount - maxVisible));
 	const endIndex = Math.min(startIndex + maxVisible, itemCount);

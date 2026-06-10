@@ -11,7 +11,7 @@
  */
 
 import { complete, completeSimple, type Model, type Api, type UserMessage } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ModelRegistry, Theme } from "@earendil-works/pi-coding-agent";
 import { BorderedLoader } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
@@ -19,11 +19,10 @@ import {
 	type EditorTheme,
 	Key,
 	matchesKey,
-	truncateToWidth,
 	type TUI,
-	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { EditorDialogTemplate } from "./_editor-ui";
 
 // Structured output format for question extraction
 interface ExtractedQuestion {
@@ -157,17 +156,17 @@ class QnAComponent implements Component {
 	private cachedWidth?: number;
 	private cachedLines?: string[];
 
-	// Colors - using proper reset sequences
-	private dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-	private bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
-	private cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
-	private green = (s: string) => `\x1b[32m${s}\x1b[0m`;
-	private yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
-	private gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
+	private dim(s: string): string { return this.theme.fg("dim", s); }
+	private bold(s: string): string { return this.theme.bold(s); }
+	private cyan(s: string): string { return this.theme.fg("accent", s); }
+	private green(s: string): string { return this.theme.fg("success", s); }
+	private yellow(s: string): string { return this.theme.fg("warning", s); }
+	private gray(s: string): string { return this.theme.fg("muted", s); }
 
 	constructor(
 		questions: ExtractedQuestion[],
 		tui: TUI,
+		private readonly theme: Theme,
 		onDone: (result: string | null) => void,
 		private readonly cancelControlLabel: string = "cancel",
 	) {
@@ -178,13 +177,13 @@ class QnAComponent implements Component {
 
 		// Create a minimal theme for the editor
 		const editorTheme: EditorTheme = {
-			borderColor: this.dim,
+			borderColor: (s: string) => this.dim(s),
 			selectList: {
-				selectedPrefix: this.cyan,
+				selectedPrefix: (s: string) => this.cyan(s),
 				selectedText: (s: string) => `\x1b[44m${s}\x1b[0m`,
-				description: this.gray,
-				scrollInfo: this.dim,
-				noMatch: this.yellow,
+				description: (s: string) => this.gray(s),
+				scrollInfo: (s: string) => this.dim(s),
+				noMatch: (s: string) => this.yellow(s),
 			},
 		};
 
@@ -321,39 +320,9 @@ class QnAComponent implements Component {
 			return this.cachedLines;
 		}
 
-		const lines: string[] = [];
-		const boxWidth = width; // Full width
-		const contentWidth = boxWidth - 4; // 2 chars padding on each side
-
-		// Helper to create horizontal lines (dim the whole thing at once)
-		const horizontalLine = (count: number) => "─".repeat(count);
-
-		// Helper to create a box line
-		const boxLine = (content: string, leftPad: number = 2): string => {
-			const paddedContent = " ".repeat(leftPad) + content;
-			const contentLen = visibleWidth(paddedContent);
-			const rightPad = Math.max(0, boxWidth - contentLen - 2);
-			// Always reset after arbitrary content before padding/border. Some wrapped
-			// ANSI strings (notably question context/description text) can otherwise
-			// leak their color into the rest of the dialog line.
-			return this.dim("│") + paddedContent + "\x1b[0m" + " ".repeat(rightPad) + this.dim("│");
-		};
-
-		const emptyBoxLine = (): string => {
-			return this.dim("│") + " ".repeat(boxWidth - 2) + this.dim("│");
-		};
-
-		const padToWidth = (line: string): string => {
-			const len = visibleWidth(line);
-			return line + " ".repeat(Math.max(0, width - len));
-		};
-
-		// Title
-		lines.push(padToWidth(this.dim("╭" + horizontalLine(boxWidth - 2) + "╮")));
-		const title = this.bold(this.cyan("Questions"));
-		const counter = this.dim(` (${this.currentIndex + 1}/${this.questions.length})`);
-		lines.push(padToWidth(boxLine(title + counter)));
-		lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
+		const dialog = new EditorDialogTemplate({ theme: this.theme });
+		const contentWidth = dialog.contentWidth(width);
+		const bodyLines: string[] = [];
 
 		// Progress indicator
 		const progressParts: string[] = [];
@@ -368,57 +337,51 @@ class QnAComponent implements Component {
 				progressParts.push(this.dim("○"));
 			}
 		}
-		lines.push(padToWidth(boxLine(progressParts.join(" "))));
-		lines.push(padToWidth(emptyBoxLine()));
+		bodyLines.push(progressParts.join(" "));
+		bodyLines.push("");
 
 		// Current question
 		const q = this.questions[this.currentIndex];
 		const questionText = `${this.bold("Q:")} ${q.question}`;
-		const wrappedQuestion = wrapTextWithAnsi(questionText, contentWidth);
-		for (const line of wrappedQuestion) {
-			lines.push(padToWidth(boxLine(line)));
-		}
+		bodyLines.push(...wrapTextWithAnsi(questionText, contentWidth));
 
 		// Context if present. Wrap plain text first, then color each rendered line
 		// independently so context color cannot carry across wrapped lines.
 		if (q.context) {
-			lines.push(padToWidth(emptyBoxLine()));
+			bodyLines.push("");
 			const wrappedContext = wrapTextWithAnsi(`> ${q.context}`, contentWidth - 2);
 			for (const line of wrappedContext) {
-				lines.push(padToWidth(boxLine(this.gray(line))));
+				bodyLines.push(this.gray(line));
 			}
 		}
 
-		lines.push(padToWidth(emptyBoxLine()));
+		bodyLines.push("");
 
-		// Render the editor component (multi-line input) with padding
-		// Skip the first and last lines (editor's own border lines)
+		// Render the editor component (multi-line input) with padding.
+		// Skip the first and last lines (editor's own border lines).
 		const answerPrefix = this.bold("A: ");
-		const editorWidth = contentWidth - 4 - 3; // Extra padding + space for "A: "
+		const editorWidth = Math.max(1, contentWidth - 4 - 3); // Extra padding + space for "A: "
 		const editorLines = this.editor.render(editorWidth);
 		for (let i = 1; i < editorLines.length - 1; i++) {
 			if (i === 1) {
-				// First content line gets the "A: " prefix
-				lines.push(padToWidth(boxLine(answerPrefix + editorLines[i])));
+				bodyLines.push(answerPrefix + editorLines[i]);
 			} else {
-				// Subsequent lines get padding to align with the first line
-				lines.push(padToWidth(boxLine("   " + editorLines[i])));
+				bodyLines.push("   " + editorLines[i]);
 			}
 		}
 
-		lines.push(padToWidth(emptyBoxLine()));
+		bodyLines.push("");
 
-		// Confirmation dialog or footer with controls
-		if (this.showingConfirmation) {
-			lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
-			const confirmMsg = `${this.yellow("Submit all answers?")} ${this.dim("(enter/y to confirm, esc/n to cancel)")}`;
-			lines.push(padToWidth(boxLine(truncateToWidth(confirmMsg, contentWidth))));
-		} else {
-			lines.push(padToWidth(this.dim("├" + horizontalLine(boxWidth - 2) + "┤")));
-			const controls = this.dim(`←→ navigate · enter next · esc ${this.cancelControlLabel}`);
-			lines.push(padToWidth(boxLine(truncateToWidth(controls, contentWidth))));
-		}
-		lines.push(padToWidth(this.dim("╰" + horizontalLine(boxWidth - 2) + "╯")));
+		const footerLines = this.showingConfirmation
+			? [`${this.yellow("Submit all answers?")} ${this.dim("(enter/y to confirm, esc/n to cancel)")}`]
+			: [this.dim(`←→ navigate · enter next · esc ${this.cancelControlLabel}`)];
+
+		const lines = dialog.render(width, {
+			title: "Questions",
+			titleSuffix: ` (${this.currentIndex + 1}/${this.questions.length})`,
+			bodyLines,
+			footerLines,
+		});
 
 		this.cachedWidth = width;
 		this.cachedLines = lines;
@@ -442,8 +405,8 @@ export default function (pi: ExtensionAPI) {
 
 			const showQuestions = async (questions: ExtractedQuestion[]): Promise<AnswerHandlerResult> => {
 				options.onQuestions?.(questions);
-				const answersResult = await ctx.ui.custom<string | null>((tui, _theme, _kb, done) => {
-					return new QnAComponent(questions, tui, done, options.cancelControlLabel);
+				const answersResult = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+					return new QnAComponent(questions, tui, theme, done, options.cancelControlLabel);
 				});
 
 				if (answersResult === null) {
@@ -506,13 +469,15 @@ export default function (pi: ExtensionAPI) {
 			};
 			updatePulse();
 			const pulseTimer = setInterval(updatePulse, 300);
-			// Hide mcp status during extraction
+			// While the extraction/generation progress is visible, hide the MCP footer
+			// item so the progress reads cleanly. Restore it when progress ends.
 			ctx.ui.setStatus("mcp", undefined);
-
 			restoreStatus = () => {
 				clearInterval(pulseTimer);
 				const label = options.statusLabel ?? "cmd";
 				ctx.ui.setStatus("aaa-pi-plan-mode", ctx.ui.theme.fg(label === "plan" ? "accent" : "piPlanCmdMode", label));
+				// Ask the MCP status extension to recompute and redraw its footer item.
+				(globalThis as any).__piMcpRefreshStatus?.();
 			};
 
 			// Get auth

@@ -200,6 +200,10 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	(globalThis as any).__piMcpRefreshStatus = () => {
+		if (activeCtx) updateStatus(activeCtx);
+	};
+
 	function markConnected(serverName: string, ctx: ExtensionContext): void {
 		if (connectedServers.has(serverName)) return;
 		connectedServers.add(serverName);
