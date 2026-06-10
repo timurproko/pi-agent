@@ -12,6 +12,7 @@
 import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { Input, Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { EditorModal, type EditorModalItem } from "./_editor-ui";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -141,6 +142,18 @@ type KeybindingMatcher = {
 type PlanAction = "view" | "refine" | "update" | "work";
 
 type PlanMenuAction = PlanAction | "delete";
+
+const PLAN_ACTION_ITEMS: Array<EditorModalItem<PlanAction>> = [
+	{ value: "view", label: "View", description: "Open plan view" },
+	{ value: "refine", label: "Refine", description: "Refine plan" },
+	{ value: "update", label: "Update", description: "Suggest specific changes" },
+	{ value: "work", label: "Work", description: "Start implementation" },
+];
+
+const PLAN_MENU_ITEMS: Array<EditorModalItem<PlanMenuAction>> = [
+	...PLAN_ACTION_ITEMS,
+	{ value: "delete", label: "Delete", description: "Delete plan" },
+];
 
 interface PlanSelectorResult {
 	plan: PlanListItem;
@@ -274,203 +287,6 @@ class PlanSelectorDialog implements Component, Focusable {
 	invalidate(): void {
 		this.input.invalidate();
 	}
-}
-
-class PlanActionMenuDialog implements Component, Focusable {
-	private readonly actions: Array<{ value: PlanMenuAction; label: string; description: string }> = [
-		{ value: "view", label: "View", description: "Open plan view" },
-		{ value: "refine", label: "Refine", description: "Refine plan" },
-		{ value: "update", label: "Update", description: "Suggest specific changes" },
-		{ value: "work", label: "Work", description: "Start implementation" },
-		{ value: "delete", label: "Delete", description: "Delete plan" },
-	];
-	private selectedIndex = 0;
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-	}
-
-	constructor(
-		private readonly tui: TUI,
-		private readonly theme: any,
-		private readonly keybindings: KeybindingMatcher,
-		private readonly plan: PlanListItem,
-		private readonly onDone: (action: PlanMenuAction | undefined) => void,
-	) {}
-
-	handleInput(keyData: string): void {
-		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
-			this.onDone(undefined);
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.up") || matchesKey(keyData, Key.up)) {
-			this.selectedIndex = this.selectedIndex === 0 ? this.actions.length - 1 : this.selectedIndex - 1;
-			this.tui.requestRender();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.down)) {
-			this.selectedIndex = this.selectedIndex === this.actions.length - 1 ? 0 : this.selectedIndex + 1;
-			this.tui.requestRender();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
-			this.onDone(this.actions[this.selectedIndex]?.value);
-		}
-	}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const push = (line = "") => lines.push(truncateToWidth(line, width));
-		const labelColumnWidth = Math.max(...this.actions.map((action) => visibleWidth(action.label)));
-
-		push(border);
-		push();
-		push(this.theme.fg("accent", this.theme.bold(`Actions for "${this.plan.title || this.plan.name}"`)));
-		push();
-		for (let i = 0; i < this.actions.length; i += 1) {
-			const action = this.actions[i]!;
-			const selected = i === this.selectedIndex;
-			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-			const label = this.theme.fg(selected ? "accent" : "text", action.label);
-			const padding = " ".repeat(Math.max(7, labelColumnWidth - visibleWidth(action.label) + 7));
-			const description = this.theme.fg(selected ? "accent" : "muted", action.description);
-			push(prefix + label + padding + description);
-		}
-		push();
-		push(this.theme.fg("dim", "↑↓ navigate • enter select • esc back"));
-		push(border);
-		return lines;
-	}
-
-	invalidate(): void {}
-}
-
-class PlanDeleteConfirmDialog implements Component, Focusable {
-	private selectedIndex = 0;
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-	}
-
-	constructor(
-		private readonly tui: TUI,
-		private readonly theme: any,
-		private readonly keybindings: KeybindingMatcher,
-		private readonly plan: PlanListItem,
-		private readonly onDone: (confirmed: boolean) => void,
-	) {}
-
-	handleInput(keyData: string): void {
-		if (this.keybindings.matches(keyData, "tui.select.up") || this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.up) || matchesKey(keyData, Key.down)) {
-			this.selectedIndex = this.selectedIndex === 0 ? 1 : 0;
-			this.tui.requestRender();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
-			this.onDone(this.selectedIndex === 0);
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
-			this.onDone(false);
-		}
-	}
-
-	render(width: number): string[] {
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const yesPrefix = this.selectedIndex === 0 ? this.theme.fg("accent", "→ ") : "  ";
-		const noPrefix = this.selectedIndex === 1 ? this.theme.fg("accent", "→ ") : "  ";
-		return [
-			border,
-			"",
-			this.theme.fg("accent", this.theme.bold("Delete plan")),
-			this.theme.fg("dim", `Delete ${this.plan.name}? This cannot be undone.`),
-			"",
-			yesPrefix + this.theme.fg(this.selectedIndex === 0 ? "accent" : "text", "Yes"),
-			noPrefix + this.theme.fg(this.selectedIndex === 1 ? "accent" : "text", "No"),
-			"",
-			this.theme.fg("dim", "↑↓ choose • enter confirm • esc no"),
-			border,
-		].map((line) => truncateToWidth(line, width));
-	}
-
-	invalidate(): void {}
-}
-
-class PostPlanActionDialog {
-	focused = true;
-	private readonly actions: Array<{ value: PlanAction; label: string; description: string }> = [
-		{ value: "view", label: "View", description: "Open plan view" },
-		{ value: "refine", label: "Refine", description: "Refine plan" },
-		{ value: "update", label: "Update", description: "Suggest specific changes" },
-		{ value: "work", label: "Work", description: "Start implementation" },
-	];
-	private selectedIndex = 0;
-
-	constructor(
-		private readonly tui: TUI,
-		private readonly theme: any,
-		private readonly keybindings: KeybindingMatcher,
-		private readonly onDone: (choice: PlanAction | undefined) => void,
-	) {}
-
-	handleInput(keyData: string): void {
-		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
-			this.onDone(undefined);
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.up") || matchesKey(keyData, Key.up)) {
-			this.selectedIndex = this.selectedIndex === 0 ? this.actions.length - 1 : this.selectedIndex - 1;
-			this.tui.requestRender();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.down") || matchesKey(keyData, Key.down)) {
-			this.selectedIndex = this.selectedIndex === this.actions.length - 1 ? 0 : this.selectedIndex + 1;
-			this.tui.requestRender();
-			return;
-		}
-		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
-			this.onDone(this.actions[this.selectedIndex]?.value);
-		}
-	}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const push = (line = "") => lines.push(truncateToWidth(line, width));
-
-		push(border);
-		push();
-		push(this.theme.fg("accent", this.theme.bold("Plan saved! What would you like to do?")));
-		push();
-
-		const labelColumnWidth = Math.max(...this.actions.map((action) => visibleWidth(action.label)));
-
-		for (let i = 0; i < this.actions.length; i++) {
-			const action = this.actions[i]!;
-			const selected = i === this.selectedIndex;
-			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-			const label = this.theme.fg(selected ? "accent" : "text", action.label);
-			const padding = " ".repeat(Math.max(7, labelColumnWidth - visibleWidth(action.label) + 7));
-			const description = this.theme.fg(selected ? "accent" : "muted", action.description);
-			push(prefix + label + padding + description);
-		}
-
-		push();
-		push(this.theme.fg("dim", "↑↓ navigate • enter select • esc cancel"));
-		push(border);
-		return lines;
-	}
-
-	invalidate(): void {}
 }
 
 class SpecificSuggestionDialog implements Component, Focusable {
@@ -704,8 +520,6 @@ class PlanReviewDialog {
 	}
 }
 
-
-
 export default function piPlansExtension(pi: ExtensionAPI): void {
 	let lastWrittenPlanFile: string | null = null;
 	let postPlanPromptScheduled = false;
@@ -735,7 +549,16 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 			searchQuery = selected.query;
 
 			const action = await ctx.ui.custom<PlanMenuAction | undefined>((tui, theme, keybindings, done) => {
-				return new PlanActionMenuDialog(tui, theme, keybindings, selected.plan, done);
+				return new EditorModal<PlanMenuAction>({
+					tui,
+					theme,
+					keybindings,
+					title: `Actions for "${selected.plan.title || selected.plan.name}"`,
+					items: PLAN_MENU_ITEMS,
+					shortcuts: "↑↓ navigate • enter select • esc back",
+					onSelect: (item) => done(item.value),
+					onCancel: () => done(undefined),
+				});
 			});
 			if (!action) continue;
 
@@ -791,7 +614,20 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 
 			if (action === "delete") {
 				const confirmed = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => {
-					return new PlanDeleteConfirmDialog(tui, theme, keybindings, selected.plan, done);
+					return new EditorModal<boolean>({
+						tui,
+						theme,
+						keybindings,
+						title: "Delete plan",
+						subtitle: `Delete ${selected.plan.name}? This cannot be undone.`,
+						items: [
+							{ value: true, label: "Yes" },
+							{ value: false, label: "No" },
+						],
+						shortcuts: "↑↓ choose • enter confirm • esc no",
+						onSelect: (item) => done(item.value),
+						onCancel: () => done(false),
+					});
 				});
 				if (!confirmed) continue;
 				try {
@@ -856,7 +692,16 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 	async function showPostPlanPrompt(planFile: string, ctx: ExtensionContext): Promise<void> {
 		while (currentMode() === "plan") {
 			const choice = await ctx.ui.custom<PlanAction | undefined>((tui, theme, keybindings, done) => {
-				return new PostPlanActionDialog(tui, theme, keybindings, done);
+				return new EditorModal<PlanAction>({
+					tui,
+					theme,
+					keybindings,
+					title: "Plan saved! What would you like to do?",
+					items: PLAN_ACTION_ITEMS,
+					shortcuts: "↑↓ navigate • enter select • esc cancel",
+					onSelect: (item) => done(item.value),
+					onCancel: () => done(undefined),
+				});
 			});
 
 			if (choice === "view") {

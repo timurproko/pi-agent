@@ -25,8 +25,9 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, InteractiveMode } from "@earendil-works/pi-coding-agent";
+import { EditorModal, type EditorModalFilter } from "./_editor-ui";
 
 /**
  * Scope of a discovered extension:
@@ -312,16 +313,8 @@ function filterExtensions(exts: ExtensionInfo[], filter: ExtensionFilter): Exten
 	return exts.filter((ext) => ext.scope === filter);
 }
 
-function renderExtensionFilter(theme: Theme, filter: ExtensionFilter, availableFilters: ExtensionFilter[]): string {
-	const sep = theme.fg("dim", " | ");
-	return theme.fg("dim", "Filter: ") + availableFilters
-		.map((value) => theme.fg(value === filter ? "accent" : "dim", value))
-		.join(sep);
-}
-
-function nextExtensionFilter(filter: ExtensionFilter, availableFilters: ExtensionFilter[]): ExtensionFilter {
-	const index = availableFilters.indexOf(filter);
-	return availableFilters[(index + 1) % availableFilters.length] ?? availableFilters[0] ?? "global";
+function getExtensionFilterOptions(exts: ExtensionInfo[]): Array<EditorModalFilter<ExtensionFilter>> {
+	return getAvailableExtensionFilters(exts).map((scope) => ({ value: scope, label: scope }));
 }
 
 function isPiMcpDisabled(cwd: string): boolean {
@@ -433,115 +426,44 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 			const desired = new Map<string, boolean>();
 			for (const e of exts) desired.set(e.entryFile, e.enabled);
 
-			const result = await ctx.ui.custom((tui, theme, _kb, done) => {
-				let selectedIndex = 0;
-				const availableFilters = getAvailableExtensionFilters(exts);
-				let filter: ExtensionFilter = availableFilters[0] ?? "global";
-
-				const getVisibleExtensions = () => filterExtensions(exts, filter);
-
-				const clampSelectedIndex = () => {
-					const visibleExts = getVisibleExtensions();
-					selectedIndex = Math.min(selectedIndex, Math.max(0, visibleExts.length - 1));
-				};
-
-				const component = {
-					render(width: number): string[] {
-						const lines: string[] = [];
-						const visibleExts = getVisibleExtensions();
-						clampSelectedIndex();
-						lines.push(theme.fg("border", "─".repeat(width)));
-						lines.push("");
-						lines.push(theme.fg("accent", theme.bold("Extensions")));
-						lines.push("");
-						lines.push(renderExtensionFilter(theme, filter, availableFilters));
-						lines.push("");
-
-						const maxVisible = 10;
-						const startIndex = Math.max(0, Math.min(selectedIndex - Math.floor(maxVisible / 2), visibleExts.length - maxVisible));
-						const endIndex = Math.min(startIndex + maxVisible, visibleExts.length);
-
-						if (visibleExts.length === 0) {
-							lines.push(theme.fg("muted", "  No matching extensions"));
-						} else {
-							for (let i = startIndex; i < endIndex; i++) {
-								const ext = visibleExts[i];
-								const isSelected = i === selectedIndex;
-								const isEnabled = desired.get(ext.entryFile) ?? ext.enabled;
-
-								const statusIcon = isEnabled
-									? theme.fg("success", "✓")
-									: theme.fg("dim", "✗");
-
-								const cursor = isSelected ? "→ " : "  ";
-
-								if (isSelected) {
-									lines.push(theme.fg("accent", cursor) + theme.fg("accent", ext.name) + " " + statusIcon);
-								} else {
-									lines.push(`${cursor}${ext.name} ${statusIcon}`);
-								}
-							}
-						}
-
-						if (visibleExts.length > maxVisible) {
-							lines.push(theme.fg("dim", `  (${selectedIndex + 1}/${visibleExts.length})`));
-						}
-
-						// Unsaved indicator
-						const hasChanges = exts.some(ext => (desired.get(ext.entryFile) ?? ext.enabled) !== ext.enabled);
-
-						lines.push("");
-						lines.push(theme.fg("dim", "↑↓ navigate · tab filter · enter toggle · ctrl+a toggle visible · ctrl+s save & reload · esc cancel"));
-						if (hasChanges) {
-							lines.push(theme.fg("warning", "(unsaved)"));
-						}
-						lines.push(theme.fg("border", "─".repeat(width)));
-
-						return lines;
+			const result = await ctx.ui.custom((tui, theme, keybindings, done) => {
+				const filterOptions = getExtensionFilterOptions(exts);
+				return new EditorModal<string, ExtensionFilter>({
+					tui,
+					theme,
+					keybindings,
+					title: "Extensions",
+					filters: filterOptions,
+					initialFilter: filterOptions[0]?.value,
+					shortcuts: "↑↓ navigate · tab filter · enter toggle · ctrl+a toggle visible · ctrl+s save & reload · esc cancel",
+					noItemsText: "No matching extensions",
+					getStatusText: () => exts.some((ext) => (desired.get(ext.entryFile) ?? ext.enabled) !== ext.enabled) ? "(unsaved)" : undefined,
+					getItems: (filter) => filterExtensions(exts, filter ?? filterOptions[0]?.value ?? "global").map((ext) => ({
+						value: ext.entryFile,
+						label: ext.name,
+						checked: desired.get(ext.entryFile) ?? ext.enabled,
+					})),
+					onSelect: (item) => {
+						const current = desired.get(item.value) ?? false;
+						desired.set(item.value, !current);
 					},
-
-					handleInput(data: string) {
-						const visibleExts = getVisibleExtensions();
-						if (data === "\x1B[A" || data === "k") {
-							if (visibleExts.length > 0) {
-								selectedIndex = selectedIndex === 0 ? visibleExts.length - 1 : selectedIndex - 1;
-							}
-						} else if (data === "\x1B[B" || data === "j") {
-							if (visibleExts.length > 0) {
-								selectedIndex = selectedIndex === visibleExts.length - 1 ? 0 : selectedIndex + 1;
-							}
-						} else if (data === "\x1B" || data === "q") {
-							done("cancel");
-							return;
-						} else if (data === "\t") {
-							filter = nextExtensionFilter(filter, availableFilters);
-							selectedIndex = 0;
-						} else if (data === "\r" || data === "\n") {
-							// Enter: toggle selected extension
-							const ext = visibleExts[selectedIndex];
-							if (ext) {
-								const current = desired.get(ext.entryFile) ?? ext.enabled;
-								desired.set(ext.entryFile, !current);
-							}
-						} else if (data === "\x01") {
-							// Ctrl+A: toggle all extensions in the current filter
-							const toggleable = visibleExts.filter(e => !e.isSelf);
-							const allEnabled = toggleable.every(e => desired.get(e.entryFile) ?? e.enabled);
-							for (const ext of toggleable) {
+					onCancel: () => done("cancel"),
+					onInput: (data, filter) => {
+						if (data === "\x01") {
+							const visibleExts = filterExtensions(exts, filter ?? filterOptions[0]?.value ?? "global");
+							const allEnabled = visibleExts.every((ext) => desired.get(ext.entryFile) ?? ext.enabled);
+							for (const ext of visibleExts) {
 								desired.set(ext.entryFile, !allEnabled);
 							}
-						} else if (data === "\x13") {
-							// Ctrl+S: save & apply
-							done("apply");
-							return;
+							return true;
 						}
-						tui.requestRender();
+						if (data === "\x13") {
+							done("apply");
+							return true;
+						}
+						return false;
 					},
-
-					invalidate() {},
-				};
-
-				return component;
+				});
 			});
 
 			// Esc / cancel: do nothing, no reload

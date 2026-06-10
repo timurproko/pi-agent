@@ -39,9 +39,7 @@ import {
 	Input,
 	Key,
 	Markdown,
-	SelectList,
 	Spacer,
-	type SelectItem,
 	Text,
 	TUI,
 	fuzzyMatch,
@@ -49,6 +47,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import { EditorModal } from "./_editor-ui";
 
 const TODO_DIR_NAME = ".pi/todos";
 const AGENT_TODO_DIR_NAME = "todos";
@@ -301,99 +300,6 @@ function filterTodos(todos: TodoFrontMatter[], query: string): TodoFrontMatter[]
 }
 
 type TodoScope = "open" | "closed";
-
-class TodoHomeMenuComponent extends Container implements Focusable {
-	private selectedIndex = 0;
-	private items: Array<{ action: TodoHomeAction; label: string; description: string; disabled?: boolean }>;
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-	}
-
-	constructor(
-		private theme: Theme,
-		private keybindings: KeybindingMatcher,
-		private onSelectCallback: (action: TodoHomeAction) => void,
-		private onCancelCallback: () => void,
-	) {
-		super();
-		this.items = [
-			{ action: "view", label: "View", description: "View todos list" },
-			{ action: "clearAll", label: "Delete", description: "Delete all todos" },
-			{ action: "settings", label: "Settings", description: "Extension settings" },
-		];
-		this.selectedIndex = this.firstEnabledIndex();
-	}
-
-	private firstEnabledIndex(): number {
-		const index = this.items.findIndex((item) => !item.disabled);
-		return index >= 0 ? index : 0;
-	}
-
-	private moveSelection(delta: number): void {
-		if (this.items.every((item) => item.disabled)) return;
-		let next = this.selectedIndex;
-		for (let i = 0; i < this.items.length; i++) {
-			next = (next + delta + this.items.length) % this.items.length;
-			if (!this.items[next]?.disabled) {
-				this.selectedIndex = next;
-				return;
-			}
-		}
-	}
-
-	handleInput(keyData: string): void {
-		const kb = this.keybindings;
-		if (kb.matches(keyData, "tui.select.up")) {
-			this.moveSelection(-1);
-			return;
-		}
-		if (kb.matches(keyData, "tui.select.down")) {
-			this.moveSelection(1);
-			return;
-		}
-		if (kb.matches(keyData, "tui.select.confirm")) {
-			const selected = this.items[this.selectedIndex];
-			if (selected && !selected.disabled) this.onSelectCallback(selected.action);
-			return;
-		}
-		if (kb.matches(keyData, "tui.select.cancel")) {
-			this.onCancelCallback();
-		}
-	}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		lines.push(border);
-		lines.push("");
-		lines.push(this.theme.fg("accent", this.theme.bold("Todos")));
-		lines.push("");
-		const descriptionGap = 7;
-		const labelColumnWidth = Math.max(...this.items.map((item) => visibleWidth(item.label)));
-		for (let i = 0; i < this.items.length; i++) {
-			const item = this.items[i]!;
-			const selected = i === this.selectedIndex && !item.disabled;
-			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-			const labelColor = item.disabled ? "dim" : selected ? "accent" : "text";
-			const descriptionColor = item.disabled ? "dim" : selected ? "accent" : "muted";
-			const padding = " ".repeat(Math.max(descriptionGap, labelColumnWidth - visibleWidth(item.label) + descriptionGap));
-			const label = this.theme.fg(labelColor, item.label);
-			const description = this.theme.fg(descriptionColor, item.description);
-			lines.push(prefix + label + padding + description);
-		}
-		lines.push("");
-		lines.push(this.theme.fg("dim", "↑↓ navigate • enter select • esc close"));
-		lines.push(border);
-		return lines;
-	}
-
-	override invalidate(): void {}
-}
 
 class TodoSettingsMenuComponent extends Container implements Focusable {
 	private selectedIndex = 0;
@@ -743,147 +649,6 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.updateHints();
 		this.updateList();
 	}
-}
-
-class TodoActionMenuComponent extends Container {
-	private selectList: SelectList;
-	private onSelectCallback: (action: TodoMenuAction) => void;
-	private onCancelCallback: () => void;
-
-	constructor(
-		theme: Theme,
-		todo: TodoRecord,
-		onSelect: (action: TodoMenuAction) => void,
-		onCancel: () => void,
-	) {
-		super();
-		this.onSelectCallback = onSelect;
-		this.onCancelCallback = onCancel;
-
-		const closed = isTodoClosed(todo.status);
-		const title = todo.title || "(untitled)";
-		const options: SelectItem[] = [
-			{ value: "view", label: "View", description: "View todo" },
-			{ value: "refine", label: "Refine", description: "Refine todo" },
-			{ value: "work", label: "Work", description: "Work on todo" },
-			...(closed
-				? [{ value: "reopen", label: "Reopen", description: "Reopen todo" }]
-				: [{ value: "close", label: "Close", description: "Close todo" }]),
-			...(todo.assigned_to_session
-				? [{ value: "release", label: "Release", description: "Release assignment" }]
-				: []),
-			{ value: "delete", label: "Delete", description: "Delete todo" },
-		];
-
-		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
-		this.addChild(new Spacer(1));
-		this.addChild(
-			new Text(
-				theme.fg(
-					"accent",
-					theme.bold(`Actions for "${title}"`),
-				),
-				0,
-				0,
-			),
-		);
-		this.addChild(new Spacer(1));
-
-		this.selectList = new SelectList(options, options.length, {
-			selectedPrefix: (text) => theme.fg("accent", text),
-			selectedText: (text) => theme.fg("accent", text),
-			description: (text) => theme.fg("muted", text),
-			scrollInfo: (text) => theme.fg("dim", text),
-			noMatch: (text) => theme.fg("warning", text),
-		}, { maxPrimaryColumnWidth: 13 });
-
-		this.selectList.onSelect = (item) => this.onSelectCallback(item.value as TodoMenuAction);
-		this.selectList.onCancel = () => this.onCancelCallback();
-
-		this.addChild(this.selectList);
-		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("dim", "↑↓ navigate • enter select • esc back"), 0, 0));
-		this.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
-	}
-
-	handleInput(keyData: string): void {
-		this.selectList.handleInput(keyData);
-	}
-
-	override invalidate(): void {
-		super.invalidate();
-	}
-}
-
-class TodoDeleteConfirmComponent extends Container implements Focusable {
-	private selectedIndex = 0;
-	private readonly cancelLabel: "back" | "cancel";
-	private readonly subtitle?: string;
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-	}
-
-	constructor(
-		private theme: Theme,
-		private keybindings: KeybindingMatcher,
-		private title: string,
-		private onConfirm: (confirmed: boolean) => void,
-		options?: { subtitle?: string; cancelLabel?: "back" | "cancel" },
-	) {
-		super();
-		this.subtitle = options?.subtitle;
-		this.cancelLabel = options?.cancelLabel ?? "back";
-	}
-
-	handleInput(keyData: string): void {
-		const kb = this.keybindings;
-		if (kb.matches(keyData, "tui.select.up") || kb.matches(keyData, "tui.select.down")) {
-			this.selectedIndex = this.selectedIndex === 0 ? 1 : 0;
-			return;
-		}
-		if (kb.matches(keyData, "tui.select.confirm")) {
-			this.onConfirm(this.selectedIndex === 0);
-			return;
-		}
-		if (kb.matches(keyData, "tui.select.cancel")) {
-			this.onConfirm(false);
-		}
-	}
-
-	render(width: number): string[] {
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const lines: string[] = [
-			border,
-			"",
-			this.theme.fg("accent", this.theme.bold(this.title)),
-		];
-		if (this.subtitle) {
-			// Subtitle sits directly under the title, matching standard dialogs.
-			lines.push(this.theme.fg("dim", this.subtitle));
-		}
-		// Keep standard dialog breathing room before choices.
-		lines.push("");
-		lines.push(
-			(this.selectedIndex === 0 ? this.theme.fg("accent", "→ ") : "  ") +
-			this.theme.fg(this.selectedIndex === 0 ? "accent" : "text", "Yes"),
-		);
-		lines.push(
-			(this.selectedIndex === 1 ? this.theme.fg("accent", "→ ") : "  ") +
-			this.theme.fg(this.selectedIndex === 1 ? "accent" : "text", "No"),
-		);
-		// Keep one spacer above shortcuts, but no spacer between shortcuts and blue line.
-		lines.push("");
-		lines.push(this.theme.fg("dim", `↑↓ navigate • enter select • esc ${this.cancelLabel}`));
-		lines.push(border);
-		return lines;
-	}
-
-	override invalidate(): void {}
 }
 
 class TodoDetailOverlayComponent {
@@ -2400,13 +2165,21 @@ export default function todosExtension(pi: ExtensionAPI) {
 			return;
 		}
 
-		const homeAction = await ctx.ui.custom<TodoHomeAction>((_tui, theme, keybindings, done) =>
-			new TodoHomeMenuComponent(
+		const homeAction = await ctx.ui.custom<TodoHomeAction>((tui, theme, keybindings, done) =>
+			new EditorModal<TodoHomeAction>({
+				tui,
 				theme,
 				keybindings,
-				(action) => done(action),
-				() => done(),
-			),
+				title: "Todos",
+				items: [
+					{ value: "view", label: "View", description: "View todos list" },
+					{ value: "clearAll", label: "Delete", description: "Delete all todos" },
+					{ value: "settings", label: "Settings", description: "Extension settings" },
+				],
+				shortcuts: "↑↓ navigate • enter select • esc close",
+				onSelect: (item) => done(item.value),
+				onCancel: () => done(),
+			}),
 		);
 
 		if (!homeAction) {
@@ -2415,17 +2188,21 @@ export default function todosExtension(pi: ExtensionAPI) {
 		}
 
 		if (homeAction === "clearAll") {
-			const ok = await ctx.ui.custom<boolean>((_tui, theme, keybindings, done) =>
-				new TodoDeleteConfirmComponent(
+			const ok = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) =>
+				new EditorModal<boolean>({
+					tui,
 					theme,
 					keybindings,
-					"Delete todos",
-					(confirmed) => done(confirmed),
-					{
-						subtitle: `Delete ${todos.length} todos? This cannot be undone.`,
-						cancelLabel: "cancel",
-					},
-				),
+					title: "Delete todos",
+					subtitle: `Delete ${todos.length} todos? This cannot be undone.`,
+					items: [
+						{ value: true, label: "Yes" },
+						{ value: false, label: "No" },
+					],
+					shortcuts: "↑↓ navigate • enter select • esc cancel",
+					onSelect: (item) => done(item.value),
+					onCancel: () => done(false),
+				}),
 			);
 			if (!ok) {
 				await openTodosCommand(args, ctx);
@@ -2467,8 +2244,8 @@ export default function todosExtension(pi: ExtensionAPI) {
 		await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
 				rootTui = tui;
 				let selector: TodoSelectorComponent | null = null;
-				let actionMenu: TodoActionMenuComponent | null = null;
-				let deleteConfirm: TodoDeleteConfirmComponent | null = null;
+				let actionMenu: Component | null = null;
+				let deleteConfirm: Component | null = null;
 				let activeComponent:
 					| {
 							render: (width: number) => string[];
@@ -2606,17 +2383,32 @@ export default function todosExtension(pi: ExtensionAPI) {
 					return "stay";
 				};
 
-				const createActionMenu = (record: TodoRecord): TodoActionMenuComponent =>
-					new TodoActionMenuComponent(
+				const createActionMenu = (record: TodoRecord): Component => {
+					const closed = isTodoClosed(record.status);
+					return new EditorModal<TodoMenuAction>({
+						tui,
 						theme,
-						record,
-						(action) => {
-							void handleActionSelection(record, action);
+						keybindings,
+						title: `Actions for "${record.title || "(untitled)"}"`,
+						items: [
+							{ value: "view", label: "View", description: "View todo" },
+							{ value: "refine", label: "Refine", description: "Refine todo" },
+							{ value: "work", label: "Work", description: "Work on todo" },
+							closed
+								? { value: "reopen", label: "Reopen", description: "Reopen todo" }
+								: { value: "close", label: "Close", description: "Close todo" },
+							...(record.assigned_to_session
+								? [{ value: "release" as const, label: "Release", description: "Release assignment" }]
+								: []),
+							{ value: "delete", label: "Delete", description: "Delete todo" },
+						],
+						shortcuts: "↑↓ navigate • enter select • esc back",
+						onSelect: (item) => {
+							void handleActionSelection(record, item.value);
 						},
-						() => {
-							setActiveComponent(selector);
-						},
-					);
+						onCancel: () => setActiveComponent(selector),
+					});
+				};
 
 				const openDetail = (record: TodoRecord) => {
 					setActiveComponent(
@@ -2639,13 +2431,19 @@ export default function todosExtension(pi: ExtensionAPI) {
 					}
 
 					if (action === "delete") {
-						const message = `Delete todo ${formatTodoId(record.id)}? This cannot be undone.`;
-						deleteConfirm = new TodoDeleteConfirmComponent(
+						deleteConfirm = new EditorModal<boolean>({
+							tui,
 							theme,
 							keybindings,
-							"Delete todo",
-							(confirmed) => {
-								if (!confirmed) {
+							title: "Delete todo",
+							subtitle: `Delete todo ${formatTodoId(record.id)}? This cannot be undone.`,
+							items: [
+								{ value: true, label: "Yes" },
+								{ value: false, label: "No" },
+							],
+							shortcuts: "↑↓ navigate • enter select • esc back",
+							onSelect: (item) => {
+								if (!item.value) {
 									setActiveComponent(actionMenu);
 									return;
 								}
@@ -2654,8 +2452,8 @@ export default function todosExtension(pi: ExtensionAPI) {
 									setActiveComponent(selector);
 								})();
 							},
-							{ subtitle: message, cancelLabel: "back" },
-						);
+							onCancel: () => setActiveComponent(actionMenu),
+						});
 						setActiveComponent(deleteConfirm);
 						return;
 					}
