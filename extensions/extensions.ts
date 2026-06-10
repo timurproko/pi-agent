@@ -27,7 +27,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, InteractiveMode } from "@earendil-works/pi-coding-agent";
-import { EditorModal, type EditorModalFilter } from "./_editor-ui";
+import { EditorModal, EditorSettingsModal, type EditorModalFilter, type EditorSettingField, type EditorSettingValue } from "./_editor-ui";
 
 /**
  * Scope of a discovered extension:
@@ -57,6 +57,8 @@ interface ExtensionInfo {
 	enabled: boolean;
 	/** True if this is the pi-extensions extension itself - never disable. */
 	isSelf: boolean;
+	/** Optional JSON settings file displayed from the extension list. */
+	settingsFile?: string;
 }
 
 const SELF_DIRNAME = "pi-extensions";
@@ -100,6 +102,19 @@ function stripDisabled(name: string): string {
 
 function stripExtensionSuffix(name: string): string {
 	return name.replace(/\.(ts|js)$/, "");
+}
+
+function resolveSettingsFile(entryFile: string): string | undefined {
+	const entryDir = path.dirname(entryFile);
+	const entryBase = path.basename(entryFile);
+	const extensionDirSettings = path.join(entryDir, "settings.json");
+	if ((entryBase === "index.ts" || entryBase === "index.js") && fs.existsSync(extensionDirSettings)) {
+		return extensionDirSettings;
+	}
+
+	const siblingDirSettings = path.join(entryDir, stripExtensionSuffix(entryBase), "settings.json");
+	if (fs.existsSync(siblingDirSettings)) return siblingDirSettings;
+	return undefined;
 }
 
 function readPiManifestExtensions(packageJsonPath: string): string[] | null {
@@ -214,6 +229,7 @@ function discoverNpmExtensions(): ExtensionInfo[] {
 				entryFile: enabledPath,
 				enabled: hasEnabled,
 				isSelf,
+				settingsFile: resolveSettingsFile(enabledPath),
 			});
 		}
 	}
@@ -251,6 +267,7 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 				entryFile: entryPath,
 				enabled: true,
 				isSelf: SELF_FILENAMES.has(entry.name),
+				settingsFile: resolveSettingsFile(entryPath),
 			});
 			continue;
 		}
@@ -263,6 +280,7 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 				entryFile: enabledPath,
 				enabled: false,
 				isSelf: SELF_FILENAMES.has(originalName),
+				settingsFile: resolveSettingsFile(enabledPath),
 			});
 			continue;
 		}
@@ -277,6 +295,7 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 				entryFile: resolved.entryFile,
 				enabled: resolved.enabled,
 				isSelf: entry.name === SELF_DIRNAME,
+				settingsFile: resolveSettingsFile(resolved.entryFile),
 			});
 		}
 	}
@@ -315,6 +334,50 @@ function filterExtensions(exts: ExtensionInfo[], filter: ExtensionFilter): Exten
 
 function getExtensionFilterOptions(exts: ExtensionInfo[]): Array<EditorModalFilter<ExtensionFilter>> {
 	return getAvailableExtensionFilters(exts).map((scope) => ({ value: scope, label: scope }));
+}
+
+function capitalizeName(name: string): string {
+	return name.length > 0 ? name[0]!.toUpperCase() + name.slice(1) : name;
+}
+
+function formatExtensionListLabel(ext: ExtensionInfo): string {
+	return `${ext.name}${ext.settingsFile ? "⚙ " : ""}`;
+}
+
+function formatSettingLabel(key: string): string {
+	const label = key
+		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+		.replace(/[-_]+/g, " ")
+		.replace(/^./, (char) => char.toUpperCase());
+
+	return label.replace(/\b(To)\b/g, "to");
+}
+
+function readSettingsObject(settingsFile: string): Record<string, unknown> {
+	try {
+		const raw = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+		return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+	} catch {
+		return {};
+	}
+}
+
+function settingsFieldsFromObject(settings: Record<string, unknown>): EditorSettingField[] {
+	const fields: EditorSettingField[] = [];
+	for (const [key, value] of Object.entries(settings)) {
+		if (typeof value === "boolean") {
+			fields.push({ key, label: formatSettingLabel(key), type: "boolean", value });
+		} else if (typeof value === "number" && Number.isFinite(value)) {
+			fields.push({ key, label: formatSettingLabel(key), type: "number", value, min: 0, max: 100, step: 1 });
+		} else if (typeof value === "string") {
+			fields.push({ key, label: formatSettingLabel(key), type: "string", value });
+		}
+	}
+	return fields;
+}
+
+function writeSettingsObject(settingsFile: string, settings: Record<string, unknown>): void {
+	fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n", "utf8");
 }
 
 function isPiMcpDisabled(cwd: string): boolean {
@@ -426,45 +489,88 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 			const desired = new Map<string, boolean>();
 			for (const e of exts) desired.set(e.entryFile, e.enabled);
 
-			const result = await ctx.ui.custom((tui, theme, keybindings, done) => {
-				const filterOptions = getExtensionFilterOptions(exts);
-				return new EditorModal<string, ExtensionFilter>({
+			let activeFilter: ExtensionFilter | undefined;
+			let activeEntryFile: string | undefined;
+			let result: unknown;
+			while (true) {
+				result = await ctx.ui.custom((tui, theme, keybindings, done) => {
+					const filterOptions = getExtensionFilterOptions(exts);
+					return new EditorModal<string, ExtensionFilter>({
+						tui,
+						theme,
+						keybindings,
+						title: "Extensions",
+						filters: filterOptions,
+						initialFilter: activeFilter ?? filterOptions[0]?.value,
+						initialSelectedValue: activeEntryFile,
+						shortcuts: "↑↓ navigate · tab filter · enter toggle · space settings · ctrl+s save · esc cancel",
+						noItemsText: "No matching extensions",
+						getStatusText: () => exts.some((ext) => (desired.get(ext.entryFile) ?? ext.enabled) !== ext.enabled) ? "(unsaved)" : undefined,
+						getItems: (filter) => filterExtensions(exts, filter ?? filterOptions[0]?.value ?? "global").map((ext) => ({
+							value: ext.entryFile,
+							label: formatExtensionListLabel(ext),
+							checked: desired.get(ext.entryFile) ?? ext.enabled,
+						})),
+						onSelect: (item) => {
+							const current = desired.get(item.value) ?? false;
+							desired.set(item.value, !current);
+						},
+						onCancel: () => done("cancel"),
+						onFilterChange: (filter) => {
+							activeFilter = filter;
+						},
+						onInput: (data, filter, selectedItem) => {
+							if (data === " ") {
+								activeFilter = filter ?? filterOptions[0]?.value;
+								activeEntryFile = selectedItem?.value;
+								const ext = exts.find((candidate) => candidate.entryFile === selectedItem?.value);
+								if (!ext?.settingsFile) {
+									ctx.ui.notify(ext ? `${ext.name} has no settings.` : "No extension selected.", "info");
+									return true;
+								}
+								done({ action: "settings", entryFile: ext.entryFile });
+								return true;
+							}
+							if (data === "\x01") {
+								const visibleExts = filterExtensions(exts, filter ?? filterOptions[0]?.value ?? "global");
+								const allEnabled = visibleExts.every((ext) => desired.get(ext.entryFile) ?? ext.enabled);
+								for (const ext of visibleExts) {
+									desired.set(ext.entryFile, !allEnabled);
+								}
+								return true;
+							}
+							if (data === "\x13") {
+								done("apply");
+								return true;
+							}
+							return false;
+						},
+					});
+				});
+
+				if (typeof result !== "object" || !result || (result as { action?: string }).action !== "settings") {
+					break;
+				}
+
+				const entryFile = (result as { entryFile?: string }).entryFile;
+				const ext = exts.find((candidate) => candidate.entryFile === entryFile);
+				if (!ext?.settingsFile) continue;
+
+				const settings = readSettingsObject(ext.settingsFile);
+				const fields = settingsFieldsFromObject(settings);
+				await ctx.ui.custom<void>((tui, theme, keybindings, done) => new EditorSettingsModal({
 					tui,
 					theme,
 					keybindings,
-					title: "Extensions",
-					filters: filterOptions,
-					initialFilter: filterOptions[0]?.value,
-					shortcuts: "↑↓ navigate · tab filter · enter toggle · ctrl+a toggle visible · ctrl+s save & reload · esc cancel",
-					noItemsText: "No matching extensions",
-					getStatusText: () => exts.some((ext) => (desired.get(ext.entryFile) ?? ext.enabled) !== ext.enabled) ? "(unsaved)" : undefined,
-					getItems: (filter) => filterExtensions(exts, filter ?? filterOptions[0]?.value ?? "global").map((ext) => ({
-						value: ext.entryFile,
-						label: ext.name,
-						checked: desired.get(ext.entryFile) ?? ext.enabled,
-					})),
-					onSelect: (item) => {
-						const current = desired.get(item.value) ?? false;
-						desired.set(item.value, !current);
+					title: `${capitalizeName(ext.name)} settings`,
+					fields,
+					onChange: (field: EditorSettingField, value: EditorSettingValue) => {
+						settings[field.key] = value;
+						writeSettingsObject(ext.settingsFile!, settings);
 					},
-					onCancel: () => done("cancel"),
-					onInput: (data, filter) => {
-						if (data === "\x01") {
-							const visibleExts = filterExtensions(exts, filter ?? filterOptions[0]?.value ?? "global");
-							const allEnabled = visibleExts.every((ext) => desired.get(ext.entryFile) ?? ext.enabled);
-							for (const ext of visibleExts) {
-								desired.set(ext.entryFile, !allEnabled);
-							}
-							return true;
-						}
-						if (data === "\x13") {
-							done("apply");
-							return true;
-						}
-						return false;
-					},
-				});
-			});
+					onBack: () => done(),
+				}));
+			}
 
 			// Esc / cancel: do nothing, no reload
 			if (result !== "apply") {

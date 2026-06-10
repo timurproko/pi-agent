@@ -57,7 +57,7 @@ const TODO_PATH_ENV = "PI_TODO_PATH";
 const TODO_ID_PREFIX = "TODO-";
 const TODO_ID_PATTERN = /^[a-f0-9]{8}$/i;
 const DEFAULT_TODO_SETTINGS = {
-	saveTodosInCurrentWorkingDirectory: true,
+	saveToWorkingDirectory: true,
 	maxVisibleTodosInWidget: TODO_WIDGET_MAX_VISIBLE,
 	widgetSortOrder: "time" as "id" | "time",
 };
@@ -89,7 +89,7 @@ interface LockInfo {
 }
 
 interface TodoSettings {
-	saveTodosInCurrentWorkingDirectory: boolean;
+	saveToWorkingDirectory: boolean;
 	maxVisibleTodosInWidget: number;
 	widgetSortOrder: "id" | "time";
 }
@@ -299,94 +299,6 @@ function filterTodos(todos: TodoFrontMatter[], query: string): TodoFrontMatter[]
 
 type TodoScope = "open" | "closed";
 
-class TodoSettingsMenuComponent extends Container implements Focusable {
-	private selectedIndex = 0;
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-	}
-
-	constructor(
-		private theme: Theme,
-		private keybindings: KeybindingMatcher,
-		private settings: TodoSettings,
-		private onChange: (settings: TodoSettings) => void,
-		private onBack: () => void,
-	) {
-		super();
-	}
-
-	private updateSelected(delta: number): void {
-		this.selectedIndex = (this.selectedIndex + delta + 3) % 3;
-	}
-
-	private changeValue(delta = 1): void {
-		if (this.selectedIndex === 0) {
-			this.settings.saveTodosInCurrentWorkingDirectory = !this.settings.saveTodosInCurrentWorkingDirectory;
-		} else if (this.selectedIndex === 1) {
-			this.settings.maxVisibleTodosInWidget = Math.max(1, Math.min(100, this.settings.maxVisibleTodosInWidget + delta));
-		} else if (this.selectedIndex === 2) {
-			this.settings.widgetSortOrder = this.settings.widgetSortOrder === "id" ? "time" : "id";
-		}
-		this.onChange(this.settings);
-	}
-
-	handleInput(keyData: string): void {
-		const kb = this.keybindings;
-		if (kb.matches(keyData, "tui.select.up")) {
-			this.updateSelected(-1);
-			return;
-		}
-		if (kb.matches(keyData, "tui.select.down")) {
-			this.updateSelected(1);
-			return;
-		}
-		if (matchesKey(keyData, Key.left)) {
-			this.changeValue(-1);
-			return;
-		}
-		if (matchesKey(keyData, Key.right)) {
-			this.changeValue(1);
-			return;
-		}
-		if (kb.matches(keyData, "tui.select.confirm")) {
-			this.changeValue(1);
-			return;
-		}
-		if (kb.matches(keyData, "tui.select.cancel")) {
-			this.onBack();
-		}
-	}
-
-	render(width: number): string[] {
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const rows = [
-			["Save in PWD directory", this.settings.saveTodosInCurrentWorkingDirectory ? "yes" : "no"],
-			["Max visible todos in widget", String(this.settings.maxVisibleTodosInWidget)],
-			["Widget sort order", this.settings.widgetSortOrder],
-		] as const;
-		const lines = [border, "", this.theme.fg("accent", this.theme.bold("Settings")), ""];
-		for (let i = 0; i < rows.length; i++) {
-			const [label, value] = rows[i]!;
-			const selected = i === this.selectedIndex;
-			const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-			const labelText = this.theme.fg(selected ? "accent" : "text", label.padEnd(34));
-			const valueText = this.theme.fg("muted", value);
-			lines.push(prefix + labelText + valueText);
-		}
-		lines.push("");
-		lines.push(this.theme.fg("dim", "↑↓ navigate • enter toggle • ←→ adjust • esc back"));
-		lines.push(border);
-		return lines;
-	}
-
-	override invalidate(): void {}
-}
-
 class RightAlignedText implements Component {
 	constructor(private text: string) {}
 
@@ -438,7 +350,6 @@ class TodoSelectorComponent extends Container implements Focusable {
 		initialSearchInput?: string,
 		currentSessionId?: string,
 		private onQuickAction?: (todo: TodoFrontMatter, action: "work" | "refine") => void,
-		private onOpenSettings?: () => void,
 	) {
 		super();
 		this.tui = tui;
@@ -529,7 +440,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.hintText.setText(
 			this.theme.fg(
 				"dim",
-				"type to search • ↑↓ navigate • tab filter • enter actions • comma settings • esc close",
+				"type to search • ↑↓ navigate • tab filter • enter actions • esc close",
 			),
 		);
 	}
@@ -627,10 +538,6 @@ class TodoSelectorComponent extends Container implements Focusable {
 		}
 		if (kb.matches(keyData, "tui.select.cancel")) {
 			this.onCancelCallback();
-			return;
-		}
-		if (keyData === ",") {
-			this.onOpenSettings?.();
 			return;
 		}
 		if (keyData === "\t") {
@@ -867,7 +774,7 @@ function getTodosDir(cwd: string): string {
 		return path.resolve(cwd, overridePath.trim());
 	}
 	const settings = readTodoSettingsSync(getAgentTodosDir());
-	return settings.saveTodosInCurrentWorkingDirectory
+	return settings.saveToWorkingDirectory
 		? path.resolve(cwd, TODO_DIR_NAME)
 		: getAgentTodosDir();
 }
@@ -878,14 +785,20 @@ function getTodosDirLabel(cwd: string): string {
 		return path.resolve(cwd, overridePath.trim());
 	}
 	const settings = readTodoSettingsSync(getAgentTodosDir());
-	return settings.saveTodosInCurrentWorkingDirectory ? TODO_DIR_NAME : getAgentTodosDir();
+	return settings.saveToWorkingDirectory ? TODO_DIR_NAME : getAgentTodosDir();
 }
 
 function getTodoExtensionSettingsPath(): string {
 	return path.join(__dirname, "settings.json");
 }
 
-type RawTodoSettings = Partial<TodoSettings> & { todos?: Partial<TodoSettings> } & Record<string, any>;
+type RawTodoSettings = Partial<TodoSettings> & {
+	todos?: Partial<TodoSettings>;
+	/** @deprecated Use saveToWorkingDirectory. */
+	saveTodosInCurrentWorkingDirectory?: boolean;
+	/** @deprecated Use saveToWorkingDirectory. */
+	saveInPwdDirectory?: boolean;
+} & Record<string, any>;
 
 function normalizeTodoSettings(raw: RawTodoSettings): TodoSettings {
 	const maxVisibleTodosInWidget = Number.isFinite(raw.maxVisibleTodosInWidget)
@@ -897,7 +810,7 @@ function normalizeTodoSettings(raw: RawTodoSettings): TodoSettings {
 		? raw.widgetSortOrder
 		: DEFAULT_TODO_SETTINGS.widgetSortOrder;
 	return {
-		saveTodosInCurrentWorkingDirectory: Boolean(raw.saveTodosInCurrentWorkingDirectory ?? raw.saveInPwdDirectory ?? DEFAULT_TODO_SETTINGS.saveTodosInCurrentWorkingDirectory),
+		saveToWorkingDirectory: Boolean(raw.saveToWorkingDirectory ?? raw.saveTodosInCurrentWorkingDirectory ?? raw.saveInPwdDirectory ?? DEFAULT_TODO_SETTINGS.saveToWorkingDirectory),
 		maxVisibleTodosInWidget: Math.max(1, Math.min(100, Math.floor(maxVisibleTodosInWidget))),
 		widgetSortOrder,
 	};
@@ -2396,24 +2309,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 					await showActionMenu(todo);
 				};
 
-				const openSettings = async () => {
-					const settings = await readTodoSettings(todosDir);
-					setActiveComponent(
-						new TodoSettingsMenuComponent(
-							theme,
-							keybindings,
-							settings,
-							(updatedSettings) => {
-								void writeTodoSettings(todosDir, updatedSettings).then(async () => {
-									todosDir = getTodosDir(ctx.cwd);
-									selector?.setTodos(await listTodos(todosDir));
-									updateTodoWidget(ctx);
-								});
-							},
-							() => setActiveComponent(selector),
-						),
-					);
-				};
 
 				selector = new TodoSelectorComponent(
 					tui,
@@ -2436,9 +2331,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 							? buildRefinePrompt(todo.id, title)
 							: `work on todo ${formatTodoId(todo.id)} "${title}"`;
 						done();
-					},
-					() => {
-						void openSettings();
 					},
 				);
 

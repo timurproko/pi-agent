@@ -1,5 +1,5 @@
 {
-  "saveTodosInCurrentWorkingDirectory": false,
+  "saveToWorkingDirectory": false,
   "maxVisibleTodosInWidget": 8,
   "widgetSortOrder": "time"
 }

@@ -20,6 +20,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
+import { EditorModal } from "./_editor-ui";
 
 const STATUS_KEY = "mcp";
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -344,109 +345,70 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 				directState.set(name, isDirectToolsEnabled(name));
 			}
 
-			const result = await ctx.ui.custom((tui, theme, _kb, done) => {
-				let selectedIndex = 0;
-				// Track desired connection changes: true=connect, false=disconnect, undefined=no change
-				const connectionChanges = new Map<string, boolean>();
-				// Track desired directTools changes
-				const directChanges = new Map<string, boolean>();
+			// Track desired connection changes: true=connect, false=disconnect, undefined=no change
+			const connectionChanges = new Map<string, boolean>();
+			// Track desired directTools changes
+			const directChanges = new Map<string, boolean>();
 
-				const component = {
-					render(width: number): string[] {
-						const lines: string[] = [];
-						lines.push(theme.fg("border", "─".repeat(width)));
-						lines.push("");
-						lines.push(theme.fg("accent", theme.bold("MCP Servers")));
-						lines.push("");
+			const getDesiredConnection = (name: string): boolean => {
+				const server = servers.find((candidate) => candidate.name === name);
+				return connectionChanges.has(name) ? connectionChanges.get(name)! : server?.connected ?? false;
+			};
+			const getDesiredDirect = (name: string): boolean => directChanges.has(name)
+				? directChanges.get(name)!
+				: directState.get(name) ?? false;
+			const hasChanges = (): boolean => {
+				for (const [name, want] of connectionChanges) {
+					const original = servers.find((server) => server.name === name)?.connected ?? false;
+					if (want !== original) return true;
+				}
+				for (const [name, want] of directChanges) {
+					const original = directState.get(name) ?? false;
+					if (want !== original) return true;
+				}
+				return false;
+			};
 
-						for (let i = 0; i < servers.length; i++) {
-							const server = servers[i];
-							const isSelected = i === selectedIndex;
-
-							// Direct tools state (space to toggle) - shown as bulb
-							const wantDirect = directChanges.has(server.name)
-								? directChanges.get(server.name)!
-								: directState.get(server.name) ?? false;
-							const directBulb = wantDirect
-								? theme.fg("success", "●")
-								: theme.fg("dim", "○");
-
-							// Connection state (left/right to toggle) - shown as ✓/✗
-							const wantConnected = connectionChanges.has(server.name)
-								? connectionChanges.get(server.name)!
-								: server.connected;
-							const connLabel = wantConnected
-								? theme.fg("success", "✓")
-								: theme.fg("dim", "✗");
-
-							const cursor = isSelected ? "→ " : "  ";
-							const toolCount = theme.fg("dim", `(${server.toolCount})`);
-
-							if (isSelected) {
-								lines.push(theme.fg("accent", cursor) + directBulb + theme.fg("accent", ` ${server.name} `) + toolCount + " " + connLabel);
-							} else {
-								lines.push(`${cursor}${directBulb} ${server.name} ${toolCount} ${connLabel}`);
-							}
-						}
-
-						// Unsaved indicator — only true when desired state differs from original
-						let hasChanges = false;
-						for (const [name, want] of connectionChanges) {
-							const original = servers.find(s => s.name === name)?.connected ?? false;
-							if (want !== original) { hasChanges = true; break; }
-						}
-						if (!hasChanges) {
-							for (const [name, want] of directChanges) {
-								const original = directState.get(name) ?? false;
-								if (want !== original) { hasChanges = true; break; }
-							}
-						}
-
-						lines.push("");
-						lines.push(theme.fg("dim", "↑↓ navigate · enter toggle · space direct · ctrl+s save · esc close"));
-						if (hasChanges) {
-							lines.push(theme.fg("warning", "(unsaved)"));
-						}
-						lines.push(theme.fg("border", "─".repeat(width)));
-
-						return lines;
-					},
-
-					handleInput(data: string) {
-						if (data === "\x1B[A" || data === "k") {
-							selectedIndex = selectedIndex === 0 ? servers.length - 1 : selectedIndex - 1;
-						} else if (data === "\x1B[B" || data === "j") {
-							selectedIndex = selectedIndex === servers.length - 1 ? 0 : selectedIndex + 1;
-						} else if (data === "\x1B" || data === "q") {
-							done(undefined);
-							return;
-						} else if (data === "\r" || data === "\n") {
-							// Enter: toggle connection state
-							const server = servers[selectedIndex];
-							const current = connectionChanges.has(server.name)
-								? connectionChanges.get(server.name)!
-								: server.connected;
-							connectionChanges.set(server.name, !current);
-						} else if (data === " ") {
-							// Space: toggle directTools
-							const server = servers[selectedIndex];
-							const current = directChanges.has(server.name)
-								? directChanges.get(server.name)!
-								: directState.get(server.name) ?? false;
-							directChanges.set(server.name, !current);
-						} else if (data === "\x13") {
-							// Ctrl+S: save/apply
-							done({ action: "apply", connectionChanges: Object.fromEntries(connectionChanges), directChanges: Object.fromEntries(directChanges) });
-							return;
-						}
-						tui.requestRender();
-					},
-
-					invalidate() {},
-				};
-
-				return component;
-			});
+			const result = await ctx.ui.custom((tui, theme, keybindings, done) => new EditorModal<string>({
+				tui,
+				theme,
+				keybindings,
+				title: "MCP Servers",
+				shortcuts: "↑↓ navigate · enter toggle connection · space direct tools · ctrl+s save · esc close",
+				noItemsText: "No MCP servers configured",
+				descriptionGap: 1,
+				highlightDescription: false,
+				getStatusText: () => hasChanges() ? "(unsaved)" : undefined,
+				getItems: () => servers.map((server) => {
+					const directEnabled = getDesiredDirect(server.name);
+					return {
+						value: server.name,
+						label: server.name,
+						description: `(${server.toolCount})`,
+						prefixIcon: directEnabled ? "●" : "○",
+						prefixIconColor: directEnabled ? "success" : "dim",
+						checked: getDesiredConnection(server.name),
+					};
+				}),
+				onSelect: (item) => {
+					const current = getDesiredConnection(item.value);
+					connectionChanges.set(item.value, !current);
+				},
+				onCancel: () => done(undefined),
+				onInput: (data, _filter, selectedItem) => {
+					if (data === " ") {
+						if (!selectedItem) return true;
+						const current = getDesiredDirect(selectedItem.value);
+						directChanges.set(selectedItem.value, !current);
+						return true;
+					}
+					if (data === "\x13") {
+						done({ action: "apply", connectionChanges: Object.fromEntries(connectionChanges), directChanges: Object.fromEntries(directChanges) });
+						return true;
+					}
+					return false;
+				},
+			}));
 
 			if (result && typeof result === "object" && (result as any).action === "apply") {
 				const connChanges: Record<string, boolean> = (result as any).connectionChanges ?? {};
