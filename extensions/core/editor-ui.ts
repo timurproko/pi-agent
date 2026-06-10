@@ -730,6 +730,5 @@ export class EditorSearchModal<T = string> implements Component, Focusable {
 	}
 }
 
-// No-op default export so pi's extension loader (which picks up every .ts
-// file in this directory) treats this shared helper as a valid extension.
-export default function _editorUiNoop(_pi: ExtensionAPI): void {}
+// No-op default export so this shared helper remains harmless if loaded directly.
+export default function editorUiNoop(_pi: ExtensionAPI): void {}

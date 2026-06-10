@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 /**
  * model-level extension
@@ -11,7 +11,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
  * levels, the current level is auto-clamped downward to the closest allowed
  * one.
  *
- * Config: ~/.pi/agent/model-levels.json
+ * Config: models.json next to this extension.
  *   A flat map of "provider/model-id" → allowed ThinkingLevel[].
  *   Example:
  *     {
@@ -30,7 +30,8 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
  *   closest allowed level below (or above as a fallback).
  */
 
-const CONFIG_FILE = "model-levels.json";
+const CONFIG_FILE = "models.json";
+const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 // Canonical order — must match pi-ai's EXTENDED_THINKING_LEVELS.
 const ALL_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
@@ -45,7 +46,7 @@ type ModelLevelConfig = Record<string, ThinkingLevel[]>;
 
 function readConfig(): ModelLevelConfig {
 	try {
-		const configPath = path.join(getAgentDir(), CONFIG_FILE);
+		const configPath = path.join(EXTENSION_DIR, CONFIG_FILE);
 		const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
 		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
 		// Quick validation: every value must be a non-empty string array

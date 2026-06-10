@@ -19,7 +19,7 @@
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { chainEditor } from "./_editor-chain.ts";
+import { chainEditor } from "./core/editor-chain";
 import type { TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import * as os from "node:os";

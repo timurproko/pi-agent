@@ -17,7 +17,7 @@
  *
  * Usage:
  *
- *   import { chainEditor } from "./_editor-chain.ts";
+ *   import { chainEditor } from "./core/editor-chain";
  *
  *   chainEditor(ctx.ui, (editor) => {
  *     const orig = editor.handleInput.bind(editor);
@@ -57,7 +57,6 @@ export function chainEditor(ui: any, decorate: EditorDecorator): boolean {
 	}
 }
 
-// No-op default export so pi's extension loader (which picks up every .ts
-// file in this directory) treats this as a valid "extension" that simply
-// does nothing. The actual API consumers import { chainEditor } above.
-export default function _editorChainNoop(_pi: ExtensionAPI): void {}
+// No-op default export so this helper remains harmless if loaded directly.
+// The actual API consumers import { chainEditor } above.
+export default function editorChainNoop(_pi: ExtensionAPI): void {}

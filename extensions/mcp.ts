@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { EditorConfirmModal, EditorModal } from "./_editor-ui";
+import { EditorConfirmModal, EditorModal } from "./core/editor-ui";
 
 const STATUS_KEY = "mcp";
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;

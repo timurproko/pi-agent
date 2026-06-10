@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { chainEditor } from "../_editor-chain.ts";
+import { chainEditor } from "../core/editor-chain";
 import * as fs from "node:fs";
 import * as path from "node:path";
 

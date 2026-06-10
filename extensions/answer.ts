@@ -22,7 +22,7 @@ import {
 	type TUI,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { EditorDialogTemplate } from "./_editor-ui";
+import { EditorDialogTemplate } from "./core/editor-ui";
 
 // Structured output format for question extraction
 interface ExtractedQuestion {

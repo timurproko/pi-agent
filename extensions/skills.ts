@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext, Skill } from "@earendil-works/pi-coding-agent";
 import { stripFrontmatter } from "@earendil-works/pi-coding-agent";
-import { EditorSearchModal } from "./_editor-ui";
+import { EditorSearchModal } from "./core/editor-ui";
 
 function skillCommandName(skill: Skill): string {
 	return `skill:${skill.name}`;

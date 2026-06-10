@@ -47,7 +47,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { EditorConfirmModal, EditorDialogTemplate, EditorModal } from "../_editor-ui";
+import { EditorConfirmModal, EditorDialogTemplate, EditorModal } from "../core/editor-ui";
 
 const TODO_DIR_NAME = ".pi/todos";
 const AGENT_TODO_DIR_NAME = "todos";

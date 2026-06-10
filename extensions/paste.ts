@@ -19,7 +19,7 @@ import type {
   ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
-import { chainEditor } from "./_editor-chain.ts";
+import { chainEditor } from "./core/editor-chain";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

@@ -12,7 +12,7 @@
 import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { Input, Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { EditorConfirmModal, EditorDialogTemplate, EditorModal, type EditorModalItem } from "./_editor-ui";
+import { EditorConfirmModal, EditorDialogTemplate, EditorModal, type EditorModalItem } from "./core/editor-ui";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

@@ -28,7 +28,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, InteractiveMode } from "@earendil-works/pi-coding-agent";
-import { EditorConfirmModal, EditorModal, EditorSettingsModal, type EditorModalFilter, type EditorSettingField, type EditorSettingValue } from "./_editor-ui";
+import { EditorConfirmModal, EditorModal, EditorSettingsModal, type EditorModalFilter, type EditorSettingField, type EditorSettingValue } from "./core/editor-ui";
 
 /**
  * Scope of a discovered extension:
