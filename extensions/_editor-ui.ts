@@ -124,10 +124,13 @@ function isInlineDescription(description?: string): boolean {
 
 const ITEM_SHORTCUT_KEYS = "abcdefghijklmnoprstuvwxyz".split("");
 
+export type EditorDialogSize = "compact" | "fullscreen";
+
 export interface EditorDialogTemplateOptions {
 	theme: Theme;
 	horizontalPadding?: number;
 	borderColor?: EditorColor;
+	size?: EditorDialogSize;
 }
 
 export interface EditorDialogRenderOptions {
@@ -154,6 +157,20 @@ export class EditorDialogTemplate {
 
 	contentWidth(width: number): number {
 		return Math.max(1, width - 2 - (this.horizontalPadding * 2));
+	}
+
+	maxHeight(tui: TUI): number {
+		const rows = tui.terminal.rows || 24;
+		return this.options.size === "fullscreen"
+			? Math.max(10, rows - 4)
+			: Math.max(10, Math.floor(rows * 0.5));
+	}
+
+	nonBodyLineCount(options: Pick<EditorDialogRenderOptions, "metaLines" | "footerLines"> = {}): number {
+		return 3 +
+			(options.metaLines?.length ? options.metaLines.length + 1 : 0) +
+			(options.footerLines?.length ? options.footerLines.length + 1 : 0) +
+			1;
 	}
 
 	render(width: number, options: EditorDialogRenderOptions): string[] {

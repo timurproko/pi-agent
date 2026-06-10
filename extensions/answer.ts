@@ -320,7 +320,7 @@ class QnAComponent implements Component {
 			return this.cachedLines;
 		}
 
-		const dialog = new EditorDialogTemplate({ theme: this.theme });
+		const dialog = new EditorDialogTemplate({ theme: this.theme, size: "compact" });
 		const contentWidth = dialog.contentWidth(width);
 		const bodyLines: string[] = [];
 

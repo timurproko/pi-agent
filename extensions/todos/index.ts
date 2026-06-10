@@ -613,12 +613,16 @@ class TodoDetailOverlayComponent {
 	}
 
 	render(width: number): string[] {
-		const maxHeight = this.getMaxHeight();
-		const dialog = new EditorDialogTemplate({ theme: this.theme });
+		const dialog = new EditorDialogTemplate({ theme: this.theme, size: "compact" });
 		const contentWidth = dialog.contentWidth(width);
-		const metaLineCount = 1;
-		const templateChromeLines = 7; // top, title, title separator, meta spacer, footer separator, footer, bottom
-		const contentHeight = Math.max(1, maxHeight - templateChromeLines - metaLineCount);
+		const status = this.todo.status || "open";
+		const statusColor = isTodoClosed(status) ? "dim" : "success";
+		const tagText = this.todo.tags.length ? this.todo.tags.join(", ") : "no tags";
+		const metaLine = this.theme.fg(statusColor, status) +
+			this.theme.fg("muted", " • ") +
+			this.theme.fg("muted", tagText);
+		const footerLine = this.buildActionLine(contentWidth);
+		const contentHeight = Math.max(1, dialog.maxHeight(this.tui) - dialog.nonBodyLineCount({ metaLines: [metaLine], footerLines: [footerLine] }));
 
 		let markdownWidth = Math.max(1, contentWidth);
 		let markdownLines = this.markdown.render(markdownWidth);
@@ -650,29 +654,17 @@ class TodoDetailOverlayComponent {
 
 		// Status • tags, rendered in the same metadata slot that answer dialogs use
 		// for question progress.
-		const status = this.todo.status || "open";
-		const statusColor = isTodoClosed(status) ? "dim" : "success";
-		const tagText = this.todo.tags.length ? this.todo.tags.join(", ") : "no tags";
-		const metaLine = this.theme.fg(statusColor, status) +
-			this.theme.fg("muted", " • ") +
-			this.theme.fg("muted", tagText);
-
 		return dialog.render(width, {
 			title: this.todo.title || "Todo",
 			titleSuffix: ` (#${normalizeTodoId(this.todo.id)})`,
 			metaLines: [metaLine],
 			bodyLines,
-			footerLines: [this.buildActionLine(contentWidth)],
+			footerLines: [footerLine],
 		});
 	}
 
 	invalidate(): void {
 		this.markdown = new Markdown(this.getMarkdownText(), 0, 0, getMarkdownTheme());
-	}
-
-	private getMaxHeight(): number {
-		const rows = this.tui.terminal.rows || 24;
-		return Math.max(10, Math.floor(rows * 0.5));
 	}
 
 	private buildActionLine(width: number): string {

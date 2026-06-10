@@ -12,7 +12,7 @@
 import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { Input, Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { EditorConfirmModal, EditorModal, type EditorModalItem } from "./_editor-ui";
+import { EditorConfirmModal, EditorDialogTemplate, EditorModal, type EditorModalItem } from "./_editor-ui";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -433,16 +433,21 @@ class PlanReviewDialog {
 	}
 
 	render(width: number): string[] {
-		const maxHeight = this.getMaxHeight();
-		const innerWidth = Math.max(10, width - 2);
-		const chromeLines = 7; // top/title/path/separator/footer/separator/bottom
-		const contentHeight = Math.max(1, maxHeight - chromeLines);
+		const dialog = new EditorDialogTemplate({ theme: this.theme, size: "fullscreen" });
+		const contentWidth = dialog.contentWidth(width);
+		const pathLabel = this.theme.fg("muted", this.planFile);
+		const footer = [
+			this.theme.fg("dim", "↑↓ scroll"),
+			this.theme.fg("dim", "pgup/pgdn page"),
+			this.theme.fg("dim", "esc back"),
+		].join(this.theme.fg("muted", " • "));
+		const contentHeight = Math.max(1, dialog.maxHeight(this.tui) - dialog.nonBodyLineCount({ metaLines: [pathLabel], footerLines: [footer] }));
 
-		let markdownWidth = Math.max(1, innerWidth - 4);
+		let markdownWidth = Math.max(1, contentWidth);
 		let markdownLines = this.compactRenderedHeadingSpacing(this.markdown.render(markdownWidth));
 		let hasScrollableContent = markdownLines.length > contentHeight;
 		if (hasScrollableContent) {
-			markdownWidth = Math.max(1, innerWidth - 5);
+			markdownWidth = Math.max(1, contentWidth - 1);
 			markdownLines = this.compactRenderedHeadingSpacing(this.markdown.render(markdownWidth));
 			hasScrollableContent = markdownLines.length > contentHeight;
 		}
@@ -453,53 +458,28 @@ class PlanReviewDialog {
 		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, maxScroll));
 
 		const visibleLines = markdownLines.slice(this.scrollOffset, this.scrollOffset + contentHeight);
-		const borderColor = (text: string) => this.theme.fg("dim", text);
-		const boxLine = (content: string): string => {
-			const truncated = truncateToWidth(content, innerWidth);
-			const padding = Math.max(0, innerWidth - visibleWidth(truncated));
-			return borderColor("│") + truncated + " ".repeat(padding) + borderColor("│");
-		};
-		const contentBoxLine = (content: string, rowIndex: number): string => {
-			if (!hasScrollableContent) return boxLine(content);
-			const contentWidth = Math.max(1, innerWidth - 1);
-			const truncated = truncateToWidth(content, contentWidth);
-			const padding = Math.max(0, contentWidth - visibleWidth(truncated));
-			return borderColor("│") + truncated + " ".repeat(padding) + this.getScrollIndicatorForRow(rowIndex, contentHeight) + borderColor("│");
-		};
-		const separator = (): string => borderColor(`├${"─".repeat(innerWidth)}┤`);
-
-		const title = this.theme.fg("accent", this.planTitle);
-		const pathLabel = this.theme.fg("muted", this.planFile);
-		const footer = [
-			this.theme.fg("dim", "↑↓ scroll"),
-			this.theme.fg("dim", "pgup/pgdn page"),
-			this.theme.fg("dim", "esc back"),
-		].join(this.theme.fg("muted", " • "));
-
-		const output: string[] = [];
-		output.push(borderColor(`╭${"─".repeat(innerWidth)}╮`));
-		output.push(boxLine(`  ${title}`));
-		output.push(boxLine(`  ${pathLabel}`));
-		output.push(separator());
-		const lineContentWidth = hasScrollableContent ? Math.max(1, innerWidth - 5) : Math.max(1, innerWidth - 4);
+		const bodyLines: string[] = [];
 		for (let i = 0; i < contentHeight; i++) {
 			const line = visibleLines[i] ?? "";
-			output.push(contentBoxLine(`  ${truncateToWidth(line, lineContentWidth)}`, i));
+			if (!hasScrollableContent) {
+				bodyLines.push(line);
+				continue;
+			}
+			const truncated = truncateToWidth(line, markdownWidth);
+			const padding = Math.max(0, markdownWidth - visibleWidth(truncated));
+			bodyLines.push(truncated + " ".repeat(padding) + this.getScrollIndicatorForRow(i, contentHeight));
 		}
-		output.push(separator());
-		output.push(boxLine(`  ${footer}`));
-		output.push(borderColor(`╰${"─".repeat(innerWidth)}╯`));
-		return output.map((line) => truncateToWidth(line, width));
+
+		return dialog.render(width, {
+			title: this.planTitle,
+			metaLines: [pathLabel],
+			bodyLines,
+			footerLines: [footer],
+		});
 	}
 
 	invalidate(): void {
 		this.markdown = new Markdown(this.reviewContent, 0, 0, getMarkdownTheme());
-	}
-
-	private getMaxHeight(): number {
-		const rows = this.tui.terminal.rows || 24;
-		// Fill the screen area above pi's footer/status line instead of using a compact editor dialog.
-		return Math.max(10, rows - 4);
 	}
 
 	private getScrollIndicatorForRow(rowIndex: number, trackHeight: number): string {
