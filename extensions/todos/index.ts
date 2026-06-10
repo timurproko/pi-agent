@@ -19,8 +19,8 @@
  *
  *   Notes about the work go here.
  *
- * Todo settings are kept in the global agent settings file under the `todos` key:
- * C:\Users\<user>\.pi\agent\settings.json.
+ * Todo settings are kept next to this extension:
+ * C:\Users\<user>\.pi\agent\extensions\todos\settings.json.
  *
  * Use `/todos` to bring up the visual todo manager or just let the LLM use them
  * naturally.
@@ -47,7 +47,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { EditorModal } from "./_editor-ui";
+import { EditorModal } from "../_editor-ui";
 
 const TODO_DIR_NAME = ".pi/todos";
 const AGENT_TODO_DIR_NAME = "todos";
@@ -144,8 +144,6 @@ type TodoAction =
 	| "release";
 
 type TodoOverlayAction = "back";
-
-type TodoHomeAction = "view" | "clearAll" | "settings";
 
 type TodoMenuAction =
 	| "work"
@@ -440,6 +438,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 		initialSearchInput?: string,
 		currentSessionId?: string,
 		private onQuickAction?: (todo: TodoFrontMatter, action: "work" | "refine") => void,
+		private onOpenSettings?: () => void,
 	) {
 		super();
 		this.tui = tui;
@@ -512,7 +511,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 	}
 
 	private updateHeader(): void {
-		this.headerText.setText(this.theme.fg("accent", this.theme.bold("View todos")));
+		this.headerText.setText(this.theme.fg("accent", this.theme.bold("Todos")));
 	}
 
 	private updateScope(): void {
@@ -530,7 +529,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.hintText.setText(
 			this.theme.fg(
 				"dim",
-				"type to search • ↑↓ navigate • tab filter • enter actions • esc back",
+				"type to search • ↑↓ navigate • tab filter • enter actions • comma settings • esc close",
 			),
 		);
 	}
@@ -628,6 +627,10 @@ class TodoSelectorComponent extends Container implements Focusable {
 		}
 		if (kb.matches(keyData, "tui.select.cancel")) {
 			this.onCancelCallback();
+			return;
+		}
+		if (keyData === ",") {
+			this.onOpenSettings?.();
 			return;
 		}
 		if (keyData === "\t") {
@@ -878,11 +881,11 @@ function getTodosDirLabel(cwd: string): string {
 	return settings.saveTodosInCurrentWorkingDirectory ? TODO_DIR_NAME : getAgentTodosDir();
 }
 
-function getAgentSettingsPath(): string {
-	return path.join(getAgentTodosDir(), "..", "settings.json");
+function getTodoExtensionSettingsPath(): string {
+	return path.join(__dirname, "settings.json");
 }
 
-type RawTodoSettings = Partial<TodoSettings> & Record<string, any>;
+type RawTodoSettings = Partial<TodoSettings> & { todos?: Partial<TodoSettings> } & Record<string, any>;
 
 function normalizeTodoSettings(raw: RawTodoSettings): TodoSettings {
 	const maxVisibleTodosInWidget = Number.isFinite(raw.maxVisibleTodosInWidget)
@@ -900,38 +903,38 @@ function normalizeTodoSettings(raw: RawTodoSettings): TodoSettings {
 	};
 }
 
-function readGlobalSettingsSync(): Record<string, any> {
+function unwrapTodoSettings(raw: RawTodoSettings): RawTodoSettings {
+	return (raw.todos && typeof raw.todos === "object" ? raw.todos : raw) as RawTodoSettings;
+}
+
+function readExtensionTodoSettingsSync(): RawTodoSettings {
 	try {
-		return JSON.parse(readFileSync(getAgentSettingsPath(), "utf8")) as Record<string, any>;
+		return JSON.parse(readFileSync(getTodoExtensionSettingsPath(), "utf8")) as RawTodoSettings;
 	} catch {
 		return {};
 	}
 }
 
-async function readGlobalSettings(): Promise<Record<string, any>> {
+async function readExtensionTodoSettings(): Promise<RawTodoSettings> {
 	try {
-		return JSON.parse(await fs.readFile(getAgentSettingsPath(), "utf8")) as Record<string, any>;
+		return JSON.parse(await fs.readFile(getTodoExtensionSettingsPath(), "utf8")) as RawTodoSettings;
 	} catch {
 		return {};
 	}
 }
 
 async function readTodoSettings(_todosDir: string): Promise<TodoSettings> {
-	const settings = await readGlobalSettings();
-	return normalizeTodoSettings((settings.todos ?? {}) as RawTodoSettings);
+	return normalizeTodoSettings(unwrapTodoSettings(await readExtensionTodoSettings()));
 }
 
 function readTodoSettingsSync(_todosDir: string): TodoSettings {
-	const settings = readGlobalSettingsSync();
-	return normalizeTodoSettings((settings.todos ?? {}) as RawTodoSettings);
+	return normalizeTodoSettings(unwrapTodoSettings(readExtensionTodoSettingsSync()));
 }
 
 async function writeTodoSettings(_todosDir: string, settings: TodoSettings): Promise<void> {
-	const settingsPath = getAgentSettingsPath();
-	const rootSettings = await readGlobalSettings();
-	rootSettings.todos = normalizeTodoSettings(settings as RawTodoSettings);
+	const settingsPath = getTodoExtensionSettingsPath();
 	await fs.mkdir(path.dirname(settingsPath), { recursive: true });
-	await fs.writeFile(settingsPath, JSON.stringify(rootSettings, null, 2) + "\n", "utf8");
+	await fs.writeFile(settingsPath, JSON.stringify(normalizeTodoSettings(settings as RawTodoSettings), null, 2) + "\n", "utf8");
 }
 
 function getTodoPath(todosDir: string, id: string): string {
@@ -1472,17 +1475,6 @@ async function appendTodoBody(filePath: string, todo: TodoRecord, text: string):
 	todo.body = `${todo.body.replace(/\s+$/, "")}${spacer}${text.trim()}\n`;
 	await writeTodoFile(filePath, todo);
 	return todo;
-}
-
-async function deleteAllTodos(todosDir: string, ctx: ExtensionContext): Promise<number | { error: string }> {
-	const todos = await listTodos(todosDir);
-	let deleted = 0;
-	for (const todo of todos) {
-		const result = await deleteTodo(todosDir, todo.id, ctx);
-		if ("error" in result) return { error: result.error };
-		deleted++;
-	}
-	return deleted;
 }
 
 async function updateTodoStatus(
@@ -2154,7 +2146,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 	});
 
 	const openTodosCommand = async (args: string | undefined, ctx: any) => {
-		const todosDir = getTodosDir(ctx.cwd);
+		let todosDir = getTodosDir(ctx.cwd);
 		let todos = await listTodos(todosDir);
 		const currentSessionId = ctx.sessionManager.getSessionId();
 		const searchTerm = (args ?? "").trim();
@@ -2165,82 +2157,11 @@ export default function todosExtension(pi: ExtensionAPI) {
 			return;
 		}
 
-		const homeAction = await ctx.ui.custom<TodoHomeAction>((tui, theme, keybindings, done) =>
-			new EditorModal<TodoHomeAction>({
-				tui,
-				theme,
-				keybindings,
-				title: "Todos",
-				items: [
-					{ value: "view", label: "View", description: "View todos list" },
-					{ value: "clearAll", label: "Delete", description: "Delete all todos" },
-					{ value: "settings", label: "Settings", description: "Extension settings" },
-				],
-				shortcuts: "↑↓ navigate • enter select • esc close",
-				onSelect: (item) => done(item.value),
-				onCancel: () => done(),
-			}),
-		);
-
-		if (!homeAction) {
-			updateTodoWidget(ctx);
-			return;
-		}
-
-		if (homeAction === "clearAll") {
-			const ok = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) =>
-				new EditorModal<boolean>({
-					tui,
-					theme,
-					keybindings,
-					title: "Delete todos",
-					subtitle: `Delete ${todos.length} todos? This cannot be undone.`,
-					items: [
-						{ value: true, label: "Yes" },
-						{ value: false, label: "No" },
-					],
-					shortcuts: "↑↓ navigate • enter select • esc cancel",
-					onSelect: (item) => done(item.value),
-					onCancel: () => done(false),
-				}),
-			);
-			if (!ok) {
-				await openTodosCommand(args, ctx);
-				return;
-			}
-			const result = await deleteAllTodos(todosDir, ctx);
-			if (typeof result === "object" && "error" in result) {
-				ctx.ui.notify(result.error, "error");
-				return;
-			}
-			ctx.ui.notify(`Deleted ${result} todos`, "info");
-			updateTodoWidget(ctx);
-			return;
-		}
-
-		if (homeAction === "settings") {
-			const settings = await readTodoSettings(todosDir);
-			await ctx.ui.custom<void>((_tui, theme, keybindings, done) =>
-				new TodoSettingsMenuComponent(
-					theme,
-					keybindings,
-					settings,
-					(updatedSettings) => {
-						void writeTodoSettings(todosDir, updatedSettings).then(() => updateTodoWidget(ctx));
-					},
-					() => done(),
-				),
-			);
-			await openTodosCommand(args, ctx);
-			return;
-		}
-
 		todos = await listTodos(todosDir);
 		let nextPrompt: string | null = null;
 		let nextPromptAutoSend = false;
 		let nextPromptRefineTodoId: string | null = null;
 		let rootTui: TUI | null = null;
-		let goBackToHome = false;
 		await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
 				rootTui = tui;
 				let selector: TodoSelectorComponent | null = null;
@@ -2391,9 +2312,9 @@ export default function todosExtension(pi: ExtensionAPI) {
 						keybindings,
 						title: `Actions for "${record.title || "(untitled)"}"`,
 						items: [
-							{ value: "view", label: "View", description: "View todo" },
+							{ value: "view", label: "View", description: "Open todo view" },
 							{ value: "refine", label: "Refine", description: "Refine todo" },
-							{ value: "work", label: "Work", description: "Work on todo" },
+							{ value: "work", label: "Work", description: "Start implementation" },
 							closed
 								? { value: "reopen", label: "Reopen", description: "Reopen todo" }
 								: { value: "close", label: "Close", description: "Close todo" },
@@ -2475,6 +2396,25 @@ export default function todosExtension(pi: ExtensionAPI) {
 					await showActionMenu(todo);
 				};
 
+				const openSettings = async () => {
+					const settings = await readTodoSettings(todosDir);
+					setActiveComponent(
+						new TodoSettingsMenuComponent(
+							theme,
+							keybindings,
+							settings,
+							(updatedSettings) => {
+								void writeTodoSettings(todosDir, updatedSettings).then(async () => {
+									todosDir = getTodosDir(ctx.cwd);
+									selector?.setTodos(await listTodos(todosDir));
+									updateTodoWidget(ctx);
+								});
+							},
+							() => setActiveComponent(selector),
+						),
+					);
+				};
+
 				selector = new TodoSelectorComponent(
 					tui,
 					theme,
@@ -2484,7 +2424,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 						void handleSelect(todo);
 					},
 					() => {
-						goBackToHome = true;
 						done();
 					},
 					searchTerm || undefined,
@@ -2497,6 +2436,9 @@ export default function todosExtension(pi: ExtensionAPI) {
 							? buildRefinePrompt(todo.id, title)
 							: `work on todo ${formatTodoId(todo.id)} "${title}"`;
 						done();
+					},
+					() => {
+						void openSettings();
 					},
 				);
 
@@ -2525,11 +2467,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 
 				return rootComponent;
 			});
-
-		if (goBackToHome) {
-			await openTodosCommand(args, ctx);
-			return;
-		}
 
 		if (nextPrompt) {
 			if (nextPromptAutoSend) {
