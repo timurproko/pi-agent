@@ -138,6 +138,8 @@ export interface EditorDialogRenderOptions {
 	titleSuffix?: string;
 	metaLines?: string[];
 	bodyLines: string[];
+	/** Optional right-edge decorations for body rows, such as a scrollbar. */
+	bodyRightDecorations?: Array<string | undefined>;
 	footerLines?: string[];
 }
 
@@ -155,8 +157,13 @@ export class EditorDialogTemplate {
 		this.horizontalPadding = options.horizontalPadding ?? 2;
 	}
 
-	contentWidth(width: number): number {
-		return Math.max(1, width - 2 - (this.horizontalPadding * 2));
+	contentWidth(width: number, options: { rightDecorationWidth?: number } = {}): number {
+		const innerWidth = Math.max(0, width - 2);
+		const rightDecorationWidth = Math.max(0, options.rightDecorationWidth ?? 0);
+		if (rightDecorationWidth > 0) {
+			return Math.max(1, innerWidth - this.horizontalPadding - this.horizontalPadding - rightDecorationWidth);
+		}
+		return Math.max(1, innerWidth - (this.horizontalPadding * 2));
 	}
 
 	maxHeight(tui: TUI): number {
@@ -184,7 +191,24 @@ export class EditorDialogTemplate {
 		const borderColor = this.options.borderColor ?? "dim";
 		const border = (value: string) => theme.fg(borderColor, value);
 		const padToWidth = (line: string): string => line + " ".repeat(Math.max(0, width - visibleWidth(line)));
-		const boxLine = (content = ""): string => {
+		const boxLine = (content = "", rightDecoration?: string): string => {
+			if (rightDecoration !== undefined) {
+				const decorationWidth = Math.max(1, visibleWidth(rightDecoration));
+				const contentMaxWidth = this.contentWidth(width, { rightDecorationWidth: decorationWidth });
+				const truncated = truncateToWidth(content, contentMaxWidth);
+				const contentPad = Math.max(0, contentMaxWidth - visibleWidth(truncated));
+				// Right decorations are pinned against the border. The normal right-side
+				// padding becomes the gap between body content and the decoration, so
+				// scrollbars do not crowd content or float away from the right edge.
+				return border("│") +
+					" ".repeat(this.horizontalPadding) +
+					truncated +
+					"\x1b[0m" +
+					" ".repeat(contentPad + this.horizontalPadding) +
+					rightDecoration +
+					"\x1b[0m" +
+					border("│");
+			}
 			const truncated = truncateToWidth(content, this.contentWidth(width));
 			const paddedContent = " ".repeat(this.horizontalPadding) + truncated;
 			const contentLen = visibleWidth(paddedContent);
@@ -202,7 +226,9 @@ export class EditorDialogTemplate {
 			for (const line of options.metaLines) lines.push(padToWidth(boxLine(line)));
 			lines.push(padToWidth(boxLine("")));
 		}
-		for (const line of options.bodyLines) lines.push(padToWidth(boxLine(line)));
+		for (let i = 0; i < options.bodyLines.length; i++) {
+			lines.push(padToWidth(boxLine(options.bodyLines[i] ?? "", options.bodyRightDecorations?.[i])));
+		}
 		if (options.footerLines && options.footerLines.length > 0) {
 			lines.push(separator());
 			for (const line of options.footerLines) lines.push(padToWidth(boxLine(line)));

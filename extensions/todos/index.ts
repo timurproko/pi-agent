@@ -624,8 +624,7 @@ class TodoDetailOverlayComponent {
 		let markdownLines = this.markdown.render(markdownWidth);
 		let hasScrollableContent = markdownLines.length > contentHeight;
 		if (hasScrollableContent) {
-			// Reserve one column for the right-hand scrollbar track/thumb.
-			markdownWidth = Math.max(1, contentWidth - 1);
+			markdownWidth = dialog.contentWidth(width, { rightDecorationWidth: 1 });
 			markdownLines = this.markdown.render(markdownWidth);
 			hasScrollableContent = markdownLines.length > contentHeight;
 		}
@@ -637,15 +636,16 @@ class TodoDetailOverlayComponent {
 
 		const visibleLines = markdownLines.slice(this.scrollOffset, this.scrollOffset + contentHeight);
 		const bodyLines: string[] = [];
+		const bodyRightDecorations: Array<string | undefined> = [];
 		for (let i = 0; i < contentHeight; i++) {
 			const line = visibleLines[i] ?? "";
 			if (!hasScrollableContent) {
 				bodyLines.push(line);
+				bodyRightDecorations.push(undefined);
 				continue;
 			}
-			const truncated = truncateToWidth(line, markdownWidth);
-			const padding = Math.max(0, markdownWidth - visibleWidth(truncated));
-			bodyLines.push(truncated + " ".repeat(padding) + this.getScrollIndicatorForRow(i, contentHeight));
+			bodyLines.push(truncateToWidth(line, markdownWidth));
+			bodyRightDecorations.push(this.getScrollIndicatorForRow(i, contentHeight));
 		}
 
 		// Status • tags, rendered in the same metadata slot that answer dialogs use
@@ -655,6 +655,7 @@ class TodoDetailOverlayComponent {
 			titleSuffix: ` (#${normalizeTodoId(this.todo.id)})`,
 			metaLines: [metaLine],
 			bodyLines,
+			bodyRightDecorations,
 			footerLines: [footerLine],
 		});
 	}
