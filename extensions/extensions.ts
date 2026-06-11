@@ -381,6 +381,10 @@ function getExtensionFilterOptions(exts: ExtensionInfo[]): Array<EditorModalFilt
 	return getAvailableExtensionFilters(exts).map((scope) => ({ value: scope, label: scope }));
 }
 
+function getDefaultExtensionFilter(filters: Array<EditorModalFilter<ExtensionFilter>>): ExtensionFilter | undefined {
+	return filters.find((filter) => filter.value === "local")?.value ?? filters[0]?.value;
+}
+
 function capitalizeName(name: string): string {
 	return name.length > 0 ? name[0]!.toUpperCase() + name.slice(1) : name;
 }
@@ -571,20 +575,21 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 			while (true) {
 				result = await ctx.ui.custom((tui, theme, keybindings, done) => {
 					const filterOptions = getExtensionFilterOptions(exts);
+					const defaultFilter = getDefaultExtensionFilter(filterOptions);
 					return new EditorModal<string, ExtensionFilter>({
 						tui,
 						theme,
 						keybindings,
 						title: "Extensions",
 						filters: filterOptions,
-						initialFilter: activeFilter ?? filterOptions[0]?.value,
+						initialFilter: activeFilter ?? defaultFilter,
 						initialSelectedValue: activeEntryFile,
 						search: true,
 						initialQuery,
 						shortcuts: "type to search · ↑↓ navigate · tab filter · enter toggle · space settings · ctrl+s save · esc cancel",
 						noItemsText: (query) => query.trim() ? "No matching extensions" : "No extensions yet",
 						getStatusText: () => exts.some((ext) => (desired.get(ext.entryFile) ?? ext.enabled) !== ext.enabled) ? "(unsaved)" : undefined,
-						getItems: (filter, query = "") => filterExtensions(exts, filter ?? filterOptions[0]?.value ?? "global")
+						getItems: (filter, query = "") => filterExtensions(exts, filter ?? defaultFilter ?? "global")
 							.filter((ext) => matchesExtension(ext, query))
 							.map((ext) => ({
 								value: ext.entryFile,
@@ -601,7 +606,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 						},
 						onInput: (data, filter, selectedItem) => {
 							if (data === " ") {
-								activeFilter = filter ?? filterOptions[0]?.value;
+								activeFilter = filter ?? defaultFilter;
 								activeEntryFile = selectedItem?.value;
 								const ext = exts.find((candidate) => candidate.entryFile === selectedItem?.value);
 								if (!ext || !hasExtensionSettings(ext)) {
@@ -612,7 +617,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 								return true;
 							}
 							if (data === "\x01") {
-								const visibleExts = filterExtensions(exts, filter ?? filterOptions[0]?.value ?? "global");
+								const visibleExts = filterExtensions(exts, filter ?? defaultFilter ?? "global");
 								const allEnabled = visibleExts.every((ext) => desired.get(ext.entryFile) ?? ext.enabled);
 								for (const ext of visibleExts) {
 									desired.set(ext.entryFile, !allEnabled);

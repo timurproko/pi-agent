@@ -6,7 +6,6 @@
   "defaultThinkingLevel": "medium",
   "enableSkillCommands": false,
   "packages": [
-    "npm:pi-mcp-adapter",
     "npm:context-mode",
     "npm:pi-cursor-provider"
   ],

@@ -22,6 +22,39 @@ find . -name ProjectVersion.txt -o -name manifest.json -o -name '*.asmdef'
 find Assets -name '*.cs' | head
 ```
 
+## Unity MCP Tool Usage
+
+Use Unity MCP tools when the task involves live Editor state, scenes, prefabs, components, assets, console logs, or Unity tests.
+
+- Before any Unity MCP work, always make one best-effort attempt to connect the context-mode MCP server so large MCP outputs can be handled safely:
+  ```
+  mcp({ connect: "context-mode" })
+  ```
+  If it fails or direct `ctx_*` tools are already available, continue with the Unity task and mention the failure only when relevant.
+- If the user asks to connect the Unity MCP server, do it immediately:
+  ```
+  mcp({ connect: "unity" })
+  ```
+- Prefer direct Unity MCP tools exposed in pi over the generic `mcp` gateway:
+  ```
+  unity_scene-list-opened({})
+  unity_scene-get-data({ includeRootGameObjects: true, includeChildrenDepth: 1 })
+  unity_gameobject-find({ gameObjectRef: { instanceID: 0, path: "Player" }, includeComponents: true })
+  unity_console-get-logs({ maxEntries: 50, logTypeFilter: "Error" })
+  ```
+- If only the generic MCP gateway is available, connect first and pass arguments as a JSON string:
+  ```
+  mcp({ connect: "unity" })
+  mcp({ tool: "unity_scene-list-opened", args: "{}" })
+  mcp({ tool: "unity_gameobject-find", args: '{"gameObjectRef":{"instanceID":0,"path":"Player"},"includeComponents":true}' })
+  ```
+- Keep MCP reads scoped. Use `hierarchyDepth`, `includeComponents`, `includeFields`, `includeProperties`, `paths`, `viewQuery`, `maxResults`, and console `maxEntries` to avoid flooding context.
+- Inspect before modifying. Use `unity_gameobject-find`, `unity_gameobject-component-get`, `unity_assets-get-data`, or `unity_object-get-data` before calling modify tools.
+- Prefer targeted `pathPatches`/`jsonPatch` changes over full serialized object rewrites, especially for components, ScriptableObjects, prefabs, and materials.
+- Use `unity_script-execute` for small Editor-only inspections or one-off migrations when no dedicated tool exists; do not use it to bypass source-controlled code changes.
+- Use `unity_tests-run` for Unity EditMode/PlayMode tests when open scenes are saved; use `unity_console-get-logs` to inspect compiler/runtime errors after asset or script changes.
+- Use prefab tools carefully: open with `unity_assets-prefab-open`, inspect/modify, save only when intended, then close with `unity_assets-prefab-close`.
+
 ## Development Workflow
 
 When implementing Unity features:

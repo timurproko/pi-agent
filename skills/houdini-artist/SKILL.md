@@ -9,21 +9,40 @@ Use this skill when the user wants to create, adjust, or iterate on 3D content i
 
 ## First Steps
 
-1. Connect to the Houdini MCP server:
+1. Before any Houdini work, always make one best-effort attempt to connect the context-mode MCP server so large MCP outputs can be handled safely:
+   ```
+   mcp({ connect: "context-mode" })
+   ```
+   If it fails or direct `ctx_*` tools are already available, continue with the Houdini task and mention the failure only when relevant.
+2. If the user asks to connect the Houdini MCP server, do it immediately:
    ```
    mcp({ connect: "houdini" })
    ```
-2. Get scene context:
+3. Prefer the direct Houdini MCP tools exposed in pi when they are available. Call them directly instead of routing through the generic `mcp` gateway:
    ```
-   mcp({ tool: "houdini_get_scene_info" })
-   mcp({ tool: "houdini_get_scene_summary" })
+   houdini_get_scene_info({})
+   houdini_get_scene_summary({})
+   houdini_list_children({ parent_path: "/obj" })
    ```
-3. Understand the current network:
+4. If only the generic MCP gateway is available, connect first and pass tool arguments as a JSON string:
    ```
-   mcp({ tool: "houdini_list_children", args: '{"node_path": "/obj"}' })
+   mcp({ connect: "houdini" })
+   mcp({ tool: "houdini_get_scene_info", args: "{}" })
+   mcp({ tool: "houdini_list_children", args: '{"parent_path":"/obj"}' })
    ```
 
 ## Core Workflow
+
+### Houdini MCP Tool Usage
+
+- Use direct tool calls for normal work: `houdini_create_node`, `houdini_set_parameters`, `houdini_connect_nodes_batch`, `houdini_get_geometry_info`, etc.
+- Call `houdini_log_status` at the start of every major step so the user can see progress in Houdini.
+- Before creating a node type you are unsure about, call `houdini_list_node_types(context: ..., filter: ...)` and prefer a dedicated built-in node over VEX/Python.
+- Before setting unfamiliar parameters, inspect them with `houdini_get_parameter_schema(node_path: ..., filter: ...)`; then batch changes with `houdini_set_parameters`.
+- Use `houdini_build_sop_chain` for linear SOP networks and `houdini_connect_nodes_batch` for multiple connections to reduce round trips.
+- Keep MCP reads scoped: use filters, low recursion depth, pagination, and geometry summaries instead of dumping huge networks or full attribute arrays.
+- Use screenshots only when visual confirmation is needed; prefer `houdini_get_geometry_info`, `houdini_get_node_info`, and `houdini_find_error_nodes` for routine verification.
+- If a direct Houdini tool is not exposed but exists on the MCP server, call it through `mcp({ tool: "...", args: "{...}" })` with valid JSON-string arguments.
 
 ### See → Build → Verify
 

@@ -2,12 +2,12 @@
  * MCP Extension — Status Bar + /mcp-list Command
  *
  * Status bar:
- *   - `mcp: 2/5` (connected count)
+ *   - `mcp: 2/5 (houdini, context-mode)` (connected count + names)
  *   - `mcp: houdini connecting...` (during connection, animated)
  *   - `mcp: 0/5` (none connected)
  *
  * Command:
- *   /mcp-list — shows all configured MCP servers with connection state (● connected, ○ not)
+ *   /mcp — shows the custom MCP server dialog with connection and direct-tool toggles.
  *
  * Detection:
  *   - Reads mcp-cache.json for tool→server mapping
@@ -19,7 +19,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { EditorConfirmModal, EditorModal } from "./core/editor-ui";
+import { EditorConfirmModal, EditorModal } from "../core/editor-ui";
+import mcpAdapter from "./modules/adapter";
 
 const STATUS_KEY = "mcp";
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -148,14 +149,24 @@ function formatStatusBar(
 		return `${paintMuted(ctx, "mcp: ")}${paintMuted(ctx, `${connectingName}${dots}${pad}`)}`;
 	}
 
-	const count = connectedNames.length;
+	const configuredNames = readConfiguredServerNames();
+	const configuredOrder = new Map(configuredNames.map((name, index) => [name, index]));
+	const sortedConnectedNames = [...connectedNames].sort((a, b) => {
+		const aIndex = configuredOrder.get(a) ?? Number.MAX_SAFE_INTEGER;
+		const bIndex = configuredOrder.get(b) ?? Number.MAX_SAFE_INTEGER;
+		return aIndex - bIndex || a.localeCompare(b);
+	});
+	const count = sortedConnectedNames.length;
 	const counter = `${count}/${total}`;
-	return `${paintMuted(ctx, "mcp: ")}${paintMuted(ctx, counter)}`;
+	const namesSuffix = sortedConnectedNames.length > 0 ? ` (${sortedConnectedNames.join(", ")})` : "";
+	return `${paintMuted(ctx, "mcp: ")}${paintMuted(ctx, `${counter}${namesSuffix}`)}`;
 }
 
 // ─── Extension ──────────────────────────────────────────────────────
 
 export default function mcpExtension(pi: ExtensionAPI): void {
+	mcpAdapter(pi);
+
 	const connectedServers = new Set<string>();
 	let toolToServer = buildToolToServerMap();
 	let connectingTarget: string | undefined;
@@ -474,7 +485,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 
 		if (!commandRegistered) {
 			commandRegistered = true;
-			pi.registerCommand("mcp-status", mcpStatusCommand);
+			pi.registerCommand("mcp", mcpStatusCommand);
 		}
 
 		activeCtx = ctx;

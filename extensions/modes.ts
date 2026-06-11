@@ -11,10 +11,6 @@
  * The current mode is shown in the status bar, just before the model entry,
  * on the right-hand side.
  *
- * Commands:
- *   /mode            -> show current mode
- *   /mode cmd        -> switch to Cmd mode
- *   /mode ask        -> switch to Ask mode
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -95,10 +91,6 @@ export default function piModesExtension(pi: ExtensionAPI): void {
 		return Array.from(modeDefinitions.keys());
 	}
 
-	function modeLabels(): string[] {
-		return Array.from(modeDefinitions.values()).map((m) => m.label);
-	}
-
 	function renderStatus(ctx: ExtensionContext): void {
 		const def = getModeDefinition();
 		const label = editorDraftIsBash ? "bash" : def.label;
@@ -155,29 +147,6 @@ export default function piModesExtension(pi: ExtensionAPI): void {
 		handler: async (ctx) => cycleMode(ctx),
 	});
 
-	// ---- /mode cmd ----
-	pi.registerCommand("mode", {
-		description: "Show or switch pi mode",
-		getArgumentCompletions: (prefix: string) => {
-			const items = Array.from(modeDefinitions.values()).map((m) => ({ value: m.label, label: m.label }));
-			const filtered = items.filter((i) => i.value.startsWith(prefix));
-			return filtered.length > 0 ? filtered : null;
-		},
-		handler: async (args, ctx) => {
-			const arg = (args || "").trim().toLowerCase();
-			if (!arg) {
-				ctx.ui.notify(`Current mode: ${getModeDefinition().label}`, "info");
-				return;
-			}
-			const matchingMode = Array.from(modeDefinitions.values()).find((m) => m.id === arg || m.label === arg);
-			if (!matchingMode) {
-				ctx.ui.notify(`Unknown mode '${arg}'. Use: ${modeLabels().join(", ")}`, "error");
-				return;
-			}
-			setMode(matchingMode.id, ctx);
-		},
-	});
-
 	// ---- gate tool calls based on mode ----
 	// Ask mode blocks mutations while still allowing safe read-only shell commands.
 	pi.on("tool_call", async (event, _ctx) => {
@@ -187,7 +156,7 @@ export default function piModesExtension(pi: ExtensionAPI): void {
 		if (WRITE_ONLY_TOOLS.has(toolName)) {
 			return {
 				block: true,
-				reason: `Ask mode is active - the assistant must answer without running '${toolName}'. Switch modes with Shift+Tab (or /mode cmd) to allow it.`,
+				reason: `Ask mode is active - the assistant must answer without running '${toolName}'. Switch modes with Shift+Tab to allow it.`,
 			};
 		}
 		if (toolName === "bash") {
@@ -195,7 +164,7 @@ export default function piModesExtension(pi: ExtensionAPI): void {
 			if (!isSafeBashCommand(cmd)) {
 				return {
 					block: true,
-					reason: `Ask mode is active - only read-only commands (grep, find, ls, git log, etc.) are allowed. Switch modes with Shift+Tab (or /mode cmd) to run '${cmd.split(" ")[0]}'.`,
+					reason: `Ask mode is active - only read-only commands (grep, find, ls, git log, etc.) are allowed. Switch modes with Shift+Tab to run '${cmd.split(" ")[0]}'.`,
 				};
 			}
 		}
