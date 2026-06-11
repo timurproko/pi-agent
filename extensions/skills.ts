@@ -39,6 +39,7 @@ async function selectSkill(ctx: ExtensionCommandContext, skills: Skill[], initia
 					description: oneLineDescription(skill),
 				})),
 			noItemsText: (query) => query.trim() ? "No matching skills" : "No skills yet",
+			highlightDescription: false,
 			shortcuts: "type to search • ↑↓ navigate • enter actions • esc close",
 			onSelect: (item) => done(item.value),
 			onCancel: () => done(undefined),

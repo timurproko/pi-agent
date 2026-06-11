@@ -30,7 +30,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, watch, type FSWatcher } from "node:fs";
 import crypto from "node:crypto";
 import {
 	Container,
@@ -1409,6 +1409,9 @@ async function deleteTodo(
 }
 
 let todoWidgetSpinnerTimer: ReturnType<typeof setInterval> | null = null;
+let todoWidgetWatcher: FSWatcher | null = null;
+let todoWidgetWatcherPath: string | null = null;
+let todoWidgetWatcherDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], settings: TodoSettings): string[] {
 	const { assignedTodos, openTodos } = splitTodosByAssignment(todos);
@@ -1453,7 +1456,7 @@ function renderTodoWidgetLines(theme: Theme, todos: TodoFrontMatter[], settings:
 
 	const hiddenCount = sortedTodos.length - visible.length;
 	if (hiddenCount > 0) {
-		lines.push(theme.fg("dim", `    … and ${hiddenCount} more`));
+		lines.push(theme.fg("dim", `and ${hiddenCount} more`));
 	}
 
 	return lines;
@@ -1490,11 +1493,50 @@ function updateTodoWidget(ctx: ExtensionContext): void {
 	}
 }
 
+function stopTodoWidgetWatcher(): void {
+	if (todoWidgetWatcherDebounceTimer) {
+		clearTimeout(todoWidgetWatcherDebounceTimer);
+		todoWidgetWatcherDebounceTimer = null;
+	}
+	if (todoWidgetWatcher) {
+		todoWidgetWatcher.close();
+		todoWidgetWatcher = null;
+	}
+	todoWidgetWatcherPath = null;
+}
+
+function startTodoWidgetWatcher(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	const todosDir = getTodosDir(ctx.cwd);
+	if (todoWidgetWatcher && todoWidgetWatcherPath === todosDir) return;
+	stopTodoWidgetWatcher();
+
+	try {
+		todoWidgetWatcher = watch(todosDir, { persistent: false }, () => {
+			if (todoWidgetWatcherDebounceTimer) {
+				clearTimeout(todoWidgetWatcherDebounceTimer);
+			}
+			todoWidgetWatcherDebounceTimer = setTimeout(() => {
+				todoWidgetWatcherDebounceTimer = null;
+				updateTodoWidget(ctx);
+			}, 50);
+		});
+		todoWidgetWatcherPath = todosDir;
+		todoWidgetWatcher.on("error", () => {
+			stopTodoWidgetWatcher();
+			updateTodoWidget(ctx);
+		});
+	} catch {
+		// Directory may not exist yet or may be temporarily unavailable.
+	}
+}
+
 export default function todosExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		const todosDir = getTodosDir(ctx.cwd);
 		await ensureTodosDir(todosDir);
 		updateTodoWidget(ctx);
+		startTodoWidgetWatcher(ctx);
 	});
 
 	// Refresh widget after any todo tool execution.
@@ -1509,6 +1551,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 			clearInterval(todoWidgetSpinnerTimer);
 			todoWidgetSpinnerTimer = null;
 		}
+		stopTodoWidgetWatcher();
 	});
 
 	const todosDirLabel = getTodosDirLabel(process.cwd());

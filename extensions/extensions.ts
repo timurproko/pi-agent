@@ -7,8 +7,8 @@
  * UX is modeled after the scoped-models / `/tools` selector:
  *   - SettingsList with one row per extension
  *   - Toggle "enabled" / "disabled" on each row
- *   - On close, applies any pending toggles by renaming entry files on disk
- *     and runs ctx.reload() so changes take effect immediately
+ *   - Ctrl+S saves pending toggles by renaming entry files on disk without
+ *     closing the dialog, so the visible enabled / disabled state updates in place
  *
  * Disable strategy
  * ----------------
@@ -19,8 +19,7 @@
  *
  * To disable an extension we rename its entry file to add a `.disabled`
  * suffix (e.g. `foo.ts` -> `foo.ts.disabled`, or `bar/index.ts` ->
- * `bar/index.ts.disabled`). Re-enabling reverses the rename. After applying
- * changes we call `ctx.reload()` to re-run discovery.
+ * `bar/index.ts.disabled`). Re-enabling reverses the rename.
  */
 
 import { spawnSync } from "node:child_process";
@@ -40,11 +39,11 @@ import { EditorConfirmModal, EditorModal, EditorSettingsModal, type EditorModalF
 type ExtensionScope = "global" | "local" | "project";
 type ExtensionFilter = ExtensionScope;
 
-const EXTENSION_FILTER_ORDER: ExtensionFilter[] = ["global", "local", "project"];
+const EXTENSION_FILTER_ORDER: ExtensionFilter[] = ["local", "global", "project"];
 
 const SCOPE_ORDER: Record<ExtensionScope, number> = {
-	global: 0,
-	local: 1,
+	local: 0,
+	global: 1,
 	project: 2,
 };
 
@@ -74,6 +73,7 @@ const SELF_FILENAMES = new Set([
 const PI_MCP_DIRNAME = "pi-mcp";
 const PI_MCP_STATUS_PATCH_KEY = "__piMcpStatusPatch";
 const UNINSTALL_EXTENSION_FIELD_KEY = "__uninstallExtension";
+const SETTINGS_COMMAND_FIELD_KEY = "__settingsCommand";
 
 type PiMcpPatchableUi = ExtensionContext["ui"] & {
 	__piMcpStatusPatch?: {
@@ -418,6 +418,7 @@ function readSettingsObject(settingsFile: string): Record<string, unknown> {
 function settingsFieldsFromObject(settings: Record<string, unknown>): EditorSettingField[] {
 	const fields: EditorSettingField[] = [];
 	for (const [key, value] of Object.entries(settings)) {
+		if (key.startsWith("__")) continue;
 		if (typeof value === "boolean") {
 			fields.push({ key, label: formatSettingLabel(key), type: "boolean", value });
 		} else if (typeof value === "number" && Number.isFinite(value)) {
@@ -499,8 +500,9 @@ function restoreStalePiMcpStatusPatch(ctx: ExtensionContext): void {
 function applyToggles(
 	exts: ExtensionInfo[],
 	desired: Map<string, boolean>,
-): { changed: number; errors: string[] } {
+): { changed: number; changedEntryFiles: string[]; errors: string[] } {
 	let changed = 0;
+	const changedEntryFiles: string[] = [];
 	const errors: string[] = [];
 	for (const ext of exts) {
 		if (ext.isSelf) continue;
@@ -517,12 +519,14 @@ function applyToggles(
 				if (fs.existsSync(disabledPath)) {
 					fs.renameSync(disabledPath, enabledPath);
 					changed++;
+					changedEntryFiles.push(ext.entryFile);
 				}
 			} else {
 				// disable: rename original -> .disabled
 				if (fs.existsSync(enabledPath)) {
 					fs.renameSync(enabledPath, disabledPath);
 					changed++;
+					changedEntryFiles.push(ext.entryFile);
 				}
 			}
 		} catch (err) {
@@ -530,7 +534,7 @@ function applyToggles(
 			errors.push(`${ext.name}: ${msg}`);
 		}
 	}
-	return { changed, errors };
+	return { changed, changedEntryFiles, errors };
 }
 
 /**
@@ -567,6 +571,27 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 			// In-memory desired state, keyed by entryFile
 			const desired = new Map<string, boolean>();
 			for (const e of exts) desired.set(e.entryFile, e.enabled);
+
+			const savePendingToggles = (): void => {
+				const { changed, changedEntryFiles, errors } = applyToggles(exts, desired);
+				const changedSet = new Set(changedEntryFiles);
+				for (const ext of exts) {
+					if (!changedSet.has(ext.entryFile)) continue;
+					ext.enabled = desired.get(ext.entryFile) ?? ext.enabled;
+					desired.set(ext.entryFile, ext.enabled);
+				}
+
+				restoreStalePiMcpStatusPatch(ctx);
+				for (const err of errors) {
+					ctx.ui.notify(`Failed to toggle: ${err}`, "error");
+				}
+
+				if (changed > 0) {
+					ctx.ui.notify(`Saved ${changed} extension${changed === 1 ? "" : "s"}.`, "info");
+				} else if (errors.length === 0) {
+					ctx.ui.notify("No changes.", "info");
+				}
+			};
 
 			let activeFilter: ExtensionFilter | undefined;
 			let activeEntryFile: string | undefined;
@@ -625,7 +650,9 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 								return true;
 							}
 							if (data === "\x13") {
-								done("apply");
+								activeFilter = filter ?? defaultFilter;
+								activeEntryFile = selectedItem?.value;
+								savePendingToggles();
 								return true;
 							}
 							return false;
@@ -642,6 +669,15 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 				if (!ext || !hasExtensionSettings(ext)) continue;
 
 				const settings = ext.settingsFile ? readSettingsObject(ext.settingsFile) : {};
+				const rawSettingsCommand = settings[SETTINGS_COMMAND_FIELD_KEY];
+				const settingsCommand = typeof rawSettingsCommand === "string"
+					? rawSettingsCommand.trim().replace(/^\//, "")
+					: "";
+				if (settingsCommand) {
+					pi.events.emit(`command-settings:${settingsCommand}`, { args: "", ctx });
+					return;
+				}
+
 				const fields = settingsFieldsForExtension(ext, settings);
 				const settingsResult = await ctx.ui.custom<void | { action: "uninstall" }>((tui, theme, keybindings, done) => new EditorSettingsModal({
 					tui,
@@ -683,32 +719,12 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 				}
 			}
 
-			// Esc / cancel: do nothing, no reload
+			// Esc / cancel: do nothing. Ctrl+S saves in place without closing the dialog.
 			if (result !== "apply") {
 				return;
 			}
 
-			// Apply pending toggles
-			const { changed, errors } = applyToggles(exts, desired);
-			restoreStalePiMcpStatusPatch(ctx);
-			for (const err of errors) {
-				ctx.ui.notify(`Failed to toggle: ${err}`, "error");
-			}
-
-			if (changed > 0) {
-				ctx.ui.notify(
-					`Updated ${changed} extension${changed === 1 ? "" : "s"}, reloading...`,
-					"info",
-				);
-				// Fire-and-forget reload so the handler returns immediately and focus
-				// is back on the editor before pi shows its "Reloading..." focus box.
-				// Otherwise users press Esc a second time to dismiss what looks like
-				// a stuck overlay (it isn't - the reload box just ignores Esc).
-				void ctx.reload();
-				return;
-			}
-
-			ctx.ui.notify("No changes.", "info");
+			savePendingToggles();
 		},
 	});
 }

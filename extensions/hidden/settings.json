@@ -1,0 +1,7 @@
+{
+  "__settingsCommand": "hidden-settings",
+  "hiddenCommands": [
+    "model",
+    "scoped-models"
+  ]
+}

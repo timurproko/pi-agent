@@ -14,7 +14,7 @@
     "github-copilot/gpt-5.5",
     "github-copilot/claude-opus-4.7",
     "github-copilot/gpt-5.3-codex",
-    "cursor/default"
+    "github-copilot/claude-opus-4.8"
   ],
   "doubleEscapeAction": "none"
 }

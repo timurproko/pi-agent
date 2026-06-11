@@ -355,7 +355,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 				tui,
 				theme,
 				keybindings,
-				title: "MCP Servers",
+				title: "MCP servers",
 				shortcuts: "↑↓ navigate · enter toggle connection · space direct tools · ctrl+s save · esc close",
 				noItemsText: "No MCP servers configured",
 				descriptionGap: 1,
