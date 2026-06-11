@@ -330,7 +330,7 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 			return;
 		}
 		if (this.options.showItemShortcuts && /^[a-z]$/.test(keyData)) {
-			const maxVisible = this.options.maxVisible ?? 10;
+			const maxVisible = this.options.maxVisible ?? 8;
 			const { startIndex, endIndex } = getVisibleItemRange(items.length, this.selectedIndex, maxVisible);
 			const shortcutIndex = ITEM_SHORTCUT_KEYS.indexOf(keyData);
 			const targetIndex = startIndex + shortcutIndex;
@@ -421,7 +421,7 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 			return;
 		}
 
-		const maxVisible = this.options.maxVisible ?? 10;
+		const maxVisible = this.options.maxVisible ?? 8;
 		const { startIndex, endIndex } = getVisibleItemRange(items.length, this.selectedIndex, maxVisible);
 		const visibleItems = items.slice(startIndex, endIndex);
 		const hasColumnDescriptions = visibleItems.some((item) => item.description && !isInlineDescription(item.description));
@@ -735,7 +735,7 @@ export class EditorSearchModal<T = string> implements Component, Focusable {
 			return;
 		}
 
-		const maxVisible = this.options.maxVisible ?? 10;
+		const maxVisible = this.options.maxVisible ?? 8;
 		const startIndex = Math.max(0, Math.min(this.selectedIndex - Math.floor(maxVisible / 2), items.length - maxVisible));
 		const endIndex = Math.min(startIndex + maxVisible, items.length);
 		const visibleItems = items.slice(startIndex, endIndex);
