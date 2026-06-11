@@ -394,9 +394,8 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 
 		this.renderItems(push, items);
 		const selectedItem = items[this.selectedIndex];
-		const selectedDescription = selectedItem?.selectedDescription
-			?? (selectedItem?.description && !isInlineDescription(selectedItem.description) ? selectedItem.description : undefined);
-		const hasDescriptionArea = items.some((item) => item.selectedDescription || (item.description && !isInlineDescription(item.description)));
+		const selectedDescription = selectedItem?.selectedDescription;
+		const hasDescriptionArea = items.some((item) => item.selectedDescription);
 		if (hasDescriptionArea) {
 			const shortcutIndent = this.options.showItemShortcuts ? 2 : 0;
 			const iconIndent = selectedItem?.prefixIcon ? visibleWidth(`${selectedItem.prefixIcon} `) : 0;
@@ -425,6 +424,12 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 		const maxVisible = this.options.maxVisible ?? 10;
 		const { startIndex, endIndex } = getVisibleItemRange(items.length, this.selectedIndex, maxVisible);
 		const visibleItems = items.slice(startIndex, endIndex);
+		const hasColumnDescriptions = visibleItems.some((item) => item.description && !isInlineDescription(item.description));
+		const getLabelWidth = (item: EditorModalItem<T>) => visibleWidth(`${item.prefixIcon ? `${item.prefixIcon} ` : ""}${item.label}`);
+		const labelColumnWidth = hasColumnDescriptions
+			? Math.max(...visibleItems.map((item) => getLabelWidth(item)))
+			: 0;
+		const descriptionGap = this.options.descriptionGap ?? 7;
 
 		for (let i = startIndex; i < endIndex; i += 1) {
 			const item = items[i];
@@ -440,8 +445,14 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 			const labelColor = item.disabled ? "dim" : selected ? "accent" : "text";
 			let line = prefix + shortcut + prefixIcon + theme.fg(labelColor, item.label);
 
-			if (item.description && isInlineDescription(item.description)) {
-				line += ` ${theme.fg("muted", item.description)}`;
+			if (item.description) {
+				if (isInlineDescription(item.description)) {
+					line += ` ${theme.fg("muted", item.description)}`;
+				} else if (hasColumnDescriptions) {
+					const padding = " ".repeat(Math.max(descriptionGap, labelColumnWidth - getLabelWidth(item) + descriptionGap));
+					const descriptionColor = item.disabled ? "dim" : selected && this.options.highlightDescription !== false ? "accent" : "muted";
+					line += padding + theme.fg(descriptionColor, item.description);
+				}
 			}
 
 			if (item.checked !== undefined) {
@@ -450,10 +461,6 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 			}
 
 			push(line);
-		}
-
-		for (let i = visibleItems.length; i < maxVisible; i += 1) {
-			push();
 		}
 
 		if (items.length > maxVisible) {
@@ -707,8 +714,7 @@ export class EditorSearchModal<T = string> implements Component, Focusable {
 		push();
 		this.renderItems(push, items);
 		const selectedItem = items[this.selectedIndex];
-		const selectedDescription = selectedItem?.selectedDescription
-			?? (selectedItem?.description && !isInlineDescription(selectedItem.description) ? selectedItem.description : undefined);
+		const selectedDescription = selectedItem?.selectedDescription;
 		if (selectedDescription) {
 			push();
 			push(theme.fg("muted", `  ${selectedDescription}`));
@@ -732,6 +738,13 @@ export class EditorSearchModal<T = string> implements Component, Focusable {
 		const maxVisible = this.options.maxVisible ?? 10;
 		const startIndex = Math.max(0, Math.min(this.selectedIndex - Math.floor(maxVisible / 2), items.length - maxVisible));
 		const endIndex = Math.min(startIndex + maxVisible, items.length);
+		const visibleItems = items.slice(startIndex, endIndex);
+		const hasColumnDescriptions = visibleItems.some((item) => item.description && !isInlineDescription(item.description));
+		const labelColumnWidth = hasColumnDescriptions
+			? Math.max(...visibleItems.map((item) => visibleWidth(item.label)))
+			: 0;
+		const descriptionGap = this.options.descriptionGap ?? 7;
+
 		for (let i = startIndex; i < endIndex; i += 1) {
 			const item = items[i];
 			if (!item) continue;
@@ -740,8 +753,14 @@ export class EditorSearchModal<T = string> implements Component, Focusable {
 			const labelColor = item.disabled ? "dim" : selected ? "accent" : "text";
 			let line = prefix + theme.fg(labelColor, item.label);
 
-			if (item.description && isInlineDescription(item.description)) {
-				line += ` ${theme.fg("muted", item.description)}`;
+			if (item.description) {
+				if (isInlineDescription(item.description)) {
+					line += ` ${theme.fg("muted", item.description)}`;
+				} else if (hasColumnDescriptions) {
+					const padding = " ".repeat(Math.max(descriptionGap, labelColumnWidth - visibleWidth(item.label) + descriptionGap));
+					const descriptionColor = item.disabled ? "dim" : selected && this.options.highlightDescription !== false ? "accent" : "muted";
+					line += padding + theme.fg(descriptionColor, item.description);
+				}
 			}
 
 			if (item.checked !== undefined) {
