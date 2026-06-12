@@ -61,6 +61,8 @@ interface ExtensionInfo {
 	settingsFile?: string;
 	/** Original npm package source from settings.json, used for uninstall. */
 	packageSource?: string;
+	/** Extension/package names this extension needs to be enabled to work fully. */
+	dependencies: string[];
 }
 
 const SELF_DIRNAME = "pi-extensions";
@@ -132,6 +134,36 @@ function readPiManifestExtensions(packageJsonPath: string): string[] | null {
 		return null;
 	} catch {
 		return null;
+	}
+}
+
+function normalizeDependencyName(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseDependencyArrayLiteral(source: string): string[] {
+	const match = source.match(/export\s+const\s+piExtensionDependencies\s*=\s*\[([\s\S]*?)\]/m);
+	if (!match) return [];
+	const dependencies: string[] = [];
+	const stringRe = /["']([^"']+)["']/g;
+	let stringMatch: RegExpExecArray | null;
+	while ((stringMatch = stringRe.exec(match[1] ?? ""))) {
+		const dependency = normalizeDependencyName(stringMatch[1]);
+		if (dependency) dependencies.push(dependency);
+	}
+	return dependencies;
+}
+
+function readExtensionDependencies(entryFile: string): string[] {
+	const dependencyFile = fs.existsSync(entryFile) ? entryFile : `${entryFile}.disabled`;
+	try {
+		const source = fs.readFileSync(dependencyFile, "utf8");
+		const declared = parseDependencyArrayLiteral(source);
+		return [...new Set(declared)].sort((a, b) => a.localeCompare(b));
+	} catch {
+		return [];
 	}
 }
 
@@ -269,6 +301,7 @@ function discoverNpmExtensions(): ExtensionInfo[] {
 				isSelf,
 				settingsFile: resolveSettingsFile(enabledPath),
 				packageSource: pkg.source,
+				dependencies: readExtensionDependencies(enabledPath),
 			});
 		}
 	}
@@ -307,6 +340,7 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 				enabled: true,
 				isSelf: SELF_FILENAMES.has(entry.name),
 				settingsFile: resolveSettingsFile(entryPath),
+				dependencies: readExtensionDependencies(entryPath),
 			});
 			continue;
 		}
@@ -320,6 +354,7 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 				enabled: false,
 				isSelf: SELF_FILENAMES.has(originalName),
 				settingsFile: resolveSettingsFile(enabledPath),
+				dependencies: readExtensionDependencies(enabledPath),
 			});
 			continue;
 		}
@@ -335,6 +370,7 @@ function discoverInDir(dir: string, scope: ExtensionScope): ExtensionInfo[] {
 				enabled: resolved.enabled,
 				isSelf: entry.name === SELF_DIRNAME,
 				settingsFile: resolveSettingsFile(resolved.entryFile),
+				dependencies: readExtensionDependencies(resolved.entryFile),
 			});
 		}
 	}
@@ -393,8 +429,30 @@ function hasExtensionSettings(ext: ExtensionInfo): boolean {
 	return !!ext.settingsFile || (ext.scope === "global" && !!ext.packageSource);
 }
 
-function formatExtensionListLabel(ext: ExtensionInfo): string {
-	return `${ext.name}${hasExtensionSettings(ext) ? "⚙ " : ""}`;
+function getExtensionDependencyTags(ext: ExtensionInfo): string[] {
+	return ext.dependencies;
+}
+
+function formatExtensionTags(ext: ExtensionInfo): string | undefined {
+	const tags = [
+		...(hasExtensionSettings(ext) ? ["config"] : []),
+		...getExtensionDependencyTags(ext),
+	];
+	return tags.length > 0 ? tags.map((tag) => `[${tag}]`).join(" ") : undefined;
+}
+
+function areExtensionDependenciesEnabled(
+	ext: ExtensionInfo,
+	exts: ExtensionInfo[],
+	desired?: Map<string, boolean>,
+): boolean {
+	const dependencies = getExtensionDependencyTags(ext);
+	if (dependencies.length === 0) return true;
+
+	return dependencies.every((dependencyName) => exts.some((candidate) => {
+		if (candidate.name !== dependencyName) return false;
+		return desired?.get(candidate.entryFile) ?? candidate.enabled;
+	}));
 }
 
 function formatSettingLabel(key: string): string {
@@ -619,8 +677,10 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 							.filter((ext) => matchesExtension(ext, query))
 							.map((ext) => ({
 								value: ext.entryFile,
-								label: formatExtensionListLabel(ext),
+								label: ext.name,
+								description: formatExtensionTags(ext),
 								checked: desired.get(ext.entryFile) ?? ext.enabled,
+								muted: !areExtensionDependenciesEnabled(ext, exts, desired),
 							})),
 						onSelect: (item) => {
 							const current = desired.get(item.value) ?? false;

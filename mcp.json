@@ -1,7 +1,10 @@
 {
   "mcpServers": {
     "context-mode": {
-      "command": "context-mode",
+      "command": "C:/Program Files/nodejs/node.exe",
+      "args": [
+        "C:/Users/tprokopiev/.pi/agent/npm/node_modules/context-mode/cli.bundle.mjs"
+      ],
       "env": {},
       "directTools": true
     },

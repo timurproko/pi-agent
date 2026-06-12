@@ -25,10 +25,16 @@ export interface EditorModalItem<T = string> {
 	value: T;
 	label: string;
 	description?: string;
+	descriptionColor?: EditorColor;
+	descriptionSuffix?: string;
+	descriptionSuffixColor?: EditorColor;
 	selectedDescription?: string;
 	prefixIcon?: string;
 	prefixIconColor?: EditorColor;
 	checked?: boolean;
+	checkedColor?: EditorColor;
+	/** Visual-only muted state. Unlike disabled, the item can still be selected/toggled. */
+	muted?: boolean;
 	disabled?: boolean;
 }
 
@@ -425,9 +431,11 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 		const { startIndex, endIndex } = getVisibleItemRange(items.length, this.selectedIndex, maxVisible);
 		const visibleItems = items.slice(startIndex, endIndex);
 		const hasColumnDescriptions = visibleItems.some((item) => item.description && !isInlineDescription(item.description));
-		const getLabelWidth = (item: EditorModalItem<T>) => visibleWidth(`${item.prefixIcon ? `${item.prefixIcon} ` : ""}${item.label}`);
-		const labelColumnWidth = hasColumnDescriptions
-			? Math.max(...visibleItems.map((item) => getLabelWidth(item)))
+		const getTitleWidth = (item: EditorModalItem<T>) => visibleWidth(
+			`${item.prefixIcon ? `${item.prefixIcon} ` : ""}${item.label}${item.checked !== undefined ? " ✓" : ""}`,
+		);
+		const titleColumnWidth = hasColumnDescriptions
+			? Math.max(...visibleItems.map((item) => getTitleWidth(item)))
 			: 0;
 		const descriptionGap = this.options.descriptionGap ?? 7;
 
@@ -439,25 +447,31 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 			const shortcut = this.options.showItemShortcuts
 				? `${theme.fg(selected ? "accent" : "dim", ITEM_SHORTCUT_KEYS[i - startIndex] ?? " ")} `
 				: "";
+			const muted = item.disabled || item.muted;
 			const prefixIcon = item.prefixIcon
-				? `${theme.fg(item.prefixIconColor ?? (item.disabled ? "dim" : "text"), item.prefixIcon)} `
+				? `${theme.fg(item.prefixIconColor ?? (muted ? "dim" : "text"), item.prefixIcon)} `
 				: "";
-			const labelColor = item.disabled ? "dim" : selected ? "accent" : "text";
+			const labelColor = muted ? "dim" : selected ? "accent" : "text";
 			let line = prefix + shortcut + prefixIcon + theme.fg(labelColor, item.label);
+
+			if (item.checked !== undefined) {
+				const iconColor = item.checkedColor ?? (item.checked && !muted ? "success" : "dim");
+				const icon = item.checked ? theme.fg(iconColor, "✓") : theme.fg(iconColor, "✗");
+				line += ` ${icon}`;
+			}
 
 			if (item.description) {
 				if (isInlineDescription(item.description)) {
-					line += ` ${theme.fg("muted", item.description)}`;
+					line += ` ${theme.fg(item.descriptionColor ?? "muted", item.description)}`;
 				} else if (hasColumnDescriptions) {
-					const padding = " ".repeat(Math.max(descriptionGap, labelColumnWidth - getLabelWidth(item) + descriptionGap));
-					const descriptionColor = item.disabled ? "dim" : selected && this.options.highlightDescription !== false ? "accent" : "muted";
+					const padding = " ".repeat(Math.max(descriptionGap, titleColumnWidth - getTitleWidth(item) + descriptionGap));
+					const descriptionColor = item.descriptionColor ?? (muted ? "dim" : selected && this.options.highlightDescription !== false ? "accent" : "muted");
 					line += padding + theme.fg(descriptionColor, item.description);
 				}
 			}
 
-			if (item.checked !== undefined) {
-				const icon = item.checked ? theme.fg("success", "✓") : theme.fg("dim", "✗");
-				line += ` ${icon}`;
+			if (item.descriptionSuffix) {
+				line += ` ${theme.fg(item.descriptionSuffixColor ?? "muted", item.descriptionSuffix)}`;
 			}
 
 			push(line);

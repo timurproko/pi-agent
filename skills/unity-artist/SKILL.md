@@ -44,6 +44,41 @@ Use this skill when the user wants to create, adjust, or iterate on visual conte
 - Use `unity_console-get-logs` after shader/material/VFX changes to catch errors and warnings.
 - If a direct Unity tool is not exposed but exists on the MCP server, call it through `mcp({ tool: "...", args: "{...}" })` with valid JSON-string arguments.
 
+### Context-Mode Command Execution
+
+Use context-mode for any shell command, Unity/Editor log scan, shader compiler output, API response, or multi-step discovery that may produce more than a few lines. The goal is to do the noisy work in the sandbox and print only the compact answer so Unity visual sessions survive context compaction.
+
+- Prefer `ctx_execute` / `context_mode_ctx_execute` over `bash` when command output is uncertain or large. Filter, aggregate, or summarize inside the command:
+  ```js
+  ctx_execute({
+    language: "shell",
+    code: "Unity -batchmode -quit -projectPath . -runTests -testPlatform EditMode 2>&1 | grep -E 'FAIL|Error|Exception|Shader error' | head -100",
+    timeout: 900000
+  })
+  ```
+- For large local files, never read the whole file into chat. Use `ctx_execute_file` / `context_mode_ctx_execute_file` and print only findings:
+  ```js
+  ctx_execute_file({
+    path: "Logs/Editor.log",
+    language: "javascript",
+    code: "const hits = FILE_CONTENT.split('\\n').filter(l => /Shader error|Error|Exception|Warning/i.test(l)); console.log(hits.slice(-80).join('\\n') || 'No relevant log issues found');"
+  })
+  ```
+- For 3+ related commands, use `ctx_batch_execute` / `context_mode_ctx_batch_execute` with focused `queries` instead of separate calls:
+  ```js
+  ctx_batch_execute({
+    commands: [
+      { label: "materials", command: "find Assets -name '*.mat' | head -200" },
+      { label: "shaders", command: "find Assets -name '*.shader' -o -name '*.shadergraph' | head -200" },
+      { label: "recent logs", command: "find Logs -name '*.log' -mtime -2 2>/dev/null" }
+    ],
+    queries: ["shader errors", "material assets", "recent logs"],
+    concurrency: 3
+  })
+  ```
+- For web docs such as `https://pi.dev/packages/context-mode`, use `ctx_fetch_and_index` then `ctx_search` instead of pasting page contents.
+- For Unity MCP reads, first reduce output at the source with `hierarchyDepth`, `includeComponents`, `paths`, `viewQuery`, `maxResults`, and `maxEntries`. If the data still needs analysis, route command-line/log/file processing through context-mode and return only counts, paths, and actionable errors.
+
 ### See → Change → Verify
 
 Every visual change follows this loop:

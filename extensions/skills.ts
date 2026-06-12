@@ -36,7 +36,7 @@ async function selectSkill(ctx: ExtensionCommandContext, skills: Skill[], initia
 				.map((skill) => ({
 					value: skill,
 					label: skillCommandName(skill),
-					description: oneLineDescription(skill),
+					selectedDescription: oneLineDescription(skill),
 				})),
 			noItemsText: (query) => query.trim() ? "No matching skills" : "No skills yet",
 			highlightDescription: false,

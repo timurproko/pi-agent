@@ -44,6 +44,41 @@ Use this skill when the user wants to create, adjust, or iterate on 3D content i
 - Use screenshots only when visual confirmation is needed; prefer `houdini_get_geometry_info`, `houdini_get_node_info`, and `houdini_find_error_nodes` for routine verification.
 - If a direct Houdini tool is not exposed but exists on the MCP server, call it through `mcp({ tool: "...", args: "{...}" })` with valid JSON-string arguments.
 
+### Context-Mode Command Execution
+
+Use context-mode for any shell command, log scan, render/test output, API response, or multi-step discovery that may produce more than a few lines. The goal is to do the noisy work in the sandbox and print only the compact answer so Houdini sessions survive context compaction.
+
+- Prefer `ctx_execute` / `context_mode_ctx_execute` over `bash` when command output is uncertain or large. Filter, aggregate, or summarize inside the command:
+  ```js
+  ctx_execute({
+    language: "shell",
+    code: "hython tools/check_scene.py 2>&1 | grep -E 'ERROR|Warning|Exception|failed' | head -80",
+    timeout: 600000
+  })
+  ```
+- For large local files, never read the whole file into chat. Use `ctx_execute_file` / `context_mode_ctx_execute_file` and print only findings:
+  ```js
+  ctx_execute_file({
+    path: "render/logs/karma.log",
+    language: "javascript",
+    code: "const hits = FILE_CONTENT.split('\\n').filter(l => /ERROR|Warning|Exception/i.test(l)); console.log(hits.slice(-60).join('\\n') || 'No errors found');"
+  })
+  ```
+- For 3+ related commands, use `ctx_batch_execute` / `context_mode_ctx_batch_execute` with focused `queries` instead of separate calls:
+  ```js
+  ctx_batch_execute({
+    commands: [
+      { label: "hip files", command: "find . -name '*.hip*' | head -100" },
+      { label: "cache sizes", command: "du -sh cache render 2>/dev/null || true" },
+      { label: "recent logs", command: "find . -name '*.log' -mtime -2 -maxdepth 4" }
+    ],
+    queries: ["errors warnings", "largest cache", "recent hip files"],
+    concurrency: 3
+  })
+  ```
+- For web docs such as `https://pi.dev/packages/context-mode`, use `ctx_fetch_and_index` then `ctx_search` instead of pasting page contents.
+- For Houdini MCP reads, first reduce output at the source with filters, shallow `depth`, pagination, `get_geometry_info`, and `sample_geometry`. If the data still needs analysis, route command-line/log/file processing through context-mode and return only counts, paths, and actionable errors.
+
 ### See → Build → Verify
 
 1. **See** — use `houdini_get_scene_summary`, `houdini_get_network_overview`, `houdini_get_geometry_info`, `houdini_render_viewport`, or `houdini_get_node_info` to understand the current state.

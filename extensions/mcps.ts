@@ -2,9 +2,9 @@
  * MCPS Extension — Status Bar + /mcps Command
  *
  * Status bar:
- *   - `mcps: 2/5 (houdini, context-mode)` (connected count + names)
- *   - `mcps: houdini connecting...` (during connection, animated)
- *   - `mcps: 0/5` (none connected)
+ *   - `mcp: 2/5 (houdini, context-mode)` (connected count + names)
+ *   - `mcp: houdini connecting...` (during connection, animated)
+ *   - `mcp: 0/5` (none connected)
  *
  * Command:
  *   /mcps — shows the custom MCP server dialog with connection and direct-tool toggles.
@@ -24,6 +24,8 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { EditorConfirmModal, EditorModal } from "./core/editor-ui";
+
+export const piExtensionDependencies = ["pi-mcp-adapter"];
 
 const STATUS_KEY = "mcp";
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -112,6 +114,24 @@ function stripAnsi(text: string): string {
 	return text.replace(ANSI_RE, "");
 }
 
+function getToolResultText(event: any): string {
+	const content = event?.content;
+	if (typeof content === "string") return content;
+	if (Array.isArray(content)) {
+		return content.map((part) => {
+			if (typeof part === "string") return part;
+			if (part && typeof part === "object" && typeof part.text === "string") return part.text;
+			return "";
+		}).filter(Boolean).join("\n");
+	}
+	return "";
+}
+
+function looksLikeConnectionFailure(event: any): boolean {
+	const text = stripAnsi(getToolResultText(event)).toLowerCase();
+	return /failed\s+to\s+connect|mcp\s+error|connection\s+closed/.test(text);
+}
+
 // ─── Formatting ─────────────────────────────────────────────────────
 
 function ansi(code: number, text: string): string {
@@ -130,12 +150,12 @@ function formatStatusBar(
 ): string {
 	const total = readConfiguredServerNames().length;
 
-	if (total === 0) return paintMuted(ctx, "mcps: —");
+	if (total === 0) return paintMuted(ctx, "mcp: —");
 
 	if (connectingName) {
 		const dots = ".".repeat(pulseFrame % 4);
 		const pad = " ".repeat(3 - Math.min(dots.length, 3));
-		return `${paintMuted(ctx, "mcps: ")}${paintMuted(ctx, `${connectingName}${dots}${pad}`)}`;
+		return `${paintMuted(ctx, "mcp: ")}${paintMuted(ctx, `${connectingName}${dots}${pad}`)}`;
 	}
 
 	const configuredNames = readConfiguredServerNames();
@@ -148,13 +168,14 @@ function formatStatusBar(
 	const count = sortedConnectedNames.length;
 	const counter = `${count}/${total}`;
 	const namesSuffix = sortedConnectedNames.length > 0 ? ` (${sortedConnectedNames.join(", ")})` : "";
-	return `${paintMuted(ctx, "mcps: ")}${paintMuted(ctx, `${counter}${namesSuffix}`)}`;
+	return `${paintMuted(ctx, "mcp: ")}${paintMuted(ctx, `${counter}${namesSuffix}`)}`;
 }
 
 // ─── Extension ──────────────────────────────────────────────────────
 
 export default function mcpsExtension(pi: ExtensionAPI): void {
 	const connectedServers = new Set<string>();
+	const failedServers = new Set<string>();
 	let toolToServer = buildToolToServerMap();
 	let connectingTarget: string | undefined;
 	let connectingStartedAt = 0;
@@ -164,7 +185,7 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 	let activeCtx: ExtensionContext | null = null;
 	let originalSetStatus: ((key: string, text?: string) => void) | null = null;
 
-	const MIN_CONNECTING_DISPLAY_MS = 600; // minimum time "connecting..." stays visible
+	const MIN_CONNECTING_DISPLAY_MS = 2500; // UI-only minimum time "mcp: server..." stays visible
 
 	// ─── Status Bar Logic ───────────────────────────────────────────
 
@@ -176,13 +197,14 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 	}
 
 	function startPulse(ctx: ExtensionContext): void {
+		if (!connectingTarget) return;
 		if (pulseTimer) return;
 		connectingStartedAt = Date.now();
 		pulseTimer = setInterval(() => {
 			if (!connectingTarget) { stopPulse(); return; }
 			pulseFrame += 1;
 			updateStatus(ctx);
-		}, 400);
+		}, 250);
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
@@ -205,29 +227,54 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 	// Backward-compatible alias for extensions that still know the old MCP wrapper name.
 	(globalThis as any).__piMcpRefreshStatus = refreshStatus;
 
+	function clearConnecting(serverName: string): void {
+		if (connectingTarget !== serverName) return;
+		connectingTarget = undefined;
+		stopPulse();
+		if (minDisplayTimer) {
+			clearTimeout(minDisplayTimer);
+			minDisplayTimer = undefined;
+		}
+	}
+
+	function markFailed(serverName: string, ctx: ExtensionContext): void {
+		connectedServers.delete(serverName);
+		failedServers.add(serverName);
+		clearConnecting(serverName);
+		updateStatus(ctx);
+	}
+
+	function finishConnectingAfterMinimum(serverName: string, ctx: ExtensionContext): boolean {
+		if (connectingTarget !== serverName) return false;
+
+		const elapsed = Date.now() - connectingStartedAt;
+		const remaining = MIN_CONNECTING_DISPLAY_MS - elapsed;
+
+		if (remaining > 0) {
+			// Keep showing the animated UI state; the MCP connection has already completed.
+			if (minDisplayTimer) clearTimeout(minDisplayTimer);
+			minDisplayTimer = setTimeout(() => {
+				minDisplayTimer = undefined;
+				connectingTarget = undefined;
+				stopPulse();
+				updateStatus(ctx);
+			}, remaining);
+			return true;
+		}
+
+		connectingTarget = undefined;
+		stopPulse();
+		return false;
+	}
+
 	function markConnected(serverName: string, ctx: ExtensionContext): void {
-		if (connectedServers.has(serverName)) return;
+		failedServers.delete(serverName);
+		const wasConnected = connectedServers.has(serverName);
+		const wasConnecting = connectingTarget === serverName;
 		connectedServers.add(serverName);
 
-		if (connectingTarget === serverName) {
-			const elapsed = Date.now() - connectingStartedAt;
-			const remaining = MIN_CONNECTING_DISPLAY_MS - elapsed;
-
-			if (remaining > 0) {
-				// Keep showing "connecting..." for the minimum duration
-				if (minDisplayTimer) clearTimeout(minDisplayTimer);
-				minDisplayTimer = setTimeout(() => {
-					minDisplayTimer = undefined;
-					connectingTarget = undefined;
-					stopPulse();
-					updateStatus(ctx);
-				}, remaining);
-				return;
-			}
-
-			connectingTarget = undefined;
-			stopPulse();
-		}
+		if (finishConnectingAfterMinimum(serverName, ctx)) return;
+		if (wasConnected && !wasConnecting) return;
 		updateStatus(ctx);
 	}
 
@@ -237,6 +284,11 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 
 		toolToServer = buildToolToServerMap();
 		return toolToServer.get(toolName);
+	}
+
+	function resolveMcpInputTarget(input: any): string | undefined {
+		const target = input?.connect || input?.server;
+		return target && readConfiguredServerNames().includes(String(target)) ? String(target) : undefined;
 	}
 
 	function interceptSetStatus(ctx: ExtensionContext, key: string, text?: string): void {
@@ -259,6 +311,8 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 					target = names.find((n) => !connectedServers.has(n)) ?? target;
 				}
 			}
+			if (minDisplayTimer) { clearTimeout(minDisplayTimer); minDisplayTimer = undefined; }
+			if (connectingTarget !== target) stopPulse();
 			connectingTarget = target;
 			startPulse(ctx);
 			updateStatus(ctx);
@@ -267,10 +321,26 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 
 		const countMatch = plain.match(/\bMCP:\s*(\d+)\/(\d+)\s+servers\b/i);
 		if (countMatch) {
+			const completedTarget = connectingTarget;
+			const freshConnected = detectAlreadyConnected(pi);
+			for (const name of freshConnected) {
+				connectedServers.add(name);
+				failedServers.delete(name);
+			}
+
+			// The adapter may publish the final count almost immediately. Preserve the
+			// animated "mcp: server..." status for a short UI-only minimum so quick
+			// connections still feel visible without delaying the actual connection.
+			if (completedTarget) {
+				connectedServers.add(completedTarget);
+				failedServers.delete(completedTarget);
+				if (finishConnectingAfterMinimum(completedTarget, ctx)) return;
+				updateStatus(ctx);
+				return;
+			}
+
 			connectingTarget = undefined;
 			stopPulse();
-			const freshConnected = detectAlreadyConnected(pi);
-			for (const name of freshConnected) connectedServers.add(name);
 			updateStatus(ctx);
 			return;
 		}
@@ -280,7 +350,7 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 
 	// ─── /mcps Command ──────────────────────────────────────────────
 
-	function getMcpServers(): { name: string; toolCount: number; connected: boolean; type: "stdio" | "http" }[] {
+	function getMcpServers(): { name: string; toolCount: number; connected: boolean; failed: boolean; type: "stdio" | "http" }[] {
 		const mcpServers = readConfiguredServers();
 		const cache = readCache();
 
@@ -293,6 +363,7 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 				name,
 				toolCount: cachedCount,
 				connected: connectedServers.has(name),
+				failed: failedServers.has(name),
 				type,
 			};
 		});
@@ -353,10 +424,13 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 				getStatusText: () => hasChanges() ? "(unsaved)" : undefined,
 				getItems: () => servers.map((server) => {
 					const directEnabled = getDesiredDirect(server.name);
+					const failed = server.failed && !getDesiredConnection(server.name);
 					return {
 						value: server.name,
 						label: server.name,
 						description: `(${server.toolCount})`,
+						descriptionSuffix: failed ? "[failed]" : undefined,
+						descriptionSuffixColor: failed ? "error" : undefined,
 						prefixIcon: directEnabled ? "●" : "○",
 						prefixIconColor: directEnabled ? "success" : "dim",
 						checked: getDesiredConnection(server.name),
@@ -408,6 +482,7 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 							}
 						}
 						connectedServers.delete(serverName);
+						failedServers.delete(serverName);
 					}
 					const activeTools = pi.getActiveTools().map(t => t.name).filter(n => !toolsToRemove.has(n));
 					pi.setActiveTools(activeTools);
@@ -483,7 +558,10 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 		toolToServer = buildToolToServerMap();
 
 		const alreadyConnected = detectAlreadyConnected(pi);
-		for (const name of alreadyConnected) connectedServers.add(name);
+		for (const name of alreadyConnected) {
+			connectedServers.add(name);
+			failedServers.delete(name);
+		}
 
 		ctx.ui.setStatus = ((key: string, text?: string) => {
 			interceptSetStatus(ctx, key, text);
@@ -494,19 +572,33 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 
 	pi.on("tool_result", async (event, ctx) => {
 		if (!ctx.hasUI || !originalSetStatus) return;
-		if ((event as any).isError) return;
 
 		const toolName = (event as any).toolName ?? "";
+		const input = (event as any).input ?? {};
+		const isError = !!(event as any).isError;
 
-		// Only detect connections through the mcp gateway, not direct tools
-		if (toolName === "mcp" && (event as any).input) {
-			const input = (event as any).input;
-
-			const connectTarget = input.connect || input.server;
-			if (connectTarget && readConfiguredServerNames().includes(connectTarget)) {
-				markConnected(connectTarget, ctx);
+		if (toolName === "mcp") {
+			const explicitTarget = resolveMcpInputTarget(input);
+			if (explicitTarget) {
+				if (isError || looksLikeConnectionFailure(event)) {
+					markFailed(explicitTarget, ctx);
+				} else {
+					markConnected(explicitTarget, ctx);
+				}
 				return;
 			}
+		}
+
+		if (isError) {
+			const failedDirectServer = resolveServerFromTool(toolName);
+			if (failedDirectServer && connectingTarget === failedDirectServer && !connectedServers.has(failedDirectServer)) {
+				markFailed(failedDirectServer, ctx);
+			}
+			return;
+		}
+
+		// Only detect gateway tool calls through the mcp gateway.
+		if (toolName === "mcp") {
 
 			const innerTool = input.tool || input.name;
 			if (innerTool) {
@@ -558,6 +650,9 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 		if (!ctx.hasUI || !originalSetStatus || !targetServer || connectedServers.has(targetServer)) return;
 
 		// Show connection progress after the user has allowed this MCP server.
+		failedServers.delete(targetServer);
+		if (minDisplayTimer) { clearTimeout(minDisplayTimer); minDisplayTimer = undefined; }
+		if (connectingTarget !== targetServer) stopPulse();
 		connectingTarget = targetServer;
 		startPulse(ctx);
 		updateStatus(ctx);
@@ -570,5 +665,6 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 		originalSetStatus = null;
 		activeCtx = null;
 		connectedServers.clear();
+		failedServers.clear();
 	});
 }

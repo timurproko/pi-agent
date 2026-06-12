@@ -55,6 +55,41 @@ Use Unity MCP tools when the task involves live Editor state, scenes, prefabs, c
 - Use `unity_tests-run` for Unity EditMode/PlayMode tests when open scenes are saved; use `unity_console-get-logs` to inspect compiler/runtime errors after asset or script changes.
 - Use prefab tools carefully: open with `unity_assets-prefab-open`, inspect/modify, save only when intended, then close with `unity_assets-prefab-close`.
 
+### Context-Mode Command Execution
+
+Use context-mode for any shell command, Unity test/build output, compiler log, API response, dependency scan, or multi-step discovery that may produce more than a few lines. The goal is to do the noisy work in the sandbox and print only the compact answer so Unity development sessions survive context compaction.
+
+- Prefer `ctx_execute` / `context_mode_ctx_execute` over `bash` when command output is uncertain or large. Filter, aggregate, or summarize inside the command:
+  ```js
+  ctx_execute({
+    language: "shell",
+    code: "Unity -batchmode -quit -projectPath . -runTests -testPlatform EditMode 2>&1 | grep -E 'FAIL|Error|Exception|Tests run|Compilation failed' | head -120",
+    timeout: 900000
+  })
+  ```
+- For large local files, never read the whole file into chat. Use `ctx_execute_file` / `context_mode_ctx_execute_file` and print only findings:
+  ```js
+  ctx_execute_file({
+    path: "Logs/Editor.log",
+    language: "javascript",
+    code: "const hits = FILE_CONTENT.split('\\n').filter(l => /error|exception|failed|warning/i.test(l)); console.log(hits.slice(-100).join('\\n') || 'No relevant log issues found');"
+  })
+  ```
+- For 3+ related commands, use `ctx_batch_execute` / `context_mode_ctx_batch_execute` with focused `queries` instead of separate calls:
+  ```js
+  ctx_batch_execute({
+    commands: [
+      { label: "project version", command: "cat ProjectSettings/ProjectVersion.txt 2>/dev/null" },
+      { label: "packages", command: "cat Packages/manifest.json 2>/dev/null" },
+      { label: "asmdefs", command: "find Assets Packages -name '*.asmdef' 2>/dev/null" }
+    ],
+    queries: ["Unity version", "package dependencies", "assembly definitions"],
+    concurrency: 3
+  })
+  ```
+- For web docs such as `https://pi.dev/packages/context-mode`, use `ctx_fetch_and_index` then `ctx_search` instead of pasting page contents.
+- For Unity MCP reads, first reduce output at the source with `hierarchyDepth`, `includeComponents`, `includeFields`, `includeProperties`, `paths`, `viewQuery`, `maxResults`, and console `maxEntries`. If the data still needs analysis, route command-line/log/file processing through context-mode and return only counts, paths, failing tests, and actionable compiler/runtime errors.
+
 ## Development Workflow
 
 When implementing Unity features:
