@@ -36,7 +36,7 @@ type CommandSettingsEvent = {
 
 const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SETTINGS_DIR = path.join(EXTENSION_DIR, "hidden");
-const SETTINGS_FILE = path.join(SETTINGS_DIR, "config.json");
+const SETTINGS_FILE = path.join(SETTINGS_DIR, "settings.json");
 const SETTINGS_COMMAND = "hidden-settings";
 const PROTECTED_COMMANDS = new Set(["hidden"]);
 

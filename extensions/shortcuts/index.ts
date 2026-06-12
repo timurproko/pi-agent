@@ -16,7 +16,7 @@ import * as path from "node:path";
  *   are active. This keeps Esc behavior consistent across modal/list UIs.
  */
 const LOG = path.join(process.env.USERPROFILE || ".", ".pi", "agent", "shortcuts-debug.log");
-const SETTINGS = path.join(__dirname, "config.json");
+const SETTINGS = path.join(__dirname, "settings.json");
 const PATCHED = Symbol.for("shortcuts:tui-handleInput-patched");
 const COMMAND_SEARCH_ESC_PATCHED = Symbol.for("shortcuts:command-search-esc-clear-patched");
 
@@ -149,7 +149,7 @@ export default function shortcutsExtension(pi: ExtensionAPI): void {
 		description: "Cycle through selectable models",
 		handler: async (ctx) => {
 			if (!readSettings().cycleModels) {
-				ctx.ui.notify("Cycle models shortcut is disabled in shortcuts config.", "info");
+				ctx.ui.notify("Cycle models shortcut is disabled in shortcuts settings.", "info");
 				return;
 			}
 			const selectable = ctx.modelRegistry?.getAvailable?.() ?? [];

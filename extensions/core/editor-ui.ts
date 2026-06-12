@@ -137,7 +137,7 @@ const ITEM_SHORTCUT_KEYS = "abcdefghijklmnoprstuvwxyz".split("");
 
 export const EDITOR_EXTENSION_SETTINGS_SHORTCUTS = "↑↓ navigate • enter toggle/action • ←→ adjust • esc back";
 export const EDITOR_EXTENSION_SETTINGS_LIST_SHORTCUTS = "type to search • ↑↓ navigate • tab filter • enter/space toggle • ctrl+s save • esc back";
-export const EDITOR_EXTENSIONS_LIST_SHORTCUTS = "type to search • ↑↓ navigate • tab filter • enter toggle • space config • ctrl+s save+reload • esc back";
+export const EDITOR_EXTENSIONS_LIST_SHORTCUTS = "type to search • ↑↓ navigate • tab filter • enter toggle • space settings • ctrl+s save+reload • esc back";
 
 export function formatExtensionSettingsTitle(extensionName?: string): string {
 	const name = (extensionName ?? "").trim();
@@ -613,7 +613,7 @@ export class EditorSettingsModal implements Component, Focusable {
 		const fields = this.options.fields;
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, fields.length - 1));
 
-		const template = new EditorDialogTemplate({ theme, size: "fullscreen" });
+		const template = new EditorDialogTemplate({ theme, size: "compact" });
 		const bodyWidth = template.contentWidth(width);
 		const maxBodyLines = Math.max(1, template.maxHeight(this.options.tui) - template.nonBodyLineCount({
 			footerLines: [this.options.shortcuts ?? EDITOR_EXTENSION_SETTINGS_SHORTCUTS],
@@ -624,7 +624,7 @@ export class EditorSettingsModal implements Component, Focusable {
 		const gap = 4;
 
 		if (fields.length === 0) {
-			push(theme.fg("muted", "No config"));
+			push(theme.fg("muted", "No settings"));
 		} else {
 			const pageLineCount = fields.length > maxBodyLines && maxBodyLines > 1 ? 1 : 0;
 			const visibleFieldCount = Math.max(1, maxBodyLines - pageLineCount);
@@ -643,6 +643,10 @@ export class EditorSettingsModal implements Component, Focusable {
 			if (pageLineCount > 0) {
 				push(theme.fg("dim", `  (${this.selectedIndex + 1}/${fields.length})`));
 			}
+		}
+
+		while (bodyLines.length < maxBodyLines) {
+			push("");
 		}
 
 		return template.render(width, {

@@ -1,9 +1,4 @@
 {
   "__settingsCommand": "hidden-settings",
-  "hiddenCommands": [
-    "mcp",
-    "mcp-auth",
-    "model",
-    "scoped-models"
-  ]
+  "hiddenCommands": []
 }

@@ -19,8 +19,8 @@
  *
  *   Notes about the work go here.
  *
- * Todo config is kept next to this extension:
- * C:\Users\<user>\.pi\agent\extensions\todos\config.json.
+ * Todo settings are kept next to this extension:
+ * C:\Users\<user>\.pi\agent\extensions\todos\settings.json.
  *
  * Use `/todos` to bring up the visual todo manager or just let the LLM use them
  * naturally.
@@ -722,7 +722,7 @@ function getTodosDirLabel(cwd: string): string {
 }
 
 function getTodoExtensionSettingsPath(): string {
-	return path.join(__dirname, "config.json");
+	return path.join(__dirname, "settings.json");
 }
 
 type RawTodoSettings = Partial<TodoSettings> & {

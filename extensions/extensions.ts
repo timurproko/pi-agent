@@ -5,7 +5,7 @@
  * the option to enable / disable each one on the fly.
  *
  * UX is modeled after the scoped-models / `/tools` selector:
- *   - Config-capable list with one row per extension
+ *   - Settings-capable list with one row per extension
  *   - Toggle "enabled" / "disabled" on each row
  *   - Ctrl+S saves pending toggles by renaming entry files on disk and then
  *     reloads Pi so enabled / disabled extension changes take effect immediately
@@ -67,7 +67,7 @@ interface ExtensionInfo {
 	enabled: boolean;
 	/** True if this is the pi-extensions extension itself - never disable. */
 	isSelf: boolean;
-	/** Optional JSON config file displayed from the extension list. */
+	/** Optional JSON settings file displayed from the extension list. */
 	settingsFile?: string;
 	/** Original npm package source from settings.json, used for uninstall. */
 	packageSource?: string;
@@ -132,11 +132,11 @@ function stripExtensionSuffix(name: string): string {
 function resolveSettingsFile(entryFile: string): string | undefined {
 	const entryDir = path.dirname(entryFile);
 	const entryBase = path.basename(entryFile);
-	const configFileName = "config.json";
-	const configFile = (entryBase === "index.ts" || entryBase === "index.js")
-		? path.join(entryDir, configFileName)
-		: path.join(entryDir, stripExtensionSuffix(entryBase), configFileName);
-	return fs.existsSync(configFile) ? configFile : undefined;
+	const settingsFileName = "settings.json";
+	const settingsFile = (entryBase === "index.ts" || entryBase === "index.js")
+		? path.join(entryDir, settingsFileName)
+		: path.join(entryDir, stripExtensionSuffix(entryBase), settingsFileName);
+	return fs.existsSync(settingsFile) ? settingsFile : undefined;
 }
 
 function readPiManifestExtensions(packageJsonPath: string): string[] | null {
@@ -451,7 +451,7 @@ function getExtensionDependencyTags(ext: ExtensionInfo): string[] {
 
 function formatExtensionTags(ext: ExtensionInfo): string | undefined {
 	const tags = [
-		...(hasExtensionSettings(ext) ? ["config"] : []),
+		...(hasExtensionSettings(ext) ? ["settings"] : []),
 		...getExtensionDependencyTags(ext),
 	];
 	return tags.length > 0 ? tags.map((tag) => `[${tag}]`).join(" ") : undefined;
@@ -742,7 +742,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 								activeEntryFile = selectedItem?.value;
 								const ext = exts.find((candidate) => candidate.entryFile === selectedItem?.value);
 								if (!ext || !hasExtensionSettings(ext)) {
-									ctx.ui.notify(ext ? `${capitalizeName(ext.name)} has no config.` : "No extension selected.", "info");
+									ctx.ui.notify(ext ? `${capitalizeName(ext.name)} has no settings.` : "No extension selected.", "info");
 									return true;
 								}
 								done({ action: "settings", entryFile: ext.entryFile });
@@ -782,7 +782,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 					: "";
 				if (settingsCommand) {
 					const handled = await runExtensionSettingsCommand(pi, settingsCommand, ext, ctx);
-					if (!handled) ctx.ui.notify(`No config UI registered for ${ext.name}.`, "warning");
+					if (!handled) ctx.ui.notify(`No settings UI registered for ${ext.name}.`, "warning");
 					continue;
 				}
 
