@@ -143,11 +143,15 @@ type PlanAction = "view" | "refine" | "update" | "work";
 
 type PlanMenuAction = PlanAction | "delete";
 
-const PLAN_ACTION_ITEMS: Array<EditorModalItem<PlanAction>> = [
-	{ value: "view", label: "View", description: "Open plan view" },
+const PLAN_ACTION_ITEMS: Array<EditorModalItem<Exclude<PlanAction, "view">>> = [
 	{ value: "refine", label: "Refine", description: "Refine plan" },
 	{ value: "update", label: "Update", description: "Suggest specific changes" },
 	{ value: "work", label: "Work", description: "Start implementation" },
+];
+
+const PLAN_POST_SAVE_ACTION_ITEMS: Array<EditorModalItem<PlanAction>> = [
+	{ value: "view", label: "View", description: "Open plan view" },
+	...PLAN_ACTION_ITEMS,
 ];
 
 const PLAN_MENU_ITEMS: Array<EditorModalItem<PlanMenuAction>> = [
@@ -158,6 +162,7 @@ const PLAN_MENU_ITEMS: Array<EditorModalItem<PlanMenuAction>> = [
 interface PlanSelectorResult {
 	plan: PlanListItem;
 	query: string;
+	quickAction?: "view";
 }
 
 class PlanSelectorDialog implements Component, Focusable {
@@ -193,9 +198,9 @@ class PlanSelectorDialog implements Component, Focusable {
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredPlans.length - 1));
 	}
 
-	private selectCurrent(): void {
+	private selectCurrent(quickAction?: PlanSelectorResult["quickAction"]): void {
 		const plan = this.filteredPlans[this.selectedIndex];
-		if (plan) this.onDone({ plan, query: this.input.getValue() });
+		if (plan) this.onDone({ plan, query: this.input.getValue(), quickAction });
 	}
 
 	handleInput(keyData: string): void {
@@ -219,6 +224,10 @@ class PlanSelectorDialog implements Component, Focusable {
 		}
 		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
 			this.selectCurrent();
+			return;
+		}
+		if (keyData === " ") {
+			this.selectCurrent("view");
 			return;
 		}
 
@@ -280,7 +289,7 @@ class PlanSelectorDialog implements Component, Focusable {
 		}
 
 		push();
-		push(this.theme.fg("dim", "type to search • ↑↓ navigate • enter actions • esc close"));
+		push(this.theme.fg("dim", "type to search • ↑↓ navigate • space view • enter actions • esc close"));
 		push(border);
 		return lines;
 	}
@@ -503,6 +512,18 @@ class PlanReviewDialog {
 	}
 }
 
+async function openPlanView(plan: Pick<PlanListItem, "path">, ctx: ExtensionContext): Promise<void> {
+	try {
+		const content = fs.readFileSync(plan.path, "utf8");
+		await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
+			return new PlanReviewDialog(tui, theme, keybindings, plan.path, content, () => done());
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		ctx.ui.notify(`Could not open plan: ${message}`, "error");
+	}
+}
+
 export default function piPlansExtension(pi: ExtensionAPI): void {
 	let lastWrittenPlanFile: string | null = null;
 	let postPlanPromptScheduled = false;
@@ -526,6 +547,10 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 			});
 			if (!selected) return;
 			searchQuery = selected.query;
+			if (selected.quickAction === "view") {
+				await openPlanView(selected.plan, ctx);
+				continue;
+			}
 
 			const action = await ctx.ui.custom<PlanMenuAction | undefined>((tui, theme, keybindings, done) => {
 				return new EditorModal<PlanMenuAction>({
@@ -540,19 +565,6 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 				});
 			});
 			if (!action) continue;
-
-			if (action === "view") {
-				try {
-					const content = fs.readFileSync(selected.plan.path, "utf8");
-					await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
-						return new PlanReviewDialog(tui, theme, keybindings, selected.plan.path, content, () => done());
-					});
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					ctx.ui.notify(`Could not open plan: ${message}`, "error");
-				}
-				continue;
-			}
 
 			if (action === "refine") {
 				if (!setWorkflowMode("plan", ctx, false)) return;
@@ -669,7 +681,7 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 					theme,
 					keybindings,
 					title: "Plan saved! What would you like to do?",
-					items: PLAN_ACTION_ITEMS,
+					items: PLAN_POST_SAVE_ACTION_ITEMS,
 					shortcuts: "↑↓ navigate • enter select • esc cancel",
 					onSelect: (item) => done(item.value),
 					onCancel: () => done(undefined),
@@ -677,15 +689,7 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 			});
 
 			if (choice === "view") {
-				try {
-					const content = fs.readFileSync(planFile, "utf8");
-					await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
-						return new PlanReviewDialog(tui, theme, keybindings, planFile, content, () => done());
-					});
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					ctx.ui.notify(`Could not open plan for review: ${message}`, "error");
-				}
+				await openPlanView({ path: planFile }, ctx);
 				continue;
 			}
 

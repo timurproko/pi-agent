@@ -344,7 +344,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 		onSelect: (todo: TodoFrontMatter) => void,
 		onCancel: () => void,
 		initialSearchInput?: string,
-		private onQuickAction?: (todo: TodoFrontMatter, action: "work" | "refine") => void,
+		private onQuickView?: (todo: TodoFrontMatter) => void,
 	) {
 		super();
 		this.tui = tui;
@@ -434,7 +434,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.hintText.setText(
 			this.theme.fg(
 				"dim",
-				"type to search • ↑↓ navigate • tab filter • enter actions • esc close",
+				"type to search • ↑↓ navigate • tab filter • space view • enter actions • esc close",
 			),
 		);
 	}
@@ -526,6 +526,11 @@ class TodoSelectorComponent extends Container implements Focusable {
 		if (kb.matches(keyData, "tui.select.confirm")) {
 			const selected = this.filteredTodos[this.selectedIndex];
 			if (selected) this.onSelectCallback(selected);
+			return;
+		}
+		if (keyData === " ") {
+			const selected = this.filteredTodos[this.selectedIndex];
+			if (selected) this.onQuickView?.(selected);
 			return;
 		}
 		if (kb.matches(keyData, "tui.select.cancel")) {
@@ -1927,7 +1932,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	const openTodosCommand = async (args: string | undefined, ctx: any) => {
+	const openTodosCommand = async (args: string | undefined, ctx: ExtensionContext) => {
 		let todosDir = getTodosDir(ctx.cwd);
 		let todos = await listTodos(todosDir);
 		const searchTerm = (args ?? "").trim();
@@ -2093,7 +2098,6 @@ export default function todosExtension(pi: ExtensionAPI) {
 						keybindings,
 						title: `Actions for "${record.title || "(untitled)"}"`,
 						items: [
-							{ value: "view", label: "View", description: "Open todo view" },
 							{ value: "refine", label: "Refine", description: "Refine todo" },
 							{ value: "work", label: "Work", description: "Start implementation" },
 							closed
@@ -2181,14 +2185,11 @@ export default function todosExtension(pi: ExtensionAPI) {
 						done();
 					},
 					searchTerm || undefined,
-					(todo, action) => {
-						const title = todo.title || "(untitled)";
-						nextPromptAutoSend = action === "refine";
-						nextPromptRefineTodoId = nextPromptAutoSend ? todo.id : null;
-						nextPrompt = nextPromptAutoSend
-							? buildRefinePrompt(todo.id, title)
-							: `work on todo ${formatTodoId(todo.id)} "${title}"`;
-						done();
+					(todo) => {
+						void (async () => {
+							const record = await resolveTodoRecord(todo);
+							if (record) openDetail(record);
+						})();
 					},
 				);
 
