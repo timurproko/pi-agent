@@ -7,7 +7,8 @@
   "enableSkillCommands": false,
   "packages": [
     "npm:context-mode",
-    "npm:pi-cursor-provider"
+    "npm:pi-cursor-provider",
+    "npm:pi-mcp-adapter"
   ],
   "enabledModels": [
     "github-copilot/claude-opus-4.6",

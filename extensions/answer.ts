@@ -476,8 +476,8 @@ export default function (pi: ExtensionAPI) {
 				clearInterval(pulseTimer);
 				const label = options.statusLabel ?? "cmd";
 				ctx.ui.setStatus("aaa-pi-plan-mode", ctx.ui.theme.fg(label === "plan" ? "accent" : "piPlanCmdMode", label));
-				// Ask the MCP status extension to recompute and redraw its footer item.
-				(globalThis as any).__piMcpRefreshStatus?.();
+				// Ask the MCPS status extension to recompute and redraw its footer item.
+				((globalThis as any).__piMcpsRefreshStatus ?? (globalThis as any).__piMcpRefreshStatus)?.();
 			};
 
 			// Get auth

@@ -7,8 +7,8 @@
  * UX is modeled after the scoped-models / `/tools` selector:
  *   - SettingsList with one row per extension
  *   - Toggle "enabled" / "disabled" on each row
- *   - Ctrl+S saves pending toggles by renaming entry files on disk without
- *     closing the dialog, so the visible enabled / disabled state updates in place
+ *   - Ctrl+S saves pending toggles by renaming entry files on disk and then
+ *     reloads Pi so enabled / disabled extension changes take effect immediately
  *
  * Disable strategy
  * ----------------
@@ -70,7 +70,7 @@ const SELF_FILENAMES = new Set([
 	"extensions.ts",
 	"extensions.js",
 ]);
-const PI_MCP_DIRNAME = "pi-mcp";
+const PI_MCP_DIRNAME = "mcps";
 const PI_MCP_STATUS_PATCH_KEY = "__piMcpStatusPatch";
 const UNINSTALL_EXTENSION_FIELD_KEY = "__uninstallExtension";
 const SETTINGS_COMMAND_FIELD_KEY = "__settingsCommand";
@@ -487,9 +487,9 @@ function restoreStalePiMcpStatusPatch(ctx: ExtensionContext): void {
 	ui.setStatus = patch.originalSetStatus as typeof ui.setStatus;
 	delete ui[PI_MCP_STATUS_PATCH_KEY];
 
-	// pi-mcp / pi-mcp-adapter is disabled — clear the slot entirely instead of
-	// re-seeding `MCP: 0/N servers`. With the adapter off there is nothing to
-	// connect, so an empty footer slot is the honest UI.
+	// The local mcps status wrapper is disabled — clear the slot entirely instead
+	// of re-seeding `MCP: 0/N servers`. With the wrapper off there is nothing
+	// responsible for redrawing the customized footer slot.
 	ui.setStatus("mcp", undefined);
 }
 
@@ -572,7 +572,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 			const desired = new Map<string, boolean>();
 			for (const e of exts) desired.set(e.entryFile, e.enabled);
 
-			const savePendingToggles = (): void => {
+			const savePendingToggles = (): number => {
 				const { changed, changedEntryFiles, errors } = applyToggles(exts, desired);
 				const changedSet = new Set(changedEntryFiles);
 				for (const ext of exts) {
@@ -587,10 +587,11 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 				}
 
 				if (changed > 0) {
-					ctx.ui.notify(`Saved ${changed} extension${changed === 1 ? "" : "s"}.`, "info");
+					ctx.ui.notify(`Saved ${changed} extension${changed === 1 ? "" : "s"}, reloading...`, "info");
 				} else if (errors.length === 0) {
 					ctx.ui.notify("No changes.", "info");
 				}
+				return changed;
 			};
 
 			let activeFilter: ExtensionFilter | undefined;
@@ -611,7 +612,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 						initialSelectedValue: activeEntryFile,
 						search: true,
 						initialQuery,
-						shortcuts: "type to search · ↑↓ navigate · tab filter · enter toggle · space settings · ctrl+s save · esc cancel",
+						shortcuts: "type to search · ↑↓ navigate · tab filter · enter toggle · space settings · ctrl+s save+reload · esc cancel",
 						noItemsText: (query) => query.trim() ? "No matching extensions" : "No extensions yet",
 						getStatusText: () => exts.some((ext) => (desired.get(ext.entryFile) ?? ext.enabled) !== ext.enabled) ? "(unsaved)" : undefined,
 						getItems: (filter, query = "") => filterExtensions(exts, filter ?? defaultFilter ?? "global")
@@ -652,7 +653,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 							if (data === "\x13") {
 								activeFilter = filter ?? defaultFilter;
 								activeEntryFile = selectedItem?.value;
-								savePendingToggles();
+								done("apply");
 								return true;
 							}
 							return false;
@@ -714,17 +715,20 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 						continue;
 					}
 					ctx.ui.notify(`Uninstalled ${ext.name}, reloading...`, "info");
-					void ctx.reload();
+					await ctx.reload();
 					return;
 				}
 			}
 
-			// Esc / cancel: do nothing. Ctrl+S saves in place without closing the dialog.
+			// Esc / cancel: do nothing. Ctrl+S saves, closes this old UI frame, then reloads.
 			if (result !== "apply") {
 				return;
 			}
 
-			savePendingToggles();
+			if (savePendingToggles() > 0) {
+				await ctx.reload();
+			}
+			return;
 		},
 	});
 }

@@ -1,13 +1,17 @@
 /**
- * MCP Extension — Status Bar + /mcp-list Command
+ * MCPS Extension — Status Bar + /mcps Command
  *
  * Status bar:
- *   - `mcp: 2/5 (houdini, context-mode)` (connected count + names)
- *   - `mcp: houdini connecting...` (during connection, animated)
- *   - `mcp: 0/5` (none connected)
+ *   - `mcps: 2/5 (houdini, context-mode)` (connected count + names)
+ *   - `mcps: houdini connecting...` (during connection, animated)
+ *   - `mcps: 0/5` (none connected)
  *
  * Command:
- *   /mcp — shows the custom MCP server dialog with connection and direct-tool toggles.
+ *   /mcps — shows the custom MCP server dialog with connection and direct-tool toggles.
+ *
+ * Runtime:
+ *   - The MCP runtime/proxy/direct tools are provided by the global npm package
+ *     `pi-mcp-adapter`; this local extension is only the status/command wrapper.
  *
  * Detection:
  *   - Reads mcp-cache.json for tool→server mapping
@@ -19,8 +23,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { EditorConfirmModal, EditorModal } from "../core/editor-ui";
-import mcpAdapter from "./modules/adapter";
+import { EditorConfirmModal, EditorModal } from "./core/editor-ui";
 
 const STATUS_KEY = "mcp";
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -43,20 +46,6 @@ function readConfiguredServerNames(): string[] {
 
 function isDirectToolsEnabled(serverName: string): boolean {
 	return !!readConfiguredServers()[serverName]?.directTools;
-}
-
-function setDirectToolsEnabled(serverName: string, enabled: boolean): boolean {
-	try {
-		const configPath = path.join(getAgentDir(), "mcp.json");
-		const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-		const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
-		if (!mcpServers[serverName]) return false;
-		mcpServers[serverName].directTools = enabled;
-		fs.writeFileSync(configPath, JSON.stringify(raw, null, 2));
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 async function askToEnableMcpServer(ctx: ExtensionContext, serverName: string): Promise<boolean> {
@@ -141,12 +130,12 @@ function formatStatusBar(
 ): string {
 	const total = readConfiguredServerNames().length;
 
-	if (total === 0) return paintMuted(ctx, "mcp: —");
+	if (total === 0) return paintMuted(ctx, "mcps: —");
 
 	if (connectingName) {
 		const dots = ".".repeat(pulseFrame % 4);
 		const pad = " ".repeat(3 - Math.min(dots.length, 3));
-		return `${paintMuted(ctx, "mcp: ")}${paintMuted(ctx, `${connectingName}${dots}${pad}`)}`;
+		return `${paintMuted(ctx, "mcps: ")}${paintMuted(ctx, `${connectingName}${dots}${pad}`)}`;
 	}
 
 	const configuredNames = readConfiguredServerNames();
@@ -159,14 +148,12 @@ function formatStatusBar(
 	const count = sortedConnectedNames.length;
 	const counter = `${count}/${total}`;
 	const namesSuffix = sortedConnectedNames.length > 0 ? ` (${sortedConnectedNames.join(", ")})` : "";
-	return `${paintMuted(ctx, "mcp: ")}${paintMuted(ctx, `${counter}${namesSuffix}`)}`;
+	return `${paintMuted(ctx, "mcps: ")}${paintMuted(ctx, `${counter}${namesSuffix}`)}`;
 }
 
 // ─── Extension ──────────────────────────────────────────────────────
 
-export default function mcpExtension(pi: ExtensionAPI): void {
-	mcpAdapter(pi);
-
+export default function mcpsExtension(pi: ExtensionAPI): void {
 	const connectedServers = new Set<string>();
 	let toolToServer = buildToolToServerMap();
 	let connectingTarget: string | undefined;
@@ -211,9 +198,12 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	(globalThis as any).__piMcpRefreshStatus = () => {
+	const refreshStatus = () => {
 		if (activeCtx) updateStatus(activeCtx);
 	};
+	(globalThis as any).__piMcpsRefreshStatus = refreshStatus;
+	// Backward-compatible alias for extensions that still know the old MCP wrapper name.
+	(globalThis as any).__piMcpRefreshStatus = refreshStatus;
 
 	function markConnected(serverName: string, ctx: ExtensionContext): void {
 		if (connectedServers.has(serverName)) return;
@@ -288,7 +278,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 		updateStatus(ctx);
 	}
 
-	// ─── /mcp-list Command ──────────────────────────────────────────
+	// ─── /mcps Command ──────────────────────────────────────────────
 
 	function getMcpServers(): { name: string; toolCount: number; connected: boolean; type: "stdio" | "http" }[] {
 		const mcpServers = readConfiguredServers();
@@ -485,7 +475,7 @@ export default function mcpExtension(pi: ExtensionAPI): void {
 
 		if (!commandRegistered) {
 			commandRegistered = true;
-			pi.registerCommand("mcp", mcpStatusCommand);
+			pi.registerCommand("mcps", mcpStatusCommand);
 		}
 
 		activeCtx = ctx;
