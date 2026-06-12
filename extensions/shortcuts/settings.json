@@ -1,4 +1,5 @@
 {
   "cycleModels": true,
-  "bareEscHandling": true
+  "bareEscHandling": true,
+  "commandSearchEscClears": true
 }

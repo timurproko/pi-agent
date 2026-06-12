@@ -18,15 +18,18 @@ import * as path from "node:path";
 const LOG = path.join(process.env.USERPROFILE || ".", ".pi", "agent", "shortcuts-debug.log");
 const SETTINGS = path.join(__dirname, "settings.json");
 const PATCHED = Symbol.for("shortcuts:tui-handleInput-patched");
+const COMMAND_SEARCH_ESC_PATCHED = Symbol.for("shortcuts:command-search-esc-clear-patched");
 
 interface ShortcutsSettings {
 	cycleModels: boolean;
 	bareEscHandling: boolean;
+	commandSearchEscClears: boolean;
 }
 
 const DEFAULT_SETTINGS: ShortcutsSettings = {
 	cycleModels: true,
 	bareEscHandling: true,
+	commandSearchEscClears: true,
 };
 
 function readSettings(): ShortcutsSettings {
@@ -35,6 +38,7 @@ function readSettings(): ShortcutsSettings {
 		return {
 			cycleModels: raw.cycleModels ?? DEFAULT_SETTINGS.cycleModels,
 			bareEscHandling: raw.bareEscHandling ?? DEFAULT_SETTINGS.bareEscHandling,
+			commandSearchEscClears: raw.commandSearchEscClears ?? DEFAULT_SETTINGS.commandSearchEscClears,
 		};
 	} catch {
 		return DEFAULT_SETTINGS;
@@ -47,6 +51,43 @@ function log(msg: string): void {
 	} catch {
 		// Debug logging must never break shortcuts.
 	}
+}
+
+function isTopLevelCommandSearch(editor: any): boolean {
+	if (!editor?.autocompleteState || !editor?.autocompleteList) return false;
+
+	const prefix = typeof editor.autocompletePrefix === "string" ? editor.autocompletePrefix : undefined;
+	if (!prefix || !prefix.startsWith("/") || prefix.slice(1).includes("/") || prefix.includes(" ")) {
+		return false;
+	}
+
+	const text = typeof editor.getText === "function" ? editor.getText() : "";
+	const state = editor.state as ({ lines?: string[]; cursorLine?: number; cursorCol?: number } | undefined);
+	if (!state || !Array.isArray(state.lines) || typeof state.cursorLine !== "number" || typeof state.cursorCol !== "number") {
+		return text === prefix;
+	}
+
+	const currentLine = state.lines[state.cursorLine] ?? "";
+	const beforeCursor = currentLine.slice(0, state.cursorCol);
+	const afterCursor = currentLine.slice(state.cursorCol);
+	return state.lines.length === 1 && beforeCursor === prefix && afterCursor.trim() === "";
+}
+
+function patchCommandSearchEscClears(editor: any): void {
+	if (!editor || typeof editor.handleInput !== "function" || editor[COMMAND_SEARCH_ESC_PATCHED]) return;
+
+	const original = editor.handleInput.bind(editor);
+	editor.handleInput = (data: string) => {
+		if (readSettings().commandSearchEscClears && data === "\x1b" && isTopLevelCommandSearch(editor)) {
+			log("command search ESC clears editor text");
+			if (typeof editor.cancelAutocomplete === "function") editor.cancelAutocomplete();
+			if (typeof editor.setText === "function") editor.setText("");
+			else if (typeof editor.onChange === "function") editor.onChange("");
+			return;
+		}
+		original(data);
+	};
+	editor[COMMAND_SEARCH_ESC_PATCHED] = true;
 }
 
 function patchBareEscHandling(tui: any, source: string): void {
@@ -93,6 +134,7 @@ export default function shortcutsExtension(pi: ExtensionAPI): void {
 
 		const ok = chainEditor(ui, (editor, tui) => {
 			log("chainEditor decorator ran");
+			patchCommandSearchEscClears(editor);
 			patchBareEscHandling(tui, "chainEditor");
 			return editor;
 		});
