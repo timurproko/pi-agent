@@ -20,7 +20,7 @@ type CommandInfo = {
 	source: CommandSource;
 };
 
-type HiddenSettings = {
+type MoreSettings = {
 	__settingsCommand?: string;
 	hiddenCommands?: string[];
 };
@@ -35,10 +35,10 @@ type CommandSettingsEvent = {
 };
 
 const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
-const SETTINGS_DIR = path.join(EXTENSION_DIR, "hidden");
+const SETTINGS_DIR = path.join(EXTENSION_DIR, "more");
 const SETTINGS_FILE = path.join(SETTINGS_DIR, "settings.json");
-const SETTINGS_COMMAND = "hidden-settings";
-const PROTECTED_COMMANDS = new Set(["hidden"]);
+const SETTINGS_COMMAND = "more-settings";
+const PROTECTED_COMMANDS = new Set(["more"]);
 
 const BUILTIN_COMMANDS: CommandInfo[] = [
 	{ name: "settings", description: "Open settings menu", source: "builtin" },
@@ -71,9 +71,9 @@ type InteractiveModeWithEditor = {
 	};
 };
 
-type HiddenGlobalState = typeof globalThis & {
-	__piHiddenInteractiveMode?: InteractiveModeWithEditor;
-	__piHiddenInteractivePatchInstalled?: boolean;
+type MoreGlobalState = typeof globalThis & {
+	__piMoreInteractiveMode?: InteractiveModeWithEditor;
+	__piMoreInteractivePatchInstalled?: boolean;
 };
 
 const COMMAND_FILTERS: Array<EditorModalFilter<CommandFilter>> = [
@@ -82,8 +82,8 @@ const COMMAND_FILTERS: Array<EditorModalFilter<CommandFilter>> = [
 ];
 
 function installInteractiveCommandExecutor(): void {
-	const state = globalThis as HiddenGlobalState;
-	if (state.__piHiddenInteractivePatchInstalled) return;
+	const state = globalThis as MoreGlobalState;
+	if (state.__piMoreInteractivePatchInstalled) return;
 
 	const proto = (InteractiveMode as unknown as { prototype?: Record<string, unknown> }).prototype;
 	if (!proto) return;
@@ -92,7 +92,7 @@ function installInteractiveCommandExecutor(): void {
 		const original = proto[name];
 		if (typeof original !== "function") return false;
 		proto[name] = function patchedInteractiveModeMethod(this: InteractiveModeWithEditor, ...args: unknown[]) {
-			state.__piHiddenInteractiveMode = this;
+			state.__piMoreInteractiveMode = this;
 			return original.apply(this, args);
 		};
 		return true;
@@ -103,12 +103,12 @@ function installInteractiveCommandExecutor(): void {
 	// autocomplete wrapper during session_start, so it also captures the current
 	// InteractiveMode instance on reloads where submit handlers are already set.
 	const patchedAutocomplete = patchMethod("setupAutocompleteProvider");
-	state.__piHiddenInteractivePatchInstalled = patchedSubmit || patchedAutocomplete;
+	state.__piMoreInteractivePatchInstalled = patchedSubmit || patchedAutocomplete;
 }
 
 function executeInteractiveSlashCommand(commandName: string): boolean {
-	const state = globalThis as HiddenGlobalState;
-	const mode = state.__piHiddenInteractiveMode;
+	const state = globalThis as MoreGlobalState;
+	const mode = state.__piMoreInteractiveMode;
 	const submit = mode?.defaultEditor?.onSubmit;
 	if (typeof submit !== "function") return false;
 
@@ -125,7 +125,7 @@ function ensureSettingsFile(): void {
 	}
 }
 
-function readSettings(): HiddenSettings {
+function readSettings(): MoreSettings {
 	ensureSettingsFile();
 	try {
 		const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
@@ -141,7 +141,7 @@ function readSettings(): HiddenSettings {
 	}
 }
 
-function writeSettings(settings: HiddenSettings): void {
+function writeSettings(settings: MoreSettings): void {
 	fs.mkdirSync(SETTINGS_DIR, { recursive: true });
 	const uniqueHidden = [...new Set(settings.hiddenCommands ?? [])]
 		.filter((name) => name && !PROTECTED_COMMANDS.has(name))
@@ -226,7 +226,7 @@ function wrapAutocompleteProvider(provider: AutocompleteProvider): AutocompleteP
 	};
 }
 
-async function showHiddenSettings(
+async function showMoreSettings(
 	pi: ExtensionAPI,
 	args: string,
 	ctx: ExtensionCommandContext,
@@ -248,7 +248,7 @@ async function showHiddenSettings(
 		tui,
 		theme,
 		keybindings,
-		title: options.title ?? formatExtensionSettingsTitle("hidden"),
+		title: options.title ?? formatExtensionSettingsTitle("more"),
 		filters: COMMAND_FILTERS,
 		initialFilter: activeFilter,
 		initialSelectedValue: activeValue,
@@ -296,11 +296,11 @@ async function showHiddenSettings(
 	if (result === "back") return;
 }
 
-async function showHiddenCommand(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void> {
+async function showMoreCommand(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const hiddenSet = getHiddenSet();
 	const hiddenCommands = getAllCommands(pi).filter((command) => hiddenSet.has(command.name));
 	if (hiddenCommands.length === 0) {
-		await showHiddenSettings(pi, args, ctx);
+		await showMoreSettings(pi, args, ctx);
 		return;
 	}
 
@@ -308,12 +308,12 @@ async function showHiddenCommand(pi: ExtensionAPI, args: string, ctx: ExtensionC
 		tui,
 		theme,
 		keybindings,
-		title: "Hidden",
+		title: "More",
 		search: true,
 		initialQuery: args.trim(),
 		maxVisible: Math.min(10, Math.max(1, hiddenCommands.length)),
 		shortcuts: "type to search • ↑↓ navigate • enter run • esc back",
-		noItemsText: (query) => query.trim() ? "No matching hidden commands" : "No hidden commands",
+		noItemsText: (query) => query.trim() ? "No matching more commands" : "No more commands",
 		descriptionGap: 4,
 		getItems: (_filter, query = "") => hiddenCommands
 			.filter((command) => matchesCommand(command, query))
@@ -340,14 +340,14 @@ function isCommandSettingsEvent(data: unknown): data is CommandSettingsEvent {
 	return !!ctx?.ui && typeof ctx.ui.custom === "function";
 }
 
-export default function hiddenCommandsExtension(pi: ExtensionAPI): void {
+export default function moreCommandsExtension(pi: ExtensionAPI): void {
 	installInteractiveCommandExecutor();
 	ensureSettingsFile();
 
 	pi.events.on(`command-settings:${SETTINGS_COMMAND}`, (data) => {
 		if (!isCommandSettingsEvent(data) || !data.ctx) return;
-		void showHiddenSettings(pi, data.args ?? "", data.ctx, {
-			title: data.title ?? formatExtensionSettingsTitle(data.extensionName ?? "hidden"),
+		void showMoreSettings(pi, data.args ?? "", data.ctx, {
+			title: data.title ?? formatExtensionSettingsTitle(data.extensionName ?? "more"),
 			shortcuts: data.shortcuts ?? EDITOR_EXTENSION_SETTINGS_LIST_SHORTCUTS,
 		}).finally(() => data.done?.());
 	});
@@ -356,9 +356,9 @@ export default function hiddenCommandsExtension(pi: ExtensionAPI): void {
 		ctx.ui.addAutocompleteProvider((provider) => wrapAutocompleteProvider(provider));
 	});
 
-	pi.registerCommand("hidden", {
-		description: "Show and run hidden slash commands",
-		handler: async (args, ctx) => showHiddenCommand(pi, args, ctx),
+	pi.registerCommand("more", {
+		description: "Show and run more slash commands",
+		handler: async (args, ctx) => showMoreCommand(pi, args, ctx),
 	});
 
 }

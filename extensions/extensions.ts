@@ -426,7 +426,7 @@ function filterExtensions(exts: ExtensionInfo[], filter: ExtensionFilter): Exten
 function matchesExtension(ext: ExtensionInfo, query: string): boolean {
 	const normalized = query.trim().toLowerCase();
 	if (!normalized) return true;
-	return `${ext.name} ${ext.scope} ${ext.entryFile}`.toLowerCase().includes(normalized);
+	return `${ext.name} ${ext.scope} ${ext.entryFile} ${ext.dependencies.join(" ")}`.toLowerCase().includes(normalized);
 }
 
 function getExtensionFilterOptions(exts: ExtensionInfo[]): Array<EditorModalFilter<ExtensionFilter>> {
@@ -449,12 +449,13 @@ function getExtensionDependencyTags(ext: ExtensionInfo): string[] {
 	return ext.dependencies;
 }
 
-function formatExtensionTags(ext: ExtensionInfo): string | undefined {
-	const tags = [
-		...(hasExtensionSettings(ext) ? ["settings"] : []),
-		...getExtensionDependencyTags(ext),
-	];
-	return tags.length > 0 ? tags.map((tag) => `[${tag}]`).join(" ") : undefined;
+function formatExtensionDependencyDescription(ext: ExtensionInfo): string | undefined {
+	const dependencies = getExtensionDependencyTags(ext);
+	return dependencies.length > 0 ? `(${dependencies.join(", ")})` : undefined;
+}
+
+function formatExtensionSettingsTag(ext: ExtensionInfo): string | undefined {
+	return hasExtensionSettings(ext) ? "[settings]" : undefined;
 }
 
 function areExtensionDependenciesEnabled(
@@ -724,7 +725,8 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 							.map((ext) => ({
 								value: ext.entryFile,
 								label: ext.name,
-								description: formatExtensionTags(ext),
+								description: formatExtensionDependencyDescription(ext),
+								descriptionSuffix: formatExtensionSettingsTag(ext),
 								checked: desired.get(ext.entryFile) ?? ext.enabled,
 								muted: !areExtensionDependenciesEnabled(ext, exts, desired),
 							})),

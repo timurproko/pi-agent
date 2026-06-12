@@ -645,10 +645,6 @@ export class EditorSettingsModal implements Component, Focusable {
 			}
 		}
 
-		while (bodyLines.length < maxBodyLines) {
-			push("");
-		}
-
 		return template.render(width, {
 			title: this.getTitle(),
 			bodyLines,
