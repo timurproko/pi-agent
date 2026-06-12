@@ -2,9 +2,13 @@ import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext, Skill } from "@earendil-works/pi-coding-agent";
 import { stripFrontmatter } from "@earendil-works/pi-coding-agent";
 import { EditorSearchModal } from "./core/editor-ui";
+import { createCommandTunnelAutocompleteProvider, createCommandTunnelEditorFactory, transformCommandTunnelInput, type CommandTunnel, type CommandTunnelItem } from "./core/command-tunnel";
+
+const SKILLS_COMMAND = "skills";
+const SKILL_COMMAND_PREFIX = "skill:";
 
 function skillCommandName(skill: Skill): string {
-	return `skill:${skill.name}`;
+	return `${SKILL_COMMAND_PREFIX}${skill.name}`;
 }
 
 function oneLineDescription(skill: Skill): string {
@@ -14,8 +18,8 @@ function oneLineDescription(skill: Skill): string {
 function matchesSkill(skill: Skill, query: string): boolean {
 	if (!query) return true;
 	const normalized = query.toLowerCase();
-	const normalizedWithoutPrefix = normalized.startsWith("skill:")
-		? normalized.slice("skill:".length)
+	const normalizedWithoutPrefix = normalized.startsWith(SKILL_COMMAND_PREFIX)
+		? normalized.slice(SKILL_COMMAND_PREFIX.length)
 		: normalized;
 
 	return skillCommandName(skill).toLowerCase().includes(normalized)
@@ -59,21 +63,70 @@ function getSkills(ctx: ExtensionCommandContext): Skill[] {
 	return [...(ctx.getSystemPromptOptions().skills ?? [])].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function getSkillCommandItems(pi: ExtensionAPI, query: string): CommandTunnelItem[] {
+	const normalizedQuery = query.trim().toLowerCase();
+	const normalizedWithoutPrefix = normalizedQuery.startsWith(SKILL_COMMAND_PREFIX)
+		? normalizedQuery.slice(SKILL_COMMAND_PREFIX.length)
+		: normalizedQuery;
+
+	return pi.getCommands()
+		.filter((command) => command.source === "skill" && command.name.startsWith(SKILL_COMMAND_PREFIX))
+		.filter((command) => {
+			if (!normalizedQuery) return true;
+			const skillName = command.name.slice(SKILL_COMMAND_PREFIX.length);
+			return command.name.toLowerCase().includes(normalizedQuery)
+				|| skillName.toLowerCase().includes(normalizedWithoutPrefix)
+				|| (command.description ?? "").toLowerCase().includes(normalizedQuery);
+		})
+		.sort((a, b) => a.name.localeCompare(b.name))
+		.map((command) => {
+			const skillName = command.name.slice(SKILL_COMMAND_PREFIX.length);
+			return {
+				value: skillName,
+				label: `${SKILLS_COMMAND}:${skillName}`,
+				description: command.description?.replace(/\s+/g, " ").trim(),
+			};
+		});
+}
+
+function createSkillsTunnel(pi: ExtensionAPI): CommandTunnel {
+	return {
+		commandName: SKILLS_COMMAND,
+		hideGlobalValuePrefixes: [SKILL_COMMAND_PREFIX],
+		getItems: (query) => getSkillCommandItems(pi, query),
+		toInputText: (skillName, rest) => `/${SKILL_COMMAND_PREFIX}${skillName}${rest}`,
+	};
+}
+
 export default function skillsExtension(pi: ExtensionAPI) {
-	pi.registerCommand("skills", {
+	const skillsTunnel = createSkillsTunnel(pi);
+
+	pi.on("session_start", async (_event, ctx) => {
+		if (!ctx.hasUI) return;
+		ctx.ui.addAutocompleteProvider((provider) => createCommandTunnelAutocompleteProvider(provider, [skillsTunnel]));
+		ctx.ui.setEditorComponent(createCommandTunnelEditorFactory([skillsTunnel], ctx.ui.getEditorComponent()));
+	});
+
+	pi.on("input", (event) => {
+		const text = transformCommandTunnelInput(event.text, [skillsTunnel]);
+		if (text !== event.text) return { action: "transform" as const, text };
+		return { action: "continue" as const };
+	});
+
+	pi.registerCommand(SKILLS_COMMAND, {
 		description: "Browse, search, and apply a skill",
 		getArgumentCompletions: (prefix) => {
 			const normalizedPrefix = prefix.trim().toLowerCase();
 			const skills = pi.getCommands()
-				.filter((command) => command.source === "skill" && command.name.startsWith("skill:"))
+				.filter((command) => command.source === "skill" && command.name.startsWith(SKILL_COMMAND_PREFIX))
 				.map((command) => ({
 					commandName: command.name,
-					name: command.name.slice("skill:".length),
+					name: command.name.slice(SKILL_COMMAND_PREFIX.length),
 					description: command.description ?? "",
 				}))
 				.filter((skill) => {
-					const prefix = normalizedPrefix.startsWith("skill:")
-						? normalizedPrefix.slice("skill:".length)
+					const prefix = normalizedPrefix.startsWith(SKILL_COMMAND_PREFIX)
+						? normalizedPrefix.slice(SKILL_COMMAND_PREFIX.length)
 						: normalizedPrefix;
 					return skill.commandName.toLowerCase().startsWith(normalizedPrefix)
 						|| skill.name.toLowerCase().startsWith(prefix);
@@ -96,8 +149,8 @@ export default function skillsExtension(pi: ExtensionAPI) {
 
 			if (trimmedArgs.length > 0) {
 				const [maybeSkillCommand, ...rest] = trimmedArgs.split(/\s+/);
-				const maybeSkillName = maybeSkillCommand.startsWith("skill:")
-					? maybeSkillCommand.slice("skill:".length)
+				const maybeSkillName = maybeSkillCommand.startsWith(SKILL_COMMAND_PREFIX)
+					? maybeSkillCommand.slice(SKILL_COMMAND_PREFIX.length)
 					: maybeSkillCommand;
 				selectedSkill = skills.find((skill) => skill.name === maybeSkillName);
 				if (selectedSkill) {

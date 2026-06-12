@@ -3,7 +3,13 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { InteractiveMode, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteProvider, AutocompleteSuggestions } from "@earendil-works/pi-tui";
-import { EditorModal, type EditorModalFilter, type EditorModalItem } from "./core/editor-ui";
+import {
+	EDITOR_EXTENSION_SETTINGS_LIST_SHORTCUTS,
+	EditorModal,
+	formatExtensionSettingsTitle,
+	type EditorModalFilter,
+	type EditorModalItem,
+} from "./core/editor-ui";
 
 type CommandSource = "builtin" | SlashCommandInfo["source"];
 type CommandFilter = "all" | "hidden";
@@ -22,6 +28,10 @@ type HiddenSettings = {
 type CommandSettingsEvent = {
 	args?: string;
 	ctx?: ExtensionCommandContext;
+	extensionName?: string;
+	title?: string;
+	shortcuts?: string;
+	done?: () => void;
 };
 
 const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -216,7 +226,12 @@ function wrapAutocompleteProvider(provider: AutocompleteProvider): AutocompleteP
 	};
 }
 
-async function showHiddenSettings(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void> {
+async function showHiddenSettings(
+	pi: ExtensionAPI,
+	args: string,
+	ctx: ExtensionCommandContext,
+	options: { title?: string; shortcuts?: string } = {},
+): Promise<void> {
 	let hiddenSet = getHiddenSet();
 	let savedHiddenSet = new Set(hiddenSet);
 	let activeFilter: CommandFilter = "all";
@@ -229,17 +244,17 @@ async function showHiddenSettings(pi: ExtensionAPI, args: string, ctx: Extension
 		ctx.ui.notify(`Saved ${hiddenSet.size} hidden command${hiddenSet.size === 1 ? "" : "s"}.`, "info");
 	};
 
-	const result = await ctx.ui.custom<string | "cancel">((tui, theme, keybindings, done) => new EditorModal<string, CommandFilter>({
+	const result = await ctx.ui.custom<string | "back">((tui, theme, keybindings, done) => new EditorModal<string, CommandFilter>({
 		tui,
 		theme,
 		keybindings,
-		title: "Hidden Commands",
+		title: options.title ?? formatExtensionSettingsTitle("hidden"),
 		filters: COMMAND_FILTERS,
 		initialFilter: activeFilter,
 		initialSelectedValue: activeValue,
 		search: true,
 		initialQuery,
-		shortcuts: "type to search · ↑↓ navigate · tab filter · enter/space toggle · ctrl+s save · esc cancel",
+		shortcuts: options.shortcuts ?? EDITOR_EXTENSION_SETTINGS_LIST_SHORTCUTS,
 		noItemsText: (query) => query.trim() ? "No matching commands" : "No commands",
 		descriptionGap: 4,
 		getStatusText: () => {
@@ -254,7 +269,7 @@ async function showHiddenSettings(pi: ExtensionAPI, args: string, ctx: Extension
 			else hiddenSet.add(item.value);
 			activeValue = item.value;
 		},
-		onCancel: () => done("cancel"),
+		onCancel: () => done("back"),
 		onFilterChange: (filter) => {
 			activeFilter = filter;
 		},
@@ -278,7 +293,7 @@ async function showHiddenSettings(pi: ExtensionAPI, args: string, ctx: Extension
 		},
 	}));
 
-	if (result === "cancel") return;
+	if (result === "back") return;
 }
 
 async function showHiddenCommand(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -331,7 +346,10 @@ export default function hiddenCommandsExtension(pi: ExtensionAPI): void {
 
 	pi.events.on(`command-settings:${SETTINGS_COMMAND}`, (data) => {
 		if (!isCommandSettingsEvent(data) || !data.ctx) return;
-		void showHiddenSettings(pi, data.args ?? "", data.ctx);
+		void showHiddenSettings(pi, data.args ?? "", data.ctx, {
+			title: data.title ?? formatExtensionSettingsTitle(data.extensionName ?? "hidden"),
+			shortcuts: data.shortcuts ?? EDITOR_EXTENSION_SETTINGS_LIST_SHORTCUTS,
+		}).finally(() => data.done?.());
 	});
 
 	pi.on("session_start", async (_event, ctx) => {

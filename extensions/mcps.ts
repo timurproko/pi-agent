@@ -24,10 +24,12 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { EditorConfirmModal, EditorModal } from "./core/editor-ui";
+import { createCommandTunnelAutocompleteProvider, createCommandTunnelEditorFactory, type CommandTunnel, type CommandTunnelItem } from "./core/command-tunnel";
 
 export const piExtensionDependencies = ["pi-mcp-adapter"];
 
 const STATUS_KEY = "mcp";
+const MCPS_COMMAND = "mcps";
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
 // ─── Shared Helpers ─────────────────────────────────────────────────
@@ -369,15 +371,65 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 		});
 	}
 
+	function getMcpServerTunnelItems(query: string): CommandTunnelItem[] {
+		const normalizedQuery = query.trim().toLowerCase();
+		return getMcpServers()
+			.filter((server) => !normalizedQuery || server.name.toLowerCase().includes(normalizedQuery) || server.type.includes(normalizedQuery))
+			.sort((a, b) => a.name.localeCompare(b.name))
+			.map((server) => {
+				const state = server.connected ? "connected" : server.failed ? "failed" : "disconnected";
+				return {
+					value: server.name,
+					label: `${MCPS_COMMAND}:${server.name}`,
+					description: `${state} · ${server.type} · ${server.toolCount} tool${server.toolCount === 1 ? "" : "s"}`,
+				};
+			});
+	}
+
+	async function requestMcpConnection(serverName: string, ctx: ExtensionContext): Promise<void> {
+		if (!readConfiguredServerNames().includes(serverName)) {
+			ctx.ui.notify(`No MCP server named ${serverName}.`, "warning");
+			return;
+		}
+		if (connectedServers.has(serverName)) {
+			ctx.ui.notify(`${serverName} is already connected.`, "info");
+			return;
+		}
+		if (!(await askToEnableMcpServer(ctx, serverName))) {
+			ctx.ui.notify(`MCP connection cancelled for ${serverName}.`, "info");
+			return;
+		}
+
+		pi.sendMessage(
+			{
+				customType: "mcp-connect",
+				content: `Connect to the "${serverName}" MCP server. Use: mcp({ connect: "${serverName}" })`,
+				display: false,
+			},
+			{ triggerTurn: true, deliverAs: "steer" },
+		);
+	}
+
+	const mcpsTunnel: CommandTunnel = {
+		commandName: MCPS_COMMAND,
+		getItems: (query) => getMcpServerTunnelItems(query),
+	};
+
 	const mcpStatusCommand = {
 		description: "Show MCP server connection status",
-		handler: async (_args: string, ctx: any) => {
+		handler: async (args: string, ctx: any) => {
 
 			toolToServer = buildToolToServerMap();
 			const servers = getMcpServers();
 
 			if (servers.length === 0) {
 				ctx.ui.notify("No MCP servers configured in mcp.json", "warning");
+				return;
+			}
+
+			const requestedServerName = args.trim().split(/\s+/)[0];
+			if (requestedServerName && readConfiguredServerNames().includes(requestedServerName)) {
+				await requestMcpConnection(requestedServerName, ctx);
 				return;
 			}
 
@@ -484,34 +536,15 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 						connectedServers.delete(serverName);
 						failedServers.delete(serverName);
 					}
-					const activeTools = pi.getActiveTools().map(t => t.name).filter(n => !toolsToRemove.has(n));
+					const activeTools = pi.getActiveTools().filter((name) => !toolsToRemove.has(name));
 					pi.setActiveTools(activeTools);
 					if (activeCtx) updateStatus(activeCtx);
 				}
 
 				// Connect: ask before enabling/starting any MCP server.
 				// Yes allows the MCP connection only; it does not toggle directTools in mcp.json.
-				const skippedAutoConnect: string[] = [];
 				for (const serverName of toConnect) {
-					if (!(await askToEnableMcpServer(ctx, serverName))) {
-						skippedAutoConnect.push(serverName);
-						continue;
-					}
-
-					pi.sendMessage(
-						{
-							customType: "mcp-connect",
-							content: `Connect to the "${serverName}" MCP server. Use: mcp({ connect: "${serverName}" })`,
-							display: false,
-						},
-						{ triggerTurn: true, deliverAs: "steer" },
-					);
-				}
-				if (skippedAutoConnect.length > 0) {
-					ctx.ui.notify(
-						`MCP connection cancelled for ${skippedAutoConnect.join(", ")}.`,
-						"info",
-					);
+					await requestMcpConnection(serverName, ctx);
 				}
 
 				// Handle directTools changes — write to mcp.json and reload
@@ -544,14 +577,27 @@ export default function mcpsExtension(pi: ExtensionAPI): void {
 
 	// ─── Events ─────────────────────────────────────────────────────
 
+	pi.on("input", async (event, ctx) => {
+		if (event.source === "extension") return { action: "continue" as const };
+		const match = event.text.match(/^\/mcps:([^\s]+)(?:\s[\s\S]*)?$/);
+		const serverName = match?.[1];
+		if (!serverName || !readConfiguredServerNames().includes(serverName)) return { action: "continue" as const };
+		if (!ctx.hasUI) return { action: "handled" as const };
+		await requestMcpConnection(serverName, ctx);
+		return { action: "handled" as const };
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
 		if (!pi.getAllTools().some((t) => t.name === "mcp")) return;
 
 		if (!commandRegistered) {
 			commandRegistered = true;
-			pi.registerCommand("mcps", mcpStatusCommand);
+			pi.registerCommand(MCPS_COMMAND, mcpStatusCommand);
 		}
+
+		ctx.ui.addAutocompleteProvider((provider) => createCommandTunnelAutocompleteProvider(provider, [mcpsTunnel]));
+		ctx.ui.setEditorComponent(createCommandTunnelEditorFactory([mcpsTunnel], ctx.ui.getEditorComponent()));
 
 		activeCtx = ctx;
 		originalSetStatus = ctx.ui.setStatus.bind(ctx.ui);

@@ -81,6 +81,9 @@ export interface EditorSettingsModalOptions {
 	tui: TUI;
 	theme: Theme;
 	keybindings: EditorUiKeybindings;
+	/** Extension display name. When provided, the title is always "{Name} settings". */
+	extensionName?: string;
+	/** Fallback title for non-extension settings dialogs. */
 	title?: string;
 	fields: EditorSettingField[];
 	shortcuts?: string;
@@ -131,6 +134,15 @@ function isInlineDescription(description?: string): boolean {
 }
 
 const ITEM_SHORTCUT_KEYS = "abcdefghijklmnoprstuvwxyz".split("");
+
+export const EDITOR_EXTENSION_SETTINGS_SHORTCUTS = "↑↓ navigate • enter toggle/action • ←→ adjust • esc back";
+export const EDITOR_EXTENSION_SETTINGS_LIST_SHORTCUTS = "type to search • ↑↓ navigate • tab filter • enter/space toggle • ctrl+s save • esc back";
+
+export function formatExtensionSettingsTitle(extensionName?: string): string {
+	const name = (extensionName ?? "").trim();
+	if (!name) return "Settings";
+	return `${name[0]!.toUpperCase()}${name.slice(1)} settings`;
+}
 
 export type EditorDialogSize = "compact" | "fullscreen";
 
@@ -525,6 +537,12 @@ export class EditorSettingsModal implements Component, Focusable {
 
 	constructor(private readonly options: EditorSettingsModalOptions) {}
 
+	private getTitle(): string {
+		return this.options.extensionName
+			? formatExtensionSettingsTitle(this.options.extensionName)
+			: this.options.title ?? "Settings";
+	}
+
 	private updateSelected(delta: number): void {
 		if (this.options.fields.length === 0) return;
 		this.selectedIndex = (this.selectedIndex + delta + this.options.fields.length) % this.options.fields.length;
@@ -594,21 +612,23 @@ export class EditorSettingsModal implements Component, Focusable {
 		const fields = this.options.fields;
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, fields.length - 1));
 
-		const lines: string[] = [];
-		const push = (line = "") => lines.push(truncateToWidth(line, width));
-		const border = theme.fg("border", "─".repeat(Math.max(1, width)));
-		const labelColumnWidth = Math.max(1, Math.min(30, Math.floor(width * 0.35), Math.max(...fields.map((field) => visibleWidth(field.label)), 1)));
+		const template = new EditorDialogTemplate({ theme, size: "fullscreen" });
+		const bodyWidth = template.contentWidth(width);
+		const maxBodyLines = Math.max(1, template.maxHeight(this.options.tui) - template.nonBodyLineCount({
+			footerLines: [this.options.shortcuts ?? EDITOR_EXTENSION_SETTINGS_SHORTCUTS],
+		}));
+		const bodyLines: string[] = [];
+		const push = (line = "") => bodyLines.push(truncateToWidth(line, bodyWidth));
+		const labelColumnWidth = Math.max(1, Math.min(30, Math.floor(bodyWidth * 0.35), Math.max(...fields.map((field) => visibleWidth(field.label)), 1)));
 		const gap = 4;
 
-		push(border);
-		push();
-		push(theme.fg("accent", theme.bold(this.options.title ?? "Settings")));
-		push();
-
 		if (fields.length === 0) {
-			push(theme.fg("muted", "  No settings"));
+			push(theme.fg("muted", "No settings"));
 		} else {
-			for (let i = 0; i < fields.length; i += 1) {
+			const pageLineCount = fields.length > maxBodyLines && maxBodyLines > 1 ? 1 : 0;
+			const visibleFieldCount = Math.max(1, maxBodyLines - pageLineCount);
+			const { startIndex, endIndex } = getVisibleItemRange(fields.length, this.selectedIndex, visibleFieldCount);
+			for (let i = startIndex; i < endIndex; i += 1) {
 				const field = fields[i]!;
 				const selected = i === this.selectedIndex;
 				const prefix = selected ? theme.fg("accent", "→ ") : "  ";
@@ -619,12 +639,16 @@ export class EditorSettingsModal implements Component, Focusable {
 				const value = theme.fg("muted", displayValue);
 				push(prefix + label + labelPadding + value);
 			}
+			if (pageLineCount > 0) {
+				push(theme.fg("dim", `  (${this.selectedIndex + 1}/${fields.length})`));
+			}
 		}
 
-		push();
-		push(theme.fg("dim", this.options.shortcuts ?? "↑↓ navigate • enter toggle • ←→ adjust • esc back"));
-		push(border);
-		return lines;
+		return template.render(width, {
+			title: this.getTitle(),
+			bodyLines,
+			footerLines: [theme.fg("dim", this.options.shortcuts ?? EDITOR_EXTENSION_SETTINGS_SHORTCUTS)],
+		});
 	}
 
 	invalidate(): void {}

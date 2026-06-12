@@ -27,7 +27,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, InteractiveMode } from "@earendil-works/pi-coding-agent";
-import { EditorConfirmModal, EditorModal, EditorSettingsModal, type EditorModalFilter, type EditorSettingField, type EditorSettingValue } from "./core/editor-ui";
+import {
+	EDITOR_EXTENSION_SETTINGS_LIST_SHORTCUTS,
+	EditorConfirmModal,
+	EditorModal,
+	EditorSettingsModal,
+	formatExtensionSettingsTitle,
+	type EditorModalFilter,
+	type EditorSettingField,
+	type EditorSettingValue,
+} from "./core/editor-ui";
 
 /**
  * Scope of a discovered extension:
@@ -76,6 +85,15 @@ const PI_MCP_DIRNAME = "mcps";
 const PI_MCP_STATUS_PATCH_KEY = "__piMcpStatusPatch";
 const UNINSTALL_EXTENSION_FIELD_KEY = "__uninstallExtension";
 const SETTINGS_COMMAND_FIELD_KEY = "__settingsCommand";
+
+type ExtensionSettingsCommandEvent = {
+	args: string;
+	ctx: ExtensionCommandContext;
+	extensionName: string;
+	title: string;
+	shortcuts: string;
+	done: () => void;
+};
 
 type PiMcpPatchableUi = ExtensionContext["ui"] & {
 	__piMcpStatusPatch?: {
@@ -518,6 +536,36 @@ function uninstallGlobalExtension(source: string, cwd: string): { ok: boolean; m
 	return { ok: result.status === 0, message: message || `pi uninstall ${source} exited with status ${result.status ?? "unknown"}` };
 }
 
+async function runExtensionSettingsCommand(
+	pi: ExtensionAPI,
+	settingsCommand: string,
+	ext: ExtensionInfo,
+	ctx: ExtensionCommandContext,
+): Promise<boolean> {
+	return await new Promise<boolean>((resolve) => {
+		let settled = false;
+		const finish = () => {
+			if (settled) return;
+			settled = true;
+			resolve(true);
+		};
+		const eventName = `command-settings:${settingsCommand}`;
+		const events = pi.events as typeof pi.events & { listenerCount?: (name: string) => number };
+		if (events.listenerCount?.(eventName) === 0) {
+			resolve(false);
+			return;
+		}
+		events.emit(eventName, {
+			args: "",
+			ctx,
+			extensionName: ext.name,
+			title: formatExtensionSettingsTitle(ext.name),
+			shortcuts: EDITOR_EXTENSION_SETTINGS_LIST_SHORTCUTS,
+			done: finish,
+		} satisfies ExtensionSettingsCommandEvent);
+	});
+}
+
 function isPiMcpDisabled(cwd: string): boolean {
 	return discoverAll(cwd).some((ext) => ext.name === PI_MCP_DIRNAME && !ext.enabled);
 }
@@ -735,8 +783,9 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 					? rawSettingsCommand.trim().replace(/^\//, "")
 					: "";
 				if (settingsCommand) {
-					pi.events.emit(`command-settings:${settingsCommand}`, { args: "", ctx });
-					return;
+					const handled = await runExtensionSettingsCommand(pi, settingsCommand, ext, ctx);
+					if (!handled) ctx.ui.notify(`No settings UI registered for ${ext.name}.`, "warning");
+					continue;
 				}
 
 				const fields = settingsFieldsForExtension(ext, settings);
@@ -744,7 +793,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 					tui,
 					theme,
 					keybindings,
-					title: `${capitalizeName(ext.name)} settings`,
+					extensionName: ext.name,
 					fields,
 					onChange: (field: EditorSettingField, value: EditorSettingValue) => {
 						if (!ext.settingsFile || field.key === UNINSTALL_EXTENSION_FIELD_KEY) return;
