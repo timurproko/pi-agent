@@ -5,7 +5,7 @@
  * the option to enable / disable each one on the fly.
  *
  * UX is modeled after the scoped-models / `/tools` selector:
- *   - SettingsList with one row per extension
+ *   - Config-capable list with one row per extension
  *   - Toggle "enabled" / "disabled" on each row
  *   - Ctrl+S saves pending toggles by renaming entry files on disk and then
  *     reloads Pi so enabled / disabled extension changes take effect immediately
@@ -29,6 +29,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { getAgentDir, InteractiveMode } from "@earendil-works/pi-coding-agent";
 import {
 	EDITOR_EXTENSION_SETTINGS_LIST_SHORTCUTS,
+	EDITOR_EXTENSIONS_LIST_SHORTCUTS,
 	EditorConfirmModal,
 	EditorModal,
 	EditorSettingsModal,
@@ -66,7 +67,7 @@ interface ExtensionInfo {
 	enabled: boolean;
 	/** True if this is the pi-extensions extension itself - never disable. */
 	isSelf: boolean;
-	/** Optional JSON settings file displayed from the extension list. */
+	/** Optional JSON config file displayed from the extension list. */
 	settingsFile?: string;
 	/** Original npm package source from settings.json, used for uninstall. */
 	packageSource?: string;
@@ -131,14 +132,11 @@ function stripExtensionSuffix(name: string): string {
 function resolveSettingsFile(entryFile: string): string | undefined {
 	const entryDir = path.dirname(entryFile);
 	const entryBase = path.basename(entryFile);
-	const extensionDirSettings = path.join(entryDir, "settings.json");
-	if ((entryBase === "index.ts" || entryBase === "index.js") && fs.existsSync(extensionDirSettings)) {
-		return extensionDirSettings;
-	}
-
-	const siblingDirSettings = path.join(entryDir, stripExtensionSuffix(entryBase), "settings.json");
-	if (fs.existsSync(siblingDirSettings)) return siblingDirSettings;
-	return undefined;
+	const configFileName = "config.json";
+	const configFile = (entryBase === "index.ts" || entryBase === "index.js")
+		? path.join(entryDir, configFileName)
+		: path.join(entryDir, stripExtensionSuffix(entryBase), configFileName);
+	return fs.existsSync(configFile) ? configFile : undefined;
 }
 
 function readPiManifestExtensions(packageJsonPath: string): string[] | null {
@@ -718,7 +716,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 						initialSelectedValue: activeEntryFile,
 						search: true,
 						initialQuery,
-						shortcuts: "type to search · ↑↓ navigate · tab filter · enter toggle · space settings · ctrl+s save+reload · esc cancel",
+						shortcuts: EDITOR_EXTENSIONS_LIST_SHORTCUTS,
 						noItemsText: (query) => query.trim() ? "No matching extensions" : "No extensions yet",
 						getStatusText: () => exts.some((ext) => (desired.get(ext.entryFile) ?? ext.enabled) !== ext.enabled) ? "(unsaved)" : undefined,
 						getItems: (filter, query = "") => filterExtensions(exts, filter ?? defaultFilter ?? "global")
@@ -744,7 +742,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 								activeEntryFile = selectedItem?.value;
 								const ext = exts.find((candidate) => candidate.entryFile === selectedItem?.value);
 								if (!ext || !hasExtensionSettings(ext)) {
-									ctx.ui.notify(ext ? `${capitalizeName(ext.name)} has no settings.` : "No extension selected.", "info");
+									ctx.ui.notify(ext ? `${capitalizeName(ext.name)} has no config.` : "No extension selected.", "info");
 									return true;
 								}
 								done({ action: "settings", entryFile: ext.entryFile });
@@ -784,7 +782,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 					: "";
 				if (settingsCommand) {
 					const handled = await runExtensionSettingsCommand(pi, settingsCommand, ext, ctx);
-					if (!handled) ctx.ui.notify(`No settings UI registered for ${ext.name}.`, "warning");
+					if (!handled) ctx.ui.notify(`No config UI registered for ${ext.name}.`, "warning");
 					continue;
 				}
 
@@ -829,7 +827,7 @@ export default function piExtensionsExtension(pi: ExtensionAPI) {
 				}
 			}
 
-			// Esc / cancel: do nothing. Ctrl+S saves, closes this old UI frame, then reloads.
+			// Esc / back: do nothing. Ctrl+S saves, closes this old UI frame, then reloads.
 			if (result !== "apply") {
 				return;
 			}
