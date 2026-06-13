@@ -1,0 +1,13 @@
+[
+  {
+    "kind": "resolve",
+    "cacheKey": "houdini python::houdini python api documentation",
+    "objectKey": "03c1cfe5b50053baf9c31fe3",
+    "libraryName": "Houdini Python",
+    "normalizedLibraryName": "houdini python",
+    "query": "Houdini Python API documentation",
+    "createdAt": "2026-06-13T13:39:00.478Z",
+    "expiresAt": "2026-06-20T13:39:00.478Z",
+    "resultCount": 2
+  }
+]

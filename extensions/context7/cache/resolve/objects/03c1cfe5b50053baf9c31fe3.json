@@ -1,0 +1,40 @@
+{
+  "kind": "resolve",
+  "cacheKey": "houdini python::houdini python api documentation",
+  "objectKey": "03c1cfe5b50053baf9c31fe3",
+  "libraryName": "Houdini Python",
+  "normalizedLibraryName": "houdini python",
+  "query": "Houdini Python API documentation",
+  "createdAt": "2026-06-13T13:39:00.478Z",
+  "expiresAt": "2026-06-20T13:39:00.478Z",
+  "results": [
+    {
+      "id": "/websites/jtomori_github_io_houdini_additional_python_docs",
+      "title": "Houdini Python Modules",
+      "description": "This documentation provides a comprehensive overview of various Python modules and packages designed for extending and interacting with Houdini, covering tools for rigging, animation, nodes, UI, and more.",
+      "branch": "main",
+      "lastUpdateDate": "2025-12-12T21:49:32.337Z",
+      "state": "finalized",
+      "totalTokens": 425658,
+      "totalSnippets": 1998,
+      "stars": -1,
+      "trustScore": 8.3,
+      "benchmarkScore": 0,
+      "versions": []
+    },
+    {
+      "id": "/bobkerns/zabob-houdini",
+      "title": "Zabob-Houdini",
+      "description": "A Python API that provides a clean, Pythonic interface for building Houdini node networks programmatically with declarative syntax and automatic context management.",
+      "branch": "main",
+      "lastUpdateDate": "2026-05-07T21:31:38.774Z",
+      "state": "finalized",
+      "totalTokens": 55180,
+      "totalSnippets": 573,
+      "stars": 0,
+      "trustScore": 6.2,
+      "benchmarkScore": 0,
+      "versions": []
+    }
+  ]
+}

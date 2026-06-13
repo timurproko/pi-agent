@@ -129,7 +129,7 @@ const TodoParams = Type.Object({
 		},
 	)),
 	body: Type.Optional(
-		Type.String({ description: "Long-form details (markdown). Update replaces; append adds." }),
+		Type.String({ description: "Long-form details (markdown). Change replaces; append adds." }),
 	),
 	force: Type.Optional(Type.Boolean({ description: "Override another session's assignment" })),
 });
@@ -1910,7 +1910,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 				details.action === "create"
 					? "Created"
 					: details.action === "update"
-						? "Updated"
+						? "Changed"
 						: details.action === "append"
 							? "Appended to"
 							: details.action === "delete"

@@ -1,0 +1,18 @@
+{
+  "ctx7:docs:f41d238f892a9b7849f98d56": {
+    "kind": "docs",
+    "docRef": "ctx7:docs:f41d238f892a9b7849f98d56",
+    "objectKey": "2ea12474752fd6613d594eb6",
+    "libraryId": "/websites/jtomori_github_io_houdini_additional_python_docs",
+    "libraryName": "/websites/jtomori_github_io_houdini_additional_python_docs",
+    "normalizedLibraryName": "unknown-library",
+    "query": "Houdini Python API documentation overview hou module nodes parameters geometry",
+    "topic": "hou module nodes parameters geometry",
+    "effectiveQuery": "Houdini Python API documentation overview hou module nodes parameters geometry\n\nFocus: hou module nodes parameters geometry",
+    "page": 1,
+    "createdAt": "2026-06-13T13:39:05.541Z",
+    "expiresAt": "2026-06-14T13:39:05.541Z",
+    "rawLength": 12100,
+    "curatedLength": 1628
+  }
+}

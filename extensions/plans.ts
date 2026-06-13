@@ -145,7 +145,7 @@ type PlanMenuAction = PlanAction | "delete";
 
 const PLAN_ACTION_ITEMS: Array<EditorModalItem<Exclude<PlanAction, "view">>> = [
 	{ value: "refine", label: "Refine", description: "Refine plan" },
-	{ value: "update", label: "Update", description: "Suggest specific changes" },
+	{ value: "update", label: "Change", description: "Suggest specific changes" },
 	{ value: "work", label: "Work", description: "Start implementation" },
 ];
 
@@ -444,13 +444,13 @@ class PlanReviewDialog {
 	render(width: number): string[] {
 		const dialog = new EditorDialogTemplate({ theme: this.theme, size: "fullscreen" });
 		const contentWidth = dialog.contentWidth(width);
-		const pathLabel = this.theme.fg("muted", this.planFile);
+		const filenameSuffix = ` (${path.basename(this.planFile)})`;
 		const footer = [
 			this.theme.fg("dim", "↑↓ scroll"),
 			this.theme.fg("dim", "pgup/pgdn page"),
 			this.theme.fg("dim", "esc back"),
 		].join(this.theme.fg("muted", " • "));
-		const contentHeight = Math.max(1, dialog.maxHeight(this.tui) - dialog.nonBodyLineCount({ metaLines: [pathLabel], footerLines: [footer] }));
+		const contentHeight = Math.max(1, dialog.maxHeight(this.tui) - dialog.nonBodyLineCount({ footerLines: [footer] }));
 
 		let markdownWidth = Math.max(1, contentWidth);
 		let markdownLines = this.compactRenderedHeadingSpacing(this.markdown.render(markdownWidth));
@@ -482,7 +482,7 @@ class PlanReviewDialog {
 
 		return dialog.render(width, {
 			title: this.planTitle,
-			metaLines: [pathLabel],
+			titleSuffix: filenameSuffix,
 			bodyLines,
 			bodyRightDecorations,
 			footerLines: [footer],
