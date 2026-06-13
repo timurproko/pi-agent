@@ -13,6 +13,7 @@ import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@ear
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { Input, Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { EditorConfirmModal, EditorDialogTemplate, EditorModal, EditorTextPromptDialog, type EditorModalItem } from "./core/editor-ui";
+import { createCommandTunnelAutocompleteProvider, createCommandTunnelEditorFactory, type CommandTunnel, type CommandTunnelItem } from "./core/command-tunnel";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -162,7 +163,7 @@ const PLAN_MENU_ITEMS: Array<EditorModalItem<PlanMenuAction>> = [
 interface PlanSelectorResult {
 	plan: PlanListItem;
 	query: string;
-	quickAction?: "view";
+	quickAction?: "actions";
 }
 
 class PlanSelectorDialog implements Component, Focusable {
@@ -227,7 +228,7 @@ class PlanSelectorDialog implements Component, Focusable {
 			return;
 		}
 		if (keyData === " ") {
-			this.selectCurrent("view");
+			this.selectCurrent("actions");
 			return;
 		}
 
@@ -289,7 +290,7 @@ class PlanSelectorDialog implements Component, Focusable {
 		}
 
 		push();
-		push(this.theme.fg("dim", "type to search • ↑↓ navigate • space view • enter actions • esc close"));
+		push(this.theme.fg("dim", "type to search • ↑↓ navigate • enter view • space actions • esc close"));
 		push(border);
 		return lines;
 	}
@@ -488,6 +489,31 @@ async function openPlanView(plan: Pick<PlanListItem, "path">, ctx: ExtensionCont
 	}
 }
 
+function findPlanFromCommandArg(arg: string): PlanListItem | undefined {
+	const requested = arg.trim().split(/\s+/)[0] ?? "";
+	if (!requested) return undefined;
+	const normalized = requested.toLowerCase();
+	return listPlanItems().find((plan) =>
+		plan.name.toLowerCase() === normalized
+		|| path.basename(plan.name, path.extname(plan.name)).toLowerCase() === normalized
+		|| plan.title.toLowerCase() === normalized,
+	);
+}
+
+function getPlanTunnelItems(query: string): CommandTunnelItem[] {
+	const plans = filterPlanItems(listPlanItems(), query);
+	return plans.map((plan) => ({
+		value: plan.name,
+		label: `plans:${plan.name}`,
+		description: plan.title === plan.name ? undefined : plan.title,
+	}));
+}
+
+const plansTunnel: CommandTunnel = {
+	commandName: "plans",
+	getItems: (query) => getPlanTunnelItems(query),
+};
+
 export default function piPlansExtension(pi: ExtensionAPI): void {
 	let lastWrittenPlanFile: string | null = null;
 	let postPlanPromptScheduled = false;
@@ -503,6 +529,11 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 		}
 
 		let searchQuery = (_args || "").trim();
+		const initialPlan = findPlanFromCommandArg(searchQuery);
+		if (initialPlan) {
+			await openPlanView(initialPlan, ctx);
+		}
+
 		while (true) {
 			const plans = listPlanItems();
 
@@ -511,7 +542,7 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 			});
 			if (!selected) return;
 			searchQuery = selected.query;
-			if (selected.quickAction === "view") {
+			if (selected.quickAction !== "actions") {
 				await openPlanView(selected.plan, ctx);
 				continue;
 			}
@@ -773,9 +804,20 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 		return { systemPrompt: `${event.systemPrompt}\n\n${directive}` };
 	});
 
+	pi.on("input", async (event, ctx) => {
+		if (event.source === "extension") return { action: "continue" as const };
+		const match = event.text.match(/^\/plans:([^\s]*)([\s\S]*)$/);
+		if (!match) return { action: "continue" as const };
+		await openPlansCommand(`${match[1] ?? ""}${match[2] ?? ""}`.trim(), ctx);
+		return { action: "handled" as const };
+	});
+
 	// Register again at session start in case /reload ordering changes or modes.ts reset the registry.
-	pi.on("session_start", async (_event, _ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		ensurePlansDir();
 		registerPlanMode();
+		if (!ctx.hasUI) return;
+		ctx.ui.addAutocompleteProvider((provider) => createCommandTunnelAutocompleteProvider(provider, [plansTunnel]));
+		ctx.ui.setEditorComponent(createCommandTunnelEditorFactory([plansTunnel], ctx.ui.getEditorComponent()));
 	});
 }

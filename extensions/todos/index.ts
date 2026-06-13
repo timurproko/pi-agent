@@ -48,6 +48,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { EditorConfirmModal, EditorDialogTemplate, EditorModal, EditorTextPromptDialog } from "../core/editor-ui";
+import { createCommandTunnelAutocompleteProvider, createCommandTunnelEditorFactory, type CommandTunnel, type CommandTunnelItem } from "../core/command-tunnel";
 
 const TODO_DIR_NAME = ".pi/todos";
 const AGENT_TODO_DIR_NAME = "todos";
@@ -435,7 +436,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 		this.hintText.setText(
 			this.theme.fg(
 				"dim",
-				"type to search • ↑↓ navigate • tab filter • space view • enter actions • esc close",
+				"type to search • ↑↓ navigate • tab filter • enter view • space actions • esc close",
 			),
 		);
 	}
@@ -526,12 +527,12 @@ class TodoSelectorComponent extends Container implements Focusable {
 		}
 		if (kb.matches(keyData, "tui.select.confirm")) {
 			const selected = this.filteredTodos[this.selectedIndex];
-			if (selected) this.onSelectCallback(selected);
+			if (selected) this.onQuickView?.(selected);
 			return;
 		}
 		if (keyData === " ") {
 			const selected = this.filteredTodos[this.selectedIndex];
-			if (selected) this.onQuickView?.(selected);
+			if (selected) this.onSelectCallback(selected);
 			return;
 		}
 		if (kb.matches(keyData, "tui.select.cancel")) {
@@ -694,6 +695,7 @@ class TodoDetailOverlayComponent {
 	private scrollBy(delta: number): void {
 		const maxScroll = Math.max(0, this.totalLines - this.viewHeight);
 		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset + delta, maxScroll));
+		this.tui.requestRender();
 	}
 }
 
@@ -1086,6 +1088,30 @@ function listTodosSync(todosDir: string): TodoFrontMatter[] {
 	}
 
 	return sortTodos(todos);
+}
+
+function findTodoIdFromCommandArg(arg: string, todos: TodoFrontMatter[]): string | undefined {
+	const requested = arg.trim().split(/\s+/)[0] ?? "";
+	if (!requested) return undefined;
+	const validated = validateTodoId(requested);
+	if ("error" in validated) return undefined;
+	return todos.some((todo) => normalizeTodoId(todo.id) === validated.id) ? validated.id : undefined;
+}
+
+function getTodoTunnelItems(cwd: string, query: string): CommandTunnelItem[] {
+	const todosDir = getTodosDir(cwd);
+	const todos = filterTodos(listTodosSync(todosDir), query);
+	return todos.map((todo) => {
+		const id = formatTodoId(todo.id);
+		const closed = isTodoClosed(getTodoStatus(todo));
+		const state = closed ? "closed" : isTodoWorking(todo) ? "working" : "open";
+		const tags = todo.tags.length ? ` · ${todo.tags.join(", ")}` : "";
+		return {
+			value: id,
+			label: `todos:${id}`,
+			description: `${state}${tags} · ${getTodoTitle(todo)}`,
+		};
+	});
 }
 
 function getTodoTitle(todo: TodoFrontMatter): string {
@@ -1549,11 +1575,21 @@ function startTodoWidgetWatcher(ctx: ExtensionContext): void {
 }
 
 export default function todosExtension(pi: ExtensionAPI) {
+	let activeCtx: ExtensionContext | null = null;
+	const todosTunnel: CommandTunnel = {
+		commandName: "todos",
+		getItems: (query) => getTodoTunnelItems(activeCtx?.cwd ?? process.cwd(), query),
+	};
+
 	pi.on("session_start", async (_event, ctx) => {
+		activeCtx = ctx;
 		const todosDir = getTodosDir(ctx.cwd);
 		await ensureTodosDir(todosDir);
 		updateTodoWidget(ctx);
 		startTodoWidgetWatcher(ctx);
+		if (!ctx.hasUI) return;
+		ctx.ui.addAutocompleteProvider((provider) => createCommandTunnelAutocompleteProvider(provider, [todosTunnel]));
+		ctx.ui.setEditorComponent(createCommandTunnelEditorFactory([todosTunnel], ctx.ui.getEditorComponent()));
 	});
 
 	// Refresh widget after any todo tool execution.
@@ -1564,6 +1600,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (_event, _ctx) => {
+		activeCtx = null;
 		if (todoWidgetSpinnerTimer) {
 			clearInterval(todoWidgetSpinnerTimer);
 			todoWidgetSpinnerTimer = null;
@@ -1956,6 +1993,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 		}
 
 		todos = await listTodos(todosDir);
+		const initialViewTodoId = findTodoIdFromCommandArg(searchTerm, todos);
 		let nextPrompt: string | null = null;
 		let nextPromptAutoSend = false;
 		let nextPromptSendDirect = false;
@@ -2231,6 +2269,15 @@ export default function todosExtension(pi: ExtensionAPI) {
 				);
 
 				setActiveComponent(selector);
+				if (initialViewTodoId) {
+					selector.selectTodoById(initialViewTodoId);
+					void (async () => {
+						const initialTodo = todos.find((todo) => normalizeTodoId(todo.id) === initialViewTodoId);
+						if (!initialTodo) return;
+						const record = await resolveTodoRecord(initialTodo);
+						if (record) openDetail(record);
+					})();
+				}
 
 				const rootComponent = {
 					get focused() {
@@ -2288,6 +2335,14 @@ export default function todosExtension(pi: ExtensionAPI) {
 	pi.registerCommand("todos", {
 		description: "Open the todo manager",
 		handler: openTodosCommand,
+	});
+
+	pi.on("input", async (event, ctx) => {
+		if (event.source === "extension") return { action: "continue" as const };
+		const match = event.text.match(/^\/todos:([^\s]*)([\s\S]*)$/);
+		if (!match) return { action: "continue" as const };
+		await openTodosCommand(`${match[1] ?? ""}${match[2] ?? ""}`.trim(), ctx);
+		return { action: "handled" as const };
 	});
 
 }
