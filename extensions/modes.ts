@@ -20,6 +20,7 @@ import type { TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import * as os from "node:os";
 import * as path from "node:path";
+import { getModePrompt } from "./core/mode-prompts";
 
 type Mode = string;
 
@@ -28,6 +29,7 @@ interface ModeDefinition {
 	label: string;
 	title: string;
 	colorToken: string;
+	promptTemplateId?: string;
 }
 
 // ─── All custom colors in one place ──────────────────────────────────
@@ -47,8 +49,8 @@ const COLORS = {
 } as const;
 
 const modeDefinitions = new Map<string, ModeDefinition>([
-	["command", { id: "command", label: "cmd", title: "Cmd", colorToken: COLORS.cmd.token }],
-	["ask", { id: "ask", label: "ask", title: "Ask", colorToken: COLORS.ask.token }],
+	["command", { id: "command", label: "cmd", title: "Cmd", colorToken: COLORS.cmd.token, promptTemplateId: "CMD" }],
+	["ask", { id: "ask", label: "ask", title: "Ask", colorToken: COLORS.ask.token, promptTemplateId: "ASK" }],
 ]);
 
 // Tools that only write/modify - always blocked in Ask mode.
@@ -172,28 +174,11 @@ export default function piModesExtension(pi: ExtensionAPI): void {
 
 	// ---- inject per-mode guidance for the LLM via the system prompt ----
 	// We append to event.systemPrompt instead of injecting a visible message,
-	// so nothing shows up above the prompt input.
+	// so nothing shows up above the prompt input. Prompt text is sourced from
+	// the canonical Mode Prompt Registry in ~/.pi/agent/AGENTS.md.
 	pi.on("before_agent_start", async (event, _ctx) => {
-		let directive: string;
-		if (mode === "ask") {
-			directive = [
-				"[PI-PLAN MODE: ASK]",
-				"You are in Ask mode. Answer the user's question conversationally.",
-				"Do NOT call write, edit, or any tool that modifies the system.",
-				"You MAY use read-only tools to search and gather information:",
-				"  - read (to view files)",
-				"  - bash with: grep, rg, find, ls, cat, head, tail, wc, tree, git log/diff/status/show/branch/blame",
-				"Do NOT use bash for anything that writes, creates, deletes, or modifies files.",
-				"Prefer answering from your own knowledge first; search only when needed for accuracy.",
-			].join("\n");
-		} else if (mode === "command") {
-			directive = [
-				"[PI-PLAN MODE: CMD]",
-				"You have full tool access. Execute the user's request normally.",
-			].join("\n");
-		} else {
-			return;
-		}
+		const directive = getModePrompt(getModeDefinition().promptTemplateId);
+		if (!directive) return;
 
 		return {
 			systemPrompt: `${event.systemPrompt}\n\n${directive}`,
