@@ -442,7 +442,11 @@ function capitalizeName(name: string): string {
 }
 
 function hasExtensionSettings(ext: ExtensionInfo): boolean {
-	return !!ext.settingsFile || (ext.scope === "global" && !!ext.packageSource);
+	// Global (npm-installed) extensions don't get a synthesized settings panel.
+	// Their only injected field used to be "Uninstall", which clutters the UI;
+	// uninstalling is still available via `pi uninstall <pkg>` from the CLI.
+	if (ext.scope === "global") return false;
+	return !!ext.settingsFile;
 }
 
 function getExtensionDependencyTags(ext: ExtensionInfo): string[] {
@@ -505,17 +509,8 @@ function settingsFieldsFromObject(settings: Record<string, unknown>): EditorSett
 	return fields;
 }
 
-function settingsFieldsForExtension(ext: ExtensionInfo, settings: Record<string, unknown>): EditorSettingField[] {
-	const fields = settingsFieldsFromObject(settings);
-	if (ext.scope === "global" && ext.packageSource) {
-		fields.push({
-			key: UNINSTALL_EXTENSION_FIELD_KEY,
-			label: "Uninstall",
-			type: "action",
-			value: ext.packageSource,
-		});
-	}
-	return fields;
+function settingsFieldsForExtension(_ext: ExtensionInfo, settings: Record<string, unknown>): EditorSettingField[] {
+	return settingsFieldsFromObject(settings);
 }
 
 function writeSettingsObject(settingsFile: string, settings: Record<string, unknown>): void {
