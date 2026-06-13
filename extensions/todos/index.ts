@@ -101,6 +101,8 @@ type KeybindingMatcher = {
 	matches: (keyData: string, keybindingId: string) => boolean;
 };
 
+type TodoSelectorPrimaryAction = "view" | "actions";
+
 const TodoParams = Type.Object({
 	action: StringEnum([
 		"list",
@@ -347,6 +349,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 		onCancel: () => void,
 		initialSearchInput?: string,
 		private onQuickView?: (todo: TodoFrontMatter) => void,
+		private readonly primaryAction: TodoSelectorPrimaryAction = "view",
 	) {
 		super();
 		this.tui = tui;
@@ -373,8 +376,7 @@ class TodoSelectorComponent extends Container implements Focusable {
 			this.searchInput.setValue(initialSearchInput);
 		}
 		this.searchInput.onSubmit = () => {
-			const selected = this.filteredTodos[this.selectedIndex];
-			if (selected) this.onSelectCallback(selected);
+			this.handlePrimaryAction();
 		};
 		this.addChild(this.searchInput);
 
@@ -433,10 +435,13 @@ class TodoSelectorComponent extends Container implements Focusable {
 	}
 
 	private updateHints(): void {
+		const routeHint = this.primaryAction === "view"
+			? "enter view • space actions"
+			: "enter actions • space view";
 		this.hintText.setText(
 			this.theme.fg(
 				"dim",
-				"type to search • ↑↓ navigate • tab filter • enter view • space actions • esc close",
+				`type to search • ↑↓ navigate • tab filter • ${routeHint} • esc close`,
 			),
 		);
 	}
@@ -479,11 +484,11 @@ class TodoSelectorComponent extends Container implements Focusable {
 			const tagText = todo.tags.length ? ` [${todo.tags.join(", ")}]` : "";
 			let icon: string;
 			if (closed) {
-				icon = this.theme.fg("success", "✓");
+				icon = this.theme.fg("accent", "✓");
 			} else if (isTodoWorking(todo)) {
 				icon = getTodoSpinnerFrame(this.theme);
 			} else {
-				icon = isSelected ? this.theme.fg("accent", "◻") : "◻";
+				icon = this.theme.fg("accent", "◻");
 			}
 
 			const idText = closed
@@ -526,13 +531,11 @@ class TodoSelectorComponent extends Container implements Focusable {
 			return;
 		}
 		if (kb.matches(keyData, "tui.select.confirm")) {
-			const selected = this.filteredTodos[this.selectedIndex];
-			if (selected) this.onQuickView?.(selected);
+			this.handlePrimaryAction();
 			return;
 		}
 		if (keyData === " ") {
-			const selected = this.filteredTodos[this.selectedIndex];
-			if (selected) this.onSelectCallback(selected);
+			this.handleSecondaryAction();
 			return;
 		}
 		if (kb.matches(keyData, "tui.select.cancel")) {
@@ -549,6 +552,24 @@ class TodoSelectorComponent extends Container implements Focusable {
 		}
 		this.searchInput.handleInput(keyData);
 		this.applyFilter(this.searchInput.getValue());
+	}
+
+	private handlePrimaryAction(): void {
+		this.handleRouteAction(this.primaryAction);
+	}
+
+	private handleSecondaryAction(): void {
+		this.handleRouteAction(this.primaryAction === "view" ? "actions" : "view");
+	}
+
+	private handleRouteAction(action: TodoSelectorPrimaryAction): void {
+		const selected = this.filteredTodos[this.selectedIndex];
+		if (!selected) return;
+		if (action === "view") {
+			this.onQuickView?.(selected);
+			return;
+		}
+		this.onSelectCallback(selected);
 	}
 
 	override invalidate(): void {
@@ -618,14 +639,9 @@ class TodoDetailOverlayComponent {
 	render(width: number): string[] {
 		const dialog = new EditorDialogTemplate({ theme: this.theme, size: "compact" });
 		const contentWidth = dialog.contentWidth(width);
-		const status = this.todo.status || "open";
-		const statusColor = isTodoClosed(status) ? "dim" : "success";
-		const tagText = this.todo.tags.length ? this.todo.tags.join(", ") : "no tags";
-		const metaLine = this.theme.fg(statusColor, status) +
-			this.theme.fg("muted", " • ") +
-			this.theme.fg("muted", tagText);
+		const statusIcon = isTodoClosed(this.todo.status) ? "✓" : "◻";
 		const footerLine = this.buildActionLine(contentWidth);
-		const contentHeight = Math.max(1, dialog.maxHeight(this.tui) - dialog.nonBodyLineCount({ metaLines: [metaLine], footerLines: [footerLine] }));
+		const contentHeight = Math.max(1, dialog.maxHeight(this.tui) - dialog.nonBodyLineCount({ footerLines: [footerLine] }));
 
 		let markdownWidth = Math.max(1, contentWidth);
 		let markdownLines = this.markdown.render(markdownWidth);
@@ -655,12 +671,9 @@ class TodoDetailOverlayComponent {
 			bodyRightDecorations.push(this.getScrollIndicatorForRow(i, contentHeight));
 		}
 
-		// Status • tags, rendered in the same metadata slot that answer dialogs use
-		// for question progress.
 		return dialog.render(width, {
-			title: this.todo.title || "Todo",
+			title: `${statusIcon} ${this.todo.title || "Todo"}`,
 			titleSuffix: ` (#${normalizeTodoId(this.todo.id)})`,
-			metaLines: [metaLine],
 			bodyLines,
 			bodyRightDecorations,
 			footerLines: [footerLine],
@@ -1981,7 +1994,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	const openTodosCommand = async (args: string | undefined, ctx: ExtensionContext) => {
+	const openTodosCommand = async (args: string | undefined, ctx: ExtensionContext, options: { tunneled?: boolean } = {}) => {
 		let todosDir = getTodosDir(ctx.cwd);
 		let todos = await listTodos(todosDir);
 		const searchTerm = (args ?? "").trim();
@@ -2266,6 +2279,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 							if (record) openDetail(record);
 						})();
 					},
+					options.tunneled ? "actions" : "view",
 				);
 
 				setActiveComponent(selector);
@@ -2341,7 +2355,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 		if (event.source === "extension") return { action: "continue" as const };
 		const match = event.text.match(/^\/todos:([^\s]*)([\s\S]*)$/);
 		if (!match) return { action: "continue" as const };
-		await openTodosCommand(`${match[1] ?? ""}${match[2] ?? ""}`.trim(), ctx);
+		await openTodosCommand(`${match[1] ?? ""}${match[2] ?? ""}`.trim(), ctx, { tunneled: true });
 		return { action: "handled" as const };
 	});
 

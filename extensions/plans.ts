@@ -166,6 +166,8 @@ interface PlanSelectorResult {
 	quickAction?: "actions";
 }
 
+type PlanSelectorPrimaryAction = "view" | "actions";
+
 class PlanSelectorDialog implements Component, Focusable {
 	private readonly input = new Input();
 	private filteredPlans: PlanListItem[];
@@ -187,10 +189,11 @@ class PlanSelectorDialog implements Component, Focusable {
 		private readonly plans: PlanListItem[],
 		private readonly onDone: (result: PlanSelectorResult | undefined) => void,
 		initialQuery = "",
+		private readonly primaryAction: PlanSelectorPrimaryAction = "view",
 	) {
 		this.filteredPlans = plans;
 		if (initialQuery) this.input.setValue(initialQuery);
-		this.input.onSubmit = () => this.selectCurrent();
+		this.input.onSubmit = () => this.selectPrimary();
 		this.applyFilter(this.input.getValue());
 	}
 
@@ -202,6 +205,18 @@ class PlanSelectorDialog implements Component, Focusable {
 	private selectCurrent(quickAction?: PlanSelectorResult["quickAction"]): void {
 		const plan = this.filteredPlans[this.selectedIndex];
 		if (plan) this.onDone({ plan, query: this.input.getValue(), quickAction });
+	}
+
+	private selectPrimary(): void {
+		this.selectRouteAction(this.primaryAction);
+	}
+
+	private selectSecondary(): void {
+		this.selectRouteAction(this.primaryAction === "view" ? "actions" : "view");
+	}
+
+	private selectRouteAction(action: PlanSelectorPrimaryAction): void {
+		this.selectCurrent(action === "actions" ? "actions" : undefined);
 	}
 
 	handleInput(keyData: string): void {
@@ -224,11 +239,11 @@ class PlanSelectorDialog implements Component, Focusable {
 			return;
 		}
 		if (this.keybindings.matches(keyData, "tui.select.confirm") || matchesKey(keyData, Key.enter)) {
-			this.selectCurrent();
+			this.selectPrimary();
 			return;
 		}
 		if (keyData === " ") {
-			this.selectCurrent("actions");
+			this.selectSecondary();
 			return;
 		}
 
@@ -290,7 +305,10 @@ class PlanSelectorDialog implements Component, Focusable {
 		}
 
 		push();
-		push(this.theme.fg("dim", "type to search • ↑↓ navigate • enter view • space actions • esc close"));
+		const routeHint = this.primaryAction === "view"
+			? "enter view • space actions"
+			: "enter actions • space view";
+		push(this.theme.fg("dim", `type to search • ↑↓ navigate • ${routeHint} • esc close`));
 		push(border);
 		return lines;
 	}
@@ -521,7 +539,7 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 	registerPlanMode();
 
 	// ---- /plans command ----
-	const openPlansCommand = async (_args: string | undefined, ctx: ExtensionContext): Promise<void> => {
+	const openPlansCommand = async (_args: string | undefined, ctx: ExtensionContext, options: { tunneled?: boolean } = {}): Promise<void> => {
 		if (!ctx.hasUI) {
 			const plans = listPlans();
 			ctx.ui.notify(plans.length > 0 ? `Plans (${plans.length}):\n${plans.map((p) => `  • ${p}`).join("\n")}` : "No plans yet.", "info");
@@ -538,7 +556,7 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 			const plans = listPlanItems();
 
 			const selected = await ctx.ui.custom<PlanSelectorResult | undefined>((tui, theme, keybindings, done) => {
-				return new PlanSelectorDialog(tui, theme, keybindings, plans, done, searchQuery);
+				return new PlanSelectorDialog(tui, theme, keybindings, plans, done, searchQuery, options.tunneled ? "actions" : "view");
 			});
 			if (!selected) return;
 			searchQuery = selected.query;
@@ -808,7 +826,7 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 		if (event.source === "extension") return { action: "continue" as const };
 		const match = event.text.match(/^\/plans:([^\s]*)([\s\S]*)$/);
 		if (!match) return { action: "continue" as const };
-		await openPlansCommand(`${match[1] ?? ""}${match[2] ?? ""}`.trim(), ctx);
+		await openPlansCommand(`${match[1] ?? ""}${match[2] ?? ""}`.trim(), ctx, { tunneled: true });
 		return { action: "handled" as const };
 	});
 
