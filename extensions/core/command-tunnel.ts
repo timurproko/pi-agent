@@ -1,5 +1,5 @@
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
-import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, type AutocompleteItem, type AutocompleteProvider, type AutocompleteSuggestions } from "@earendil-works/pi-tui";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -113,6 +113,10 @@ type TunnelCapableEditor = {
 
 const EDITOR_WRAPPED = Symbol.for("pi.commandTunnel.editorWrapped");
 const EDITOR_TUNNELS = Symbol.for("pi.commandTunnel.editorTunnels");
+const AUTOCOMPLETE_DESCRIPTION_PATCHED = Symbol.for("pi.commandTunnel.autocompleteDescriptionPatched");
+const AUTOCOMPLETE_LIST_FACTORY_PATCHED = Symbol.for("pi.commandTunnel.autocompleteListFactoryPatched");
+const PRIMARY_COLUMN_GAP = 2;
+const MIN_DESCRIPTION_WIDTH = 10;
 
 function getSelectedAutocompleteValue(editor: TunnelCapableEditor): string | undefined {
 	const list = editor.autocompleteList as ({ getSelectedItem?: () => AutocompleteItem | undefined } | undefined);
@@ -151,9 +155,68 @@ function tryCompleteSelectedCommandTunnel(editor: TunnelCapableEditor, tunnels: 
 	return true;
 }
 
+function patchAutocompleteListSelectedDescription(list: any): void {
+	if (!list || list[AUTOCOMPLETE_DESCRIPTION_PATCHED] || typeof list.renderItem !== "function") return;
+
+	list.renderItem = function renderItemWithMutedSelectedDescription(
+		item: AutocompleteItem,
+		isSelected: boolean,
+		width: number,
+		descriptionSingleLine: string | undefined,
+		primaryColumnWidth: number,
+	): string {
+		const theme = this.theme;
+		const prefix = isSelected ? "→ " : "  ";
+		const prefixWidth = visibleWidth(prefix);
+
+		if (descriptionSingleLine && width > 40) {
+			const effectivePrimaryColumnWidth = Math.max(1, Math.min(primaryColumnWidth, width - prefixWidth - 4));
+			const maxPrimaryWidth = Math.max(1, effectivePrimaryColumnWidth - PRIMARY_COLUMN_GAP);
+			const truncatedValue = typeof this.truncatePrimary === "function"
+				? this.truncatePrimary(item, isSelected, maxPrimaryWidth, effectivePrimaryColumnWidth)
+				: truncateToWidth(item.label || item.value, maxPrimaryWidth, "");
+			const truncatedValueWidth = visibleWidth(truncatedValue);
+			const spacing = " ".repeat(Math.max(1, effectivePrimaryColumnWidth - truncatedValueWidth));
+			const descriptionStart = prefixWidth + truncatedValueWidth + spacing.length;
+			const remainingWidth = width - descriptionStart - 2;
+
+			if (remainingWidth > MIN_DESCRIPTION_WIDTH) {
+				const truncatedDesc = truncateToWidth(descriptionSingleLine, remainingWidth, "");
+				if (isSelected) {
+					return theme.selectedText(`${prefix}${truncatedValue}${spacing}`) + theme.description(truncatedDesc);
+				}
+
+				return prefix + truncatedValue + theme.description(spacing + truncatedDesc);
+			}
+		}
+
+		const maxWidth = width - prefixWidth - 2;
+		const truncatedValue = typeof this.truncatePrimary === "function"
+			? this.truncatePrimary(item, isSelected, maxWidth, maxWidth)
+			: truncateToWidth(item.label || item.value, maxWidth, "");
+		if (isSelected) return theme.selectedText(`${prefix}${truncatedValue}`);
+		return prefix + truncatedValue;
+	};
+	list[AUTOCOMPLETE_DESCRIPTION_PATCHED] = true;
+}
+
+function patchEditorAutocompleteLists(editor: TunnelCapableEditor): void {
+	patchAutocompleteListSelectedDescription(editor.autocompleteList);
+	if (editor[AUTOCOMPLETE_LIST_FACTORY_PATCHED] || typeof editor.createAutocompleteList !== "function") return;
+
+	const originalCreateAutocompleteList = editor.createAutocompleteList.bind(editor);
+	editor.createAutocompleteList = (...args: any[]) => {
+		const list = originalCreateAutocompleteList(...args);
+		patchAutocompleteListSelectedDescription(list);
+		return list;
+	};
+	editor[AUTOCOMPLETE_LIST_FACTORY_PATCHED] = true;
+}
+
 function wrapEditorForCommandTunnels(editor: TunnelCapableEditor, tunnels: CommandTunnel[]): TunnelCapableEditor {
 	const activeTunnels = normalizeTunnels(tunnels);
 	if (activeTunnels.length === 0) return editor;
+	patchEditorAutocompleteLists(editor);
 
 	const existingTunnels = Array.isArray(editor[EDITOR_TUNNELS]) ? editor[EDITOR_TUNNELS] as CommandTunnel[] : [];
 	const tunnelsByCommand = new Map<string, CommandTunnel>();

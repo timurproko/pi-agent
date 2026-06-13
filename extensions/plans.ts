@@ -190,11 +190,16 @@ class PlanSelectorDialog implements Component, Focusable {
 		private readonly onDone: (result: PlanSelectorResult | undefined) => void,
 		initialQuery = "",
 		private readonly primaryAction: PlanSelectorPrimaryAction = "view",
+		initialSelectedPlanPath?: string,
 	) {
 		this.filteredPlans = plans;
 		if (initialQuery) this.input.setValue(initialQuery);
 		this.input.onSubmit = () => this.selectPrimary();
 		this.applyFilter(this.input.getValue());
+		if (initialSelectedPlanPath) {
+			const nextIndex = this.filteredPlans.findIndex((plan) => plan.path === initialSelectedPlanPath);
+			if (nextIndex >= 0) this.selectedIndex = nextIndex;
+		}
 	}
 
 	private applyFilter(query: string): void {
@@ -548,18 +553,21 @@ export default function piPlansExtension(pi: ExtensionAPI): void {
 
 		let searchQuery = (_args || "").trim();
 		const initialPlan = findPlanFromCommandArg(searchQuery);
+		let selectedPlanPath = options.tunneled ? initialPlan?.path : undefined;
 		if (initialPlan) {
 			await openPlanView(initialPlan, ctx);
+			if (options.tunneled) searchQuery = "";
 		}
 
 		while (true) {
 			const plans = listPlanItems();
 
 			const selected = await ctx.ui.custom<PlanSelectorResult | undefined>((tui, theme, keybindings, done) => {
-				return new PlanSelectorDialog(tui, theme, keybindings, plans, done, searchQuery, options.tunneled ? "actions" : "view");
+				return new PlanSelectorDialog(tui, theme, keybindings, plans, done, searchQuery, options.tunneled ? "actions" : "view", selectedPlanPath);
 			});
 			if (!selected) return;
 			searchQuery = selected.query;
+			selectedPlanPath = selected.plan.path;
 			if (selected.quickAction !== "actions") {
 				await openPlanView(selected.plan, ctx);
 				continue;

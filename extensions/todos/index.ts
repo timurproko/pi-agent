@@ -412,7 +412,12 @@ class TodoSelectorComponent extends Container implements Focusable {
 
 	selectTodoById(todoId: string): void {
 		const normalizedId = normalizeTodoId(todoId);
-		const nextIndex = this.filteredTodos.findIndex((todo) => normalizeTodoId(todo.id) === normalizedId);
+		const todo = this.allTodos.find((candidate) => normalizeTodoId(candidate.id) === normalizedId);
+		if (!todo) return;
+		this.scope = isTodoClosed(todo.status) ? "closed" : "open";
+		this.updateScope();
+		this.applyFilter(this.searchInput.getValue());
+		const nextIndex = this.filteredTodos.findIndex((candidate) => normalizeTodoId(candidate.id) === normalizedId);
 		if (nextIndex < 0) return;
 		this.selectedIndex = nextIndex;
 		this.updateList();
@@ -1118,11 +1123,10 @@ function getTodoTunnelItems(cwd: string, query: string): CommandTunnelItem[] {
 		const id = formatTodoId(todo.id);
 		const closed = isTodoClosed(getTodoStatus(todo));
 		const state = closed ? "closed" : isTodoWorking(todo) ? "working" : "open";
-		const tags = todo.tags.length ? ` · ${todo.tags.join(", ")}` : "";
 		return {
 			value: id,
 			label: `todos:${id}`,
-			description: `${state}${tags} · ${getTodoTitle(todo)}`,
+			description: `${state} · ${getTodoTitle(todo)}`,
 		};
 	});
 }
@@ -2272,7 +2276,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 					() => {
 						done();
 					},
-					searchTerm || undefined,
+					options.tunneled && initialViewTodoId ? undefined : searchTerm || undefined,
 					(todo) => {
 						void (async () => {
 							const record = await resolveTodoRecord(todo);
