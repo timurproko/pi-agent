@@ -5,8 +5,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as tar from "tar";
 import { configPathForCwd, extensionDataRoot, normalizeConfig, normalizeCookieInput } from "../config.ts";
-import { extractUnityPackage } from "../extract.ts";
-import { formatSize, resolveDownloadDir, safePackageFilename } from "../platform.ts";
+import { extractUnityPackage, getExtractRoot } from "../extract.ts";
+import { formatSize, resolveDownloadDir, safePackageFilename, standardDownloadsDir } from "../platform.ts";
 import { accountDataPaths, safeAccountSlug, filterAssets } from "../storage.ts";
 import { extractCsrf } from "../unity-api.ts";
 
@@ -50,31 +50,37 @@ test("slug, size and search helpers", () => {
 	assert.deepEqual(filterAssets(info, "3"), ["3"]);
 });
 
-test("extension data stores are rooted in the extension folder", () => {
+test("extension data stores are rooted in the extension folder and assets use Downloads", () => {
 	const cfg = normalizeConfig({ accounts: [{ name: "Personal", cookie: "", download_dir: "./custom-downloads" }], active_account: "Personal" });
 	const root = extensionDataRoot();
 	assert.equal(configPathForCwd("/tmp/other"), path.join(root, "config.json"));
 	assert.equal(accountDataPaths(cfg, "/tmp/other").infoPath, path.join(root, "data", "asset_info.personal.jsonl"));
 	assert.equal(resolveDownloadDir(cfg, "/tmp/other"), path.join(root, "custom-downloads"));
-	assert.equal(resolveDownloadDir(normalizeConfig({ accounts: [{ name: "Personal", cookie: "" }], active_account: "Personal" }), "/tmp/other"), path.join(root, "downloads"));
+	assert.equal(resolveDownloadDir(normalizeConfig({ accounts: [{ name: "Personal", cookie: "" }], active_account: "Personal" }), "/tmp/other"), standardDownloadsDir());
+	assert.equal(resolveDownloadDir(normalizeConfig({ accounts: [{ name: "Personal", cookie: "", download_dir: "./downloads" }], active_account: "Personal" }), "/tmp/other"), standardDownloadsDir());
+	assert.equal(getExtractRoot(standardDownloadsDir()), standardDownloadsDir());
 });
 
 test("extracts unitypackage safely and skips traversal", async () => {
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "asd-test-"));
 	const src = path.join(tmp, "src");
 	fs.mkdirSync(path.join(src, "good"), { recursive: true });
-	fs.writeFileSync(path.join(src, "good", "pathname"), "Assets/Good.txt\n");
+	fs.writeFileSync(path.join(src, "good", "pathname"), "Assets/Good.txt\n00");
 	fs.writeFileSync(path.join(src, "good", "asset"), "ok");
 	fs.mkdirSync(path.join(src, "bad"), { recursive: true });
 	fs.writeFileSync(path.join(src, "bad", "pathname"), "../evil.txt\n");
 	fs.writeFileSync(path.join(src, "bad", "asset"), "bad");
+	fs.mkdirSync(path.join(src, "win"), { recursive: true });
+	fs.writeFileSync(path.join(src, "win", "pathname"), "Assets/Trailing. /Name?.txt\r\n");
+	fs.writeFileSync(path.join(src, "win", "asset"), "windows-safe");
 	const pkg = path.join(tmp, "fixture.unitypackage");
-	await tar.c({ gzip: true, cwd: src, file: pkg }, ["good", "bad"]);
+	await tar.c({ gzip: true, cwd: src, file: pkg }, ["good", "bad", "win"]);
 	const out = path.join(tmp, "out");
 	const result = await extractUnityPackage(pkg, out);
 	assert.equal(result.ok, true);
-	assert.equal(result.files, 1);
+	assert.equal(result.files, 2);
 	assert.equal(fs.readFileSync(path.join(out, "Assets", "Good.txt"), "utf8"), "ok");
+	assert.equal(fs.readFileSync(path.join(out, "Assets", "Trailing", "Name_.txt"), "utf8"), "windows-safe");
 	assert.equal(fs.existsSync(path.join(tmp, "evil.txt")), false);
 	fs.rmSync(tmp, { recursive: true, force: true });
 });

@@ -58,9 +58,19 @@ export function safePackageFilename(assetName: string, assetId: string): string 
 	return `${name.slice(0, 220)}.unitypackage`;
 }
 
+export function standardDownloadsDir(): string {
+	return path.join(os.homedir(), "Downloads");
+}
+
+function isLegacyDefaultDownloadDir(value: string): boolean {
+	const normalized = value.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+	return normalized === "./downloads" || normalized === "downloads";
+}
+
 export function resolveDownloadDir(config: AssetStoreConfig, _cwd: string): string {
 	const account = getActiveAccount(config);
-	const configured = account.download_dir || config.download_dir || "./downloads";
+	const configured = account.download_dir || config.download_dir || "";
+	if (!configured || isLegacyDefaultDownloadDir(configured)) return standardDownloadsDir();
 	return path.isAbsolute(configured) ? configured : path.resolve(extensionDataRoot(), configured);
 }
 

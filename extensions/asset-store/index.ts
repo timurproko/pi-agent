@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { EditorModal, type EditorModalFilter, type EditorModalItem } from "../core/editor-ui";
 import { configPathForCwd, getActiveAccount, loadConfig, normalizeCookieInput, saveActiveAccount, saveActiveAccountCookie, saveConfig, type AssetStoreConfig } from "./config";
 import { desiredFilename, downloadAsset, prepareDownloadEnvironment, preCheckDownloads } from "./download";
 import { extractUnityPackage, getExtractRoot, listUnityPackages } from "./extract";
@@ -13,8 +13,12 @@ import { CookieInvalidError, runFetchList } from "./unity-api";
 import { AssetIdInputDialog, chooseFromModal, clearProgressWidget, fixedWidthIdNameLabel, setProgressWidget, textPrompt } from "./ui";
 
 const EXTENSION_NAME = "Asset Store";
+const SETTINGS_COMMAND = "asset-store-settings";
+const STATUS_KEY = "aaa-pi-plan-mode";
 
-type MainAction = "account" | "search" | "download" | "extract";
+type AssetAction = "download" | "extract" | "open-downloads" | "settings";
+type BrowserResult = { action: "asset"; accountName: string; assetId: string } | { action: "refresh"; accountName: string } | "cancel";
+type SettingsCommandEvent = { args?: string; ctx?: ExtensionCommandContext; extensionName?: string; title?: string; shortcuts?: string; done?: () => void };
 
 function notifyError(ctx: ExtensionCommandContext, err: unknown): void {
 	if (err instanceof CookieInvalidError) {
@@ -31,14 +35,40 @@ function loadOrCreateConfig(ctx: ExtensionCommandContext): { config: AssetStoreC
 	return { config, configPath };
 }
 
-function updateStatus(ctx: ExtensionCommandContext, config?: AssetStoreConfig, phase?: string): void {
+function ensureExtensionSettingsFile(): void {
+	const settingsPath = path.join(path.dirname(configPathForCwd(process.cwd())), "settings.json");
+	let raw: Record<string, unknown> = {};
+	try {
+		const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) raw = parsed as Record<string, unknown>;
+	} catch {}
+	if (raw.__settingsCommand === SETTINGS_COMMAND && fs.existsSync(settingsPath)) return;
+	fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+	fs.writeFileSync(settingsPath, JSON.stringify({ ...raw, __settingsCommand: SETTINGS_COMMAND }, null, 2) + "\n", "utf8");
+}
+
+function configForAccount(config: AssetStoreConfig, accountName: string): AssetStoreConfig {
+	return { ...config, active_account: accountName };
+}
+
+function restoreBaseStatus(ctx: ExtensionCommandContext): void {
+	ctx.ui.setStatus("asset-store", undefined);
+	const mode = (globalThis as any).__piModeWorkflow?.getMode?.();
+	const label = mode === "ask" ? "ask" : mode === "plan" ? "plan" : "cmd";
+	const color = mode === "ask" ? "success" : mode === "plan" ? "accent" : "piPlanCmdMode";
+	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg(color as any, label));
+	((globalThis as any).__piMcpsRefreshStatus ?? (globalThis as any).__piMcpRefreshStatus)?.();
+}
+
+function updateStatus(ctx: ExtensionCommandContext, config?: AssetStoreConfig, _phase?: string): void {
 	if (!ctx.hasUI) return;
 	if (!config) {
-		ctx.ui.setStatus("asset-store", undefined);
+		restoreBaseStatus(ctx);
 		return;
 	}
-	const active = getActiveAccount(config).name;
-	ctx.ui.setStatus("asset-store", ctx.ui.theme.fg("accent", `asset:${active}${phase ? ` ${phase}` : ""}`));
+	ctx.ui.setStatus("asset-store", undefined);
+	ctx.ui.setStatus("mcp", undefined);
+	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("accent", "asset store"));
 }
 
 async function runWithProgress<T>(ctx: ExtensionCommandContext, title: string, work: (progress: (lines: string[], done?: number, total?: number) => void) => Promise<T>): Promise<T> {
@@ -124,12 +154,36 @@ function resultItemsFromInfo(infoMap: Map<string, { name: string; size: number }
 	}));
 }
 
+function assetItemsFromInfo(infoMap: Map<string, { name: string; size: number }>, ids: string[], _accountName: string): Array<EditorModalItem<string>> {
+	return ids.map((pid) => {
+		const info = infoMap.get(pid);
+		const name = cleanDisplayName(info?.name ?? "") || pid;
+		const size = info?.size ? formatSize(info.size) : "";
+		return {
+			value: pid,
+			label: name,
+			selectedDescription: size || undefined,
+		};
+	});
+}
+
 async function fetchLibraryForUi(ctx: ExtensionCommandContext, config: AssetStoreConfig): Promise<boolean> {
 	return await runWithProgress(ctx, "Fetch assets", async (progress) => {
 		return await runFetchList(config, ctx.cwd, (p) => {
 			progress([p.message || (p.phase === "pages" ? "Fetching asset list" : p.phase === "details" ? "Fetching asset details" : "Fetching complete"), barProgressLine(p.done, p.total)], p.done, p.total);
 		});
 	});
+}
+
+async function fetchLibraryForAccountUi(ctx: ExtensionCommandContext, config: AssetStoreConfig, accountName: string): Promise<boolean> {
+	return await fetchLibraryForUi(ctx, configForAccount(config, accountName));
+}
+
+async function ensureLibraryForAccountUi(ctx: ExtensionCommandContext, config: AssetStoreConfig, accountName: string): Promise<void> {
+	const scoped = configForAccount(config, accountName);
+	const { infoPath } = accountDataPaths(scoped, ctx.cwd);
+	if (loadInfoMap(infoPath).size > 0) return;
+	await fetchLibraryForAccountUi(ctx, config, accountName);
 }
 
 async function searchAssets(ctx: ExtensionCommandContext): Promise<void> {
@@ -231,7 +285,7 @@ async function extractAssets(ctx: ExtensionCommandContext): Promise<void> {
 	const extractRoot = getExtractRoot(env.downloadDir);
 	const packages = listUnityPackages(env.downloadDir);
 	const items: Array<{ value: string; label: string; description?: string }> = packages.map((pkg, i) => ({ value: pkg, label: `${i + 1}. ${path.basename(pkg)}` }));
-	items.push({ value: ".", label: "Open extracts folder", description: packages.length === 0 ? "No .unitypackage files in download folder" : undefined });
+	items.push({ value: ".", label: "Open Downloads folder", description: packages.length === 0 ? "No .unitypackage files in download folder" : undefined });
 	const selected = await chooseFromModal<string>(ctx, {
 		title: "Extract assets",
 		subtitle: `Directory: ${displayPath(extractRoot, ctx.cwd)}`,
@@ -257,27 +311,164 @@ async function extractAssets(ctx: ExtensionCommandContext): Promise<void> {
 	}
 }
 
-async function mainMenu(ctx: ExtensionCommandContext): Promise<void> {
-	let { config } = loadOrCreateConfig(ctx);
-	while (true) {
-		updateStatus(ctx, config);
-		const choice = await chooseFromModal<MainAction>(ctx, {
-			title: "Unity asset store downloader",
-			subtitle: `Active account: ${getActiveAccount(config).name}`,
-			items: [
-				{ value: "account", label: "1. Account settings" },
-				{ value: "search", label: "2. Search assets" },
-				{ value: "download", label: "3. Download assets" },
-				{ value: "extract", label: "4. Extract assets" },
-			],
-			shortcuts: "↑↓ navigate • enter select • esc exit",
+function findDownloadedPackageForAsset(env: { downloadDir: string }, assetId: string, infoMap: Map<string, { name: string; size: number }>): string | undefined {
+	const desired = desiredFilename(assetId, infoMap);
+	const desiredPath = path.join(env.downloadDir, desired);
+	if (fs.existsSync(desiredPath)) return desiredPath;
+	const name = cleanDisplayName(infoMap.get(assetId)?.name ?? "").toLowerCase();
+	for (const pkg of listUnityPackages(env.downloadDir)) {
+		const base = path.basename(pkg).toLowerCase();
+		if (base === desired.toLowerCase() || base.includes(assetId) || (name && base.includes(name))) return pkg;
+	}
+	return undefined;
+}
+
+async function runDownloadForAsset(ctx: ExtensionCommandContext, config: AssetStoreConfig, assetId: string): Promise<void> {
+	const env = prepareDownloadEnvironment(config, ctx.cwd);
+	const { infoPath } = accountDataPaths(config, ctx.cwd);
+	const infoMap = loadInfoMap(infoPath);
+	const { skipped, pending } = preCheckDownloads([assetId], env, infoMap);
+	if (skipped.length > 0) {
+		ctx.ui.notify("File exists, downloading skipped", "info");
+		return;
+	}
+	const aid = pending[0];
+	if (!aid) return;
+	const filename = desiredFilename(aid, infoMap);
+	const result = await runWithProgress(ctx, "Download asset", async (progress) => {
+		return await downloadAsset(aid, config, env, {
+			totalSize: infoMap.get(aid)?.size ?? 0,
+			desiredFilename: filename,
+			onProgress: (p) => progress([`Directory: ${displayPath(env.downloadDir, ctx.cwd)}`, `Asset: ${filename}`, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
 		});
-		if (!choice) break;
-		if (choice === "account") await accountSettings(ctx);
-		else if (choice === "search") await searchAssets(ctx);
-		else if (choice === "download") await downloadAssets(ctx);
-		else if (choice === "extract") await extractAssets(ctx);
+	});
+	const downloadedSize = result.size ? formatSize(result.size) : "0 B";
+	ctx.ui.notify(result.ok ? `Download complete: ${downloadedSize}, 1 success, 0 failed` : result.message, result.ok ? "info" : "error");
+}
+
+async function runExtractForAsset(ctx: ExtensionCommandContext, config: AssetStoreConfig, assetId: string): Promise<void> {
+	const env = prepareDownloadEnvironment(config, ctx.cwd);
+	const { infoPath } = accountDataPaths(config, ctx.cwd);
+	const infoMap = loadInfoMap(infoPath);
+	const pkgPath = findDownloadedPackageForAsset(env, assetId, infoMap);
+	if (!pkgPath) {
+		ctx.ui.notify("No downloaded .unitypackage found for this asset. Download it first.", "warning");
+		return;
+	}
+	const extractRoot = getExtractRoot(env.downloadDir);
+	const outDir = path.join(extractRoot, path.basename(pkgPath, path.extname(pkgPath)));
+	const result = await runWithProgress(ctx, "Extract asset", async (progress) => {
+		return await extractUnityPackage(pkgPath, outDir, (p) => progress([`Directory: ${displayPath(extractRoot, ctx.cwd)}`, `Asset: ${path.basename(pkgPath)}`, barProgressLine(p.done, p.total, "Files")], p.done, p.total || 1));
+	});
+	ctx.ui.notify(result.message, result.ok ? "info" : "error");
+}
+
+async function assetActions(ctx: ExtensionCommandContext, accountName: string, assetId: string): Promise<boolean> {
+	const { config } = loadOrCreateConfig(ctx);
+	const scoped = configForAccount(config, accountName);
+	updateStatus(ctx, scoped, "actions");
+	const { infoPath } = accountDataPaths(scoped, ctx.cwd);
+	const infoMap = loadInfoMap(infoPath);
+	const info = infoMap.get(assetId);
+	const env = prepareDownloadEnvironment(scoped, ctx.cwd);
+	const action = await chooseFromModal<AssetAction>(ctx, {
+		title: `Actions for "${cleanDisplayName(info?.name ?? assetId)}"`,
+		items: [
+			{ value: "download", label: "Download", description: displayPath(env.downloadDir, ctx.cwd) },
+			{ value: "extract", label: "Extract", description: displayPath(getExtractRoot(env.downloadDir), ctx.cwd) },
+			{ value: "open-downloads", label: "Open Downloads folder" },
+			{ value: "settings", label: "Account settings" },
+		],
+		shortcuts: "↑↓ navigate • enter select • esc back",
+	});
+	if (!action) return false;
+	try {
+		if (action === "download") await runDownloadForAsset(ctx, scoped, assetId);
+		else if (action === "extract") await runExtractForAsset(ctx, scoped, assetId);
+		else if (action === "open-downloads") openFolder(env.downloadDir);
+		else if (action === "settings") await accountSettings(ctx);
+	} catch (err) {
+		notifyError(ctx, err);
+	} finally {
+		clearProgressWidget(ctx);
+	}
+	return action === "settings";
+}
+
+async function assetBrowser(ctx: ExtensionCommandContext): Promise<void> {
+	let { config } = loadOrCreateConfig(ctx);
+	let activeAccount = getActiveAccount(config).name;
+	let activeAssetId: string | undefined;
+	try {
+		await ensureLibraryForAccountUi(ctx, config, activeAccount);
+	} catch (err) {
+		notifyError(ctx, err);
+	}
+
+	while (true) {
 		config = loadConfig(configPathForCwd(ctx.cwd));
+		if (!config.accounts.some((account) => account.name === activeAccount)) activeAccount = getActiveAccount(config).name;
+		updateStatus(ctx, configForAccount(config, activeAccount));
+		const cache = new Map<string, Map<string, { name: string; size: number }>>();
+		const getInfoMap = (accountName: string) => {
+			let infoMap = cache.get(accountName);
+			if (!infoMap) {
+				infoMap = loadInfoMap(accountDataPaths(configForAccount(config, accountName), ctx.cwd).infoPath);
+				cache.set(accountName, infoMap);
+			}
+			return infoMap;
+		};
+		const filters: Array<EditorModalFilter<string>> | undefined = config.accounts.length > 1
+			? config.accounts.map((account) => ({ value: account.name, label: account.name }))
+			: undefined;
+		const result = await ctx.ui.custom<BrowserResult>((tui, theme, keybindings, done) => new EditorModal<string, string>({
+			tui,
+			theme,
+			keybindings,
+			title: "Unity Asset Store",
+			subtitle: undefined,
+			filters,
+			initialFilter: activeAccount,
+			initialSelectedValue: activeAssetId,
+			search: true,
+			maxVisible: 12,
+			shortcuts: `type to search • ↑↓ navigate${filters ? " • tab account" : ""} • enter actions • ctrl+r refresh • esc close`,
+			noItemsText: (query) => query.trim() ? "No matching assets" : "No assets cached. Press ctrl+r to fetch this account.",
+			descriptionGap: 4,
+			getItems: (filter, query = "") => {
+				const accountName = filter ?? activeAccount;
+				const infoMap = getInfoMap(accountName);
+				return assetItemsFromInfo(infoMap, filterAssets(infoMap, query), accountName);
+			},
+			onSelect: (item, filter) => done({ action: "asset", accountName: filter ?? activeAccount, assetId: item.value }),
+			onCancel: () => done("cancel"),
+			onFilterChange: (filter) => { activeAccount = filter; },
+			onInput: (data, filter, selectedItem) => {
+				if (data === "\x12") {
+					done({ action: "refresh", accountName: filter ?? activeAccount });
+					return true;
+				}
+				activeAssetId = selectedItem?.value ?? activeAssetId;
+				return false;
+			},
+		}));
+		if (result === "cancel") break;
+		if (result.action === "refresh") {
+			try {
+				await fetchLibraryForAccountUi(ctx, config, result.accountName);
+				activeAccount = result.accountName;
+				activeAssetId = undefined;
+			} catch (err) {
+				notifyError(ctx, err);
+			} finally {
+				clearProgressWidget(ctx);
+			}
+			continue;
+		}
+		activeAccount = result.accountName;
+		activeAssetId = result.assetId;
+		const shouldReload = await assetActions(ctx, result.accountName, result.assetId);
+		if (shouldReload) activeAssetId = result.assetId;
 	}
 	updateStatus(ctx, undefined);
 }
@@ -330,7 +521,7 @@ function registerTools(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "asset_store_extract",
 		label: "Asset Store Extract",
-		description: "Extract one downloaded .unitypackage from the active account download_dir into the sibling extracts folder.",
+		description: "Extract one downloaded .unitypackage from the active account download_dir into the Downloads folder.",
 		promptSnippet: "Extract a downloaded Unity .unitypackage safely",
 		promptGuidelines: ["Use asset_store_extract when the user asks to unpack a downloaded Unity .unitypackage."],
 		parameters: Type.Object({ packageName: Type.String({ description: "Downloaded .unitypackage filename or absolute path" }) }),
@@ -348,7 +539,18 @@ function registerTools(pi: ExtensionAPI) {
 	});
 }
 
+function isSettingsCommandEvent(data: unknown): data is SettingsCommandEvent {
+	if (!data || typeof data !== "object") return false;
+	const ctx = (data as SettingsCommandEvent).ctx;
+	return !!ctx?.ui && typeof ctx.ui.custom === "function";
+}
+
 export default function assetStoreDownloader(pi: ExtensionAPI) {
+	ensureExtensionSettingsFile();
+	(pi as unknown as { events: { on: (event: string, handler: (data: unknown) => void) => void } }).events.on(`command-settings:${SETTINGS_COMMAND}`, (data: unknown) => {
+		if (!isSettingsCommandEvent(data) || !data.ctx) return;
+		void accountSettings(data.ctx).finally(() => data.done?.());
+	});
 	pi.registerCommand("asset-store", {
 		description: "Unity Asset Store downloader",
 		handler: async (_args, ctx) => {
@@ -356,7 +558,7 @@ export default function assetStoreDownloader(pi: ExtensionAPI) {
 				ctx.ui.notify("/asset-store requires interactive TUI mode", "error");
 				return;
 			}
-			await mainMenu(ctx);
+			await assetBrowser(ctx);
 		},
 	});
 	registerTools(pi);

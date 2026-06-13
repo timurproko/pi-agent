@@ -76,7 +76,7 @@ export function normalizeConfig(input: unknown): AssetStoreConfig {
 
 export function loadConfig(configPath: string): AssetStoreConfig {
 	if (!fs.existsSync(configPath)) {
-		return normalizeConfig({ accounts: [{ name: "Account 1", cookie: "", download_dir: "./downloads" }], active_account: "Account 1", max_workers: 3, retry: 3, timeout: 300 });
+		return normalizeConfig({ accounts: [{ name: "Account 1", cookie: "" }], active_account: "Account 1", max_workers: 3, retry: 3, timeout: 300 });
 	}
 	const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
 	return normalizeConfig(raw);

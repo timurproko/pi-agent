@@ -35,18 +35,19 @@ npm install
 
 ## UI
 
-The command opens a Pi editor/TUI menu with the same actions as the Python app:
+The command opens a Pi editor/TUI asset browser:
 
-- Account settings
-- Search assets
-- Download assets
-- Extract assets
+- Type to search assets by id or name.
+- If multiple accounts are configured, press Tab to switch the account filter.
+- Press Enter on an asset to open actions: download, extract, open folders, refresh, or account settings.
+- Press Ctrl+R to refresh the selected account's asset list.
 
+Account settings are also available from `/extensions`: select `asset-store` and press Space on its `[settings]` entry.
 Long operations display progress in the editor UI and an `asset-store-progress` widget.
 
 ## Data/output layout
 
-The extension stores its config, data, and default downloads under the extension folder:
+The extension stores its config and library cache under the extension folder. Downloads and extracted packages use the Windows Downloads folder by default:
 
 | Path | Role |
 | --- | --- |
@@ -54,11 +55,11 @@ The extension stores its config, data, and default downloads under the extension
 | `data/asset_list.<account>.jsonl` | Paginated `searchMyAssets` responses |
 | `data/asset_info.<account>.jsonl` | Product detail JSONL used for search/download filenames |
 | `data/asset_ids.<account>.txt` | Product IDs fetched for the account |
-| `downloads/` by default | `.unitypackage` downloads |
-| `downloads/.cache/` by default | Resume metadata |
-| `extracts/<package-stem>/` by default | Extracted files |
+| `C:\\Users\\tprokopiev\\Downloads` by default | `.unitypackage` downloads |
+| `C:\\Users\\tprokopiev\\Downloads/.cache` by default | Resume metadata |
+| `C:\\Users\\tprokopiev\\Downloads/<package-stem>/` by default | Extracted files |
 
-Relative `download_dir` values in `config.json` are resolved from the extension folder. Absolute `download_dir` values are still respected.
+Relative custom `download_dir` values in `config.json` are resolved from the extension folder. Absolute `download_dir` values are still respected.
 
 ## Privacy
 

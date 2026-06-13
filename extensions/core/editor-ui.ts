@@ -588,7 +588,7 @@ export class EditorModal<T = string, F extends string = string> implements Compo
 					line += ` ${theme.fg(item.descriptionColor ?? "muted", item.description)}`;
 				} else if (hasColumnDescriptions) {
 					const padding = " ".repeat(Math.max(descriptionGap, titleColumnWidth - getTitleWidth(item) + descriptionGap));
-					const descriptionColor = item.descriptionColor ?? (muted ? "dim" : selected && this.options.highlightDescription !== false ? "accent" : "muted");
+					const descriptionColor = item.descriptionColor ?? (muted ? "dim" : selected && this.options.highlightDescription === true ? "accent" : "muted");
 					line += padding + theme.fg(descriptionColor, item.description);
 				}
 			}
@@ -907,7 +907,7 @@ export class EditorSearchModal<T = string> implements Component, Focusable {
 					line += ` ${theme.fg("muted", item.description)}`;
 				} else if (hasColumnDescriptions) {
 					const padding = " ".repeat(Math.max(descriptionGap, labelColumnWidth - visibleWidth(item.label) + descriptionGap));
-					const descriptionColor = item.disabled ? "dim" : selected && this.options.highlightDescription !== false ? "accent" : "muted";
+					const descriptionColor = item.disabled ? "dim" : selected && this.options.highlightDescription === true ? "accent" : "muted";
 					line += padding + theme.fg(descriptionColor, item.description);
 				}
 			}

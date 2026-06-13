@@ -15,15 +15,32 @@ export interface ExtractResult {
 	message: string;
 }
 
+function readPackagePathname(rawPathname: string): string {
+	return rawPathname.replace(/\0/g, "").split(/\r?\n/, 1)[0] ?? "";
+}
+
 function sanitizePackagePathname(pathname: string): string {
-	let out = pathname.replace(/\0/g, "");
-	if (process.platform === "win32") out = out.replace(/[>:"|?*]/g, "_");
-	return out;
+	const normalized = readPackagePathname(pathname)
+		.replace(/\\/g, "/");
+	const parts = normalized.split("/").map((part) => {
+		let out = part.replace(/[\x00-\x1f]/g, "_");
+		if (process.platform === "win32") {
+			out = out.replace(/[<>:"|?*]/g, "_").replace(/[ .]+$/g, "");
+		}
+		return out;
+	}).filter((part) => part && part !== ".");
+	return parts.join(path.sep);
 }
 
 function isInside(parent: string, child: string): boolean {
 	const rel = path.relative(path.resolve(parent), path.resolve(child));
 	return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+function isUnsafePackagePathname(pathname: string): boolean {
+	const normalized = readPackagePathname(pathname).replace(/\\/g, "/");
+	if (path.isAbsolute(normalized) || /^[a-z]:\//i.test(normalized)) return true;
+	return normalized.split("/").some((part) => part === "..");
 }
 
 async function extractTarToTemp(packagePath: string, tmpDir: string): Promise<void> {
@@ -51,7 +68,7 @@ export async function extractUnityPackage(packagePath: string, outputPath: strin
 			const assetFile = path.join(entryDir, "asset");
 			if (!fs.existsSync(pathnameFile) || !fs.existsSync(assetFile)) continue;
 			let pathname = fs.readFileSync(pathnameFile, "utf8");
-			if (pathname.endsWith("\n")) pathname = pathname.slice(0, -1);
+			if (isUnsafePackagePathname(pathname)) continue;
 			pathname = sanitizePackagePathname(pathname);
 			const outPath = path.resolve(resolvedOutput, pathname);
 			if (!isInside(resolvedOutput, outPath)) continue;
@@ -59,13 +76,18 @@ export async function extractUnityPackage(packagePath: string, outputPath: strin
 		}
 		onProgress?.({ done: 0, total: items.length });
 		let done = 0;
+		let failed = 0;
 		for (const item of items) {
-			fs.mkdirSync(path.dirname(item.outPath), { recursive: true });
-			fs.renameSync(item.assetPath, item.outPath);
-			done += 1;
-			onProgress?.({ done, total: items.length });
+			try {
+				fs.mkdirSync(path.dirname(item.outPath), { recursive: true });
+				fs.copyFileSync(item.assetPath, item.outPath);
+				done += 1;
+			} catch {
+				failed += 1;
+			}
+			onProgress?.({ done: done + failed, total: items.length });
 		}
-		return { ok: true, files: done, outputPath: resolvedOutput, message: `Extracting complete: ${done} success, 0 failed` };
+		return { ok: failed === 0, files: done, outputPath: resolvedOutput, message: `Extracting complete: ${done} success, ${failed} failed` };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		return { ok: false, files: 0, outputPath: resolvedOutput, message: `Extraction failed: ${message}` };
@@ -75,7 +97,7 @@ export async function extractUnityPackage(packagePath: string, outputPath: strin
 }
 
 export function getExtractRoot(downloadDir: string): string {
-	return path.join(path.dirname(path.resolve(downloadDir)), "extracts");
+	return path.resolve(downloadDir);
 }
 
 export function listUnityPackages(downloadDir: string): string[] {
