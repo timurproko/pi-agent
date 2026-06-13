@@ -12,7 +12,7 @@
 import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { Input, Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { EditorConfirmModal, EditorDialogTemplate, EditorModal, type EditorModalItem } from "./core/editor-ui";
+import { EditorConfirmModal, EditorDialogTemplate, EditorModal, EditorTextPromptDialog, type EditorModalItem } from "./core/editor-ui";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -299,57 +299,21 @@ class PlanSelectorDialog implements Component, Focusable {
 	}
 }
 
-class SpecificSuggestionDialog implements Component, Focusable {
-	private readonly input = new Input();
-	private _focused = false;
-
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-		this.input.focused = value;
-	}
-
+class SpecificSuggestionDialog extends EditorTextPromptDialog {
 	constructor(
-		private readonly tui: TUI,
-		private readonly theme: any,
-		private readonly keybindings: KeybindingMatcher,
-		private readonly onDone: (suggestion: string | undefined) => void,
+		tui: TUI,
+		theme: any,
+		keybindings: KeybindingMatcher,
+		onDone: (suggestion: string | undefined) => void,
 	) {
-		this.input.onSubmit = (value) => this.onDone(value);
-		this.input.onEscape = () => this.onDone(undefined);
-	}
-
-	handleInput(keyData: string): void {
-		if (this.keybindings.matches(keyData, "tui.select.cancel")) {
-			this.onDone(undefined);
-			return;
-		}
-		this.input.handleInput(keyData);
-		this.tui.requestRender();
-	}
-
-	render(width: number): string[] {
-		const lines: string[] = [];
-		const border = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const push = (line = "") => lines.push(truncateToWidth(line, width));
-
-		push(border);
-		push();
-		push(this.theme.fg("accent", this.theme.bold("Suggest specific changes")));
-		push();
-		for (const line of this.input.render(width)) {
-			push(line);
-		}
-		push();
-		push(this.theme.fg("dim", "enter submit • esc cancel"));
-		push(border);
-		return lines;
-	}
-
-	invalidate(): void {
-		this.input.invalidate();
+		super({
+			tui,
+			theme,
+			keybindings,
+			title: "Suggest specific changes",
+			onSubmit: (value) => onDone(value),
+			onCancel: () => onDone(undefined),
+		});
 	}
 }
 

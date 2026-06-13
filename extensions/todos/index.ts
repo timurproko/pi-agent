@@ -47,7 +47,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { EditorConfirmModal, EditorDialogTemplate, EditorModal } from "../core/editor-ui";
+import { EditorConfirmModal, EditorDialogTemplate, EditorModal, EditorTextPromptDialog } from "../core/editor-ui";
 
 const TODO_DIR_NAME = ".pi/todos";
 const AGENT_TODO_DIR_NAME = "todos";
@@ -150,6 +150,7 @@ type TodoOverlayAction = "back";
 type TodoMenuAction =
 	| "work"
 	| "refine"
+	| "change"
 	| "close"
 	| "reopen"
 	| "release"
@@ -1119,6 +1120,17 @@ function buildRefinePrompt(todoId: string, title: string): string {
 	);
 }
 
+function buildSuggestTodoChangesPrompt(todoFile: string, suggestion: string): string {
+	return [
+		`Apply these specific suggested changes to the todo at ${todoFile}.`,
+		"Read the existing todo first, update that same todo file, and do not ask follow-up questions unless the suggestion is impossible to apply safely.",
+		"After updating the todo, briefly summarize what changed.",
+		"",
+		"Specific suggestion:",
+		suggestion,
+	].join("\n");
+}
+
 function splitTodosByAssignment(todos: TodoFrontMatter[]): {
 	assignedTodos: TodoFrontMatter[];
 	openTodos: TodoFrontMatter[];
@@ -1946,6 +1958,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 		todos = await listTodos(todosDir);
 		let nextPrompt: string | null = null;
 		let nextPromptAutoSend = false;
+		let nextPromptSendDirect = false;
 		let nextPromptRefineTodoId: string | null = null;
 		let rootTui: TUI | null = null;
 		await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
@@ -2099,6 +2112,7 @@ export default function todosExtension(pi: ExtensionAPI) {
 						title: `Actions for "${record.title || "(untitled)"}"`,
 						items: [
 							{ value: "refine", label: "Refine", description: "Refine todo" },
+							{ value: "change", label: "Change", description: "Suggest specific changes" },
 							{ value: "work", label: "Work", description: "Start implementation" },
 							closed
 								? { value: "reopen", label: "Reopen", description: "Reopen todo" }
@@ -2133,6 +2147,29 @@ export default function todosExtension(pi: ExtensionAPI) {
 				const handleActionSelection = async (record: TodoRecord, action: TodoMenuAction) => {
 					if (action === "view") {
 						openDetail(record);
+						return;
+					}
+
+					if (action === "change") {
+						setActiveComponent(
+							new EditorTextPromptDialog({
+								tui,
+								theme,
+								keybindings,
+								title: "Suggest specific changes",
+								onSubmit: (suggestion) => {
+									if (!suggestion.trim()) {
+										ctx.ui.notify("Suggestion cannot be empty", "warning");
+										setActiveComponent(actionMenu);
+										return;
+									}
+									nextPrompt = buildSuggestTodoChangesPrompt(getTodoPath(todosDir, record.id), suggestion.trim());
+									nextPromptSendDirect = true;
+									done();
+								},
+								onCancel: () => setActiveComponent(actionMenu),
+							}),
+						);
 						return;
 					}
 
@@ -2220,7 +2257,9 @@ export default function todosExtension(pi: ExtensionAPI) {
 			});
 
 		if (nextPrompt) {
-			if (nextPromptAutoSend) {
+			if (nextPromptSendDirect) {
+				await pi.sendUserMessage(nextPrompt);
+			} else if (nextPromptAutoSend) {
 				const refineTodoId = nextPromptRefineTodoId;
 				const refineFlow = (globalThis as any).__piAnswerRefineFlow;
 				if (refineTodoId && typeof refineFlow?.start === "function") {

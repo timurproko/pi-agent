@@ -1,6 +1,9 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
+	CURSOR_MARKER,
+	Editor,
+	type EditorTheme,
 	type Focusable,
 	Input,
 	Key,
@@ -256,6 +259,113 @@ export class EditorDialogTemplate {
 		}
 		lines.push(padToWidth(border("╰" + horizontal + "╯")));
 		return lines;
+	}
+}
+
+export interface EditorTextPromptDialogOptions {
+	tui: TUI;
+	theme: Theme;
+	keybindings: EditorUiKeybindings;
+	title: string;
+	subtitle?: string;
+	initialText?: string;
+	submitLabel?: string;
+	newlineLabel?: string;
+	cancelLabel?: string;
+	onSubmit: (text: string) => void;
+	onCancel: () => void;
+}
+
+/**
+ * Shared multi-line prompt dialog for free-form notes/suggestions.
+ * Enter submits; Ctrl/Shift/Alt+Enter insert new lines via the underlying Editor.
+ */
+export class EditorTextPromptDialog implements Component, Focusable {
+	private readonly editor: Editor;
+	private _focused = false;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+		this.editor.focused = value;
+	}
+
+	constructor(private readonly options: EditorTextPromptDialogOptions) {
+		const editorTheme: EditorTheme = {
+			borderColor: (s: string) => options.theme.fg("dim", s),
+			selectList: {
+				selectedPrefix: (s: string) => options.theme.fg("accent", s),
+				selectedText: (s: string) => `\x1b[44m${s}\x1b[0m`,
+				description: (s: string) => options.theme.fg("muted", s),
+				scrollInfo: (s: string) => options.theme.fg("dim", s),
+				noMatch: (s: string) => options.theme.fg("warning", s),
+			},
+		};
+		this.editor = new Editor(options.tui, editorTheme);
+		this.editor.onSubmit = (text) => options.onSubmit(text);
+		this.editor.onChange = () => options.tui.requestRender();
+		if (options.initialText) this.editor.setText(options.initialText);
+	}
+
+	handleInput(keyData: string): void {
+		if (this.options.keybindings.matches(keyData, "tui.select.cancel") || matchesKey(keyData, Key.escape) || matchesKey(keyData, Key.ctrl("c"))) {
+			this.options.onCancel();
+			return;
+		}
+		this.editor.handleInput(keyData);
+		this.options.tui.requestRender();
+	}
+
+	render(width: number): string[] {
+		const lines: string[] = [];
+		const border = this.options.theme.fg("border", "─".repeat(Math.max(1, width)));
+		const push = (line = "") => lines.push(truncateToWidth(line, width));
+
+		push(border);
+		push();
+		push(this.options.theme.fg("accent", this.options.theme.bold(this.options.title)));
+		push();
+		if (this.options.subtitle) {
+			push(this.options.theme.fg("muted", this.options.subtitle));
+			push();
+		}
+		for (const line of this.renderEditorLines(width)) push(line);
+		push();
+		push([
+			this.options.submitLabel ?? "enter submit",
+			this.options.newlineLabel ?? "ctrl+enter newline",
+			this.options.cancelLabel ?? "esc cancel",
+		].map((part) => this.options.theme.fg("dim", part)).join(this.options.theme.fg("muted", " • ")));
+		push(border);
+		return lines;
+	}
+
+	private renderEditorLines(width: number): string[] {
+		const prompt = "> ";
+		const continuationPrompt = "  ";
+		const contentWidth = Math.max(1, width - prompt.length);
+		const cursor = this.editor.getCursor();
+		const textLines = this.editor.getLines();
+		return textLines.map((line, index) => {
+			const prefix = index === 0 ? prompt : continuationPrompt;
+			if (index !== cursor.line) {
+				return prefix + truncateToWidth(line, contentWidth);
+			}
+			const before = line.slice(0, cursor.col);
+			const after = line.slice(cursor.col);
+			const cursorChar = after.length > 0 ? after[0] : " ";
+			const rest = after.length > 0 ? after.slice(1) : "";
+			const marker = this.focused ? CURSOR_MARKER : "";
+			const rendered = before + marker + `\x1b[7m${cursorChar}\x1b[27m` + rest;
+			return prefix + truncateToWidth(rendered, contentWidth);
+		});
+	}
+
+	invalidate(): void {
+		this.editor.invalidate();
 	}
 }
 
