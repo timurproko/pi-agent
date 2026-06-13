@@ -1,0 +1,20 @@
+{
+  "name": "asset-store-pi-extension",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "tar": "^7.5.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "@types/node": "^24.10.1"
+  },
+  "scripts": {
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit --skipLibCheck --module ESNext --moduleResolution Bundler --target ES2022 --allowImportingTsExtensions true --noImplicitAny false index.ts config.ts storage.ts platform.ts unity-api.ts download.ts extract.ts ui.ts declarations.d.ts tests/unit.test.ts"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
