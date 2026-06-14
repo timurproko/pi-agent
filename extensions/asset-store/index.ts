@@ -15,6 +15,7 @@ import { AssetIdInputDialog, chooseFromModal, clearProgressWidget, fixedWidthIdN
 const EXTENSION_NAME = "Asset Store";
 const SETTINGS_COMMAND = "asset-store-settings";
 const STATUS_KEY = "aaa-pi-plan-mode";
+const SCOPED_EXTENSION_STATUS_STATE = Symbol.for("pi.scopedExtensionStatus");
 
 type AssetAction = "download" | "extract" | "open-downloads" | "settings";
 type BrowserResult = { action: "asset"; accountName: string; assetId: string } | { action: "refresh"; accountName: string } | "cancel";
@@ -56,7 +57,7 @@ function configForAccount(config: AssetStoreConfig, accountName: string): AssetS
 	return { ...config, active_account: accountName };
 }
 
-function restoreBaseStatus(ctx: ExtensionCommandContext): void {
+function restoreDefaultStatus(ctx: ExtensionCommandContext): void {
 	ctx.ui.setStatus("asset-store", undefined);
 	const mode = (globalThis as any).__piModeWorkflow?.getMode?.();
 	const label = mode === "ask" ? "ask" : mode === "plan" ? "plan" : "cmd";
@@ -65,15 +66,47 @@ function restoreBaseStatus(ctx: ExtensionCommandContext): void {
 	((globalThis as any).__piMcpsRefreshStatus ?? (globalThis as any).__piMcpRefreshStatus)?.();
 }
 
+function extensionStatusLabel(extensionName: string): string {
+	return extensionName.trim().toLowerCase();
+}
+
+function setActiveExtensionStatus(ctx: ExtensionCommandContext, extensionName: string): void {
+	if (!ctx.hasUI) return;
+	ctx.ui.setStatus("asset-store", undefined);
+	ctx.ui.setStatus("mcp", undefined);
+	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("accent", extensionStatusLabel(extensionName)));
+}
+
+function scopedExtensionStatus(ctx: ExtensionCommandContext, extensionName: string): () => void {
+	if (!ctx.hasUI) return () => {};
+	const state = ((globalThis as any)[SCOPED_EXTENSION_STATUS_STATE] ??= { depth: 0 }) as { depth: number };
+	state.depth += 1;
+	setActiveExtensionStatus(ctx, extensionName);
+	let restored = false;
+	return () => {
+		if (restored) return;
+		restored = true;
+		state.depth = Math.max(0, state.depth - 1);
+		if (state.depth === 0) restoreDefaultStatus(ctx);
+	};
+}
+
+async function withExtensionStatus<T>(ctx: ExtensionCommandContext, extensionName: string, work: () => Promise<T>): Promise<T> {
+	const restore = scopedExtensionStatus(ctx, extensionName);
+	try {
+		return await work();
+	} finally {
+		restore();
+	}
+}
+
 function updateStatus(ctx: ExtensionCommandContext, config?: AssetStoreConfig, _phase?: string): void {
 	if (!ctx.hasUI) return;
 	if (!config) {
-		restoreBaseStatus(ctx);
+		restoreDefaultStatus(ctx);
 		return;
 	}
-	ctx.ui.setStatus("asset-store", undefined);
-	ctx.ui.setStatus("mcp", undefined);
-	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("accent", "asset store"));
+	setActiveExtensionStatus(ctx, EXTENSION_NAME);
 }
 
 async function runWithProgress<T>(ctx: ExtensionCommandContext, title: string, work: (progress: (lines: string[], done?: number, total?: number) => void, signal: AbortSignal) => Promise<T>, initialLines: string[] = ["Starting..."]): Promise<T> {
@@ -630,7 +663,7 @@ export default function assetStoreDownloader(pi: ExtensionAPI) {
 	ensureExtensionSettingsFile();
 	(pi as unknown as { events: { on: (event: string, handler: (data: unknown) => void) => void } }).events.on(`command-settings:${SETTINGS_COMMAND}`, (data: unknown) => {
 		if (!isSettingsCommandEvent(data) || !data.ctx) return;
-		void accountSettings(data.ctx).finally(() => data.done?.());
+		void withExtensionStatus(data.ctx, EXTENSION_NAME, () => accountSettings(data.ctx!)).finally(() => data.done?.());
 	});
 	pi.registerCommand("asset-store", {
 		description: "Unity Asset Store downloader",
@@ -639,7 +672,7 @@ export default function assetStoreDownloader(pi: ExtensionAPI) {
 				ctx.ui.notify("/asset-store requires interactive TUI mode", "error");
 				return;
 			}
-			await assetBrowser(ctx);
+			await withExtensionStatus(ctx, EXTENSION_NAME, () => assetBrowser(ctx));
 		},
 	});
 	registerTools(pi);
