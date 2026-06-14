@@ -193,6 +193,32 @@ function assetItemsFromInfo(infoMap: Map<string, { name: string; size: number }>
 	});
 }
 
+function watchDownloadFolders(config: AssetStoreConfig, cwd: string, onChange: () => void): () => void {
+	const watchers: fs.FSWatcher[] = [];
+	const watchedDirs = new Set<string>();
+	let debounce: ReturnType<typeof setTimeout> | undefined;
+	const trigger = () => {
+		if (debounce) clearTimeout(debounce);
+		debounce = setTimeout(onChange, 100);
+	};
+	for (const account of config.accounts) {
+		const dir = resolveDownloadDir(configForAccount(config, account.name), cwd);
+		const key = path.resolve(dir).toLowerCase();
+		if (watchedDirs.has(key) || !fs.existsSync(dir)) continue;
+		watchedDirs.add(key);
+		try {
+			watchers.push(fs.watch(dir, { persistent: false }, (_event, filename) => {
+				const name = typeof filename === "string" ? filename : String(filename ?? "");
+				if (!name || name.toLowerCase().endsWith(".unitypackage")) trigger();
+			}));
+		} catch {}
+	}
+	return () => {
+		if (debounce) clearTimeout(debounce);
+		for (const watcher of watchers) watcher.close();
+	};
+}
+
 async function fetchLibraryForUi(ctx: ExtensionCommandContext, config: AssetStoreConfig): Promise<boolean> {
 	return await runWithProgress(ctx, "Fetch assets", async (progress) => {
 		return await runFetchList(config, ctx.cwd, (p) => {
@@ -293,7 +319,7 @@ async function downloadAssets(ctx: ExtensionCommandContext): Promise<void> {
 				totalSize: infoMap.get(aid)?.size ?? 0,
 				desiredFilename: filename,
 				signal,
-				onProgress: (p) => progress([`Asset: ${filename}`, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
+				onProgress: (p) => progress([filename, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
 			});
 		});
 		const downloadedSize = result.size ? formatSize(result.size) : "0 B";
@@ -328,7 +354,7 @@ async function extractAssets(ctx: ExtensionCommandContext): Promise<void> {
 	const outDir = path.join(extractRoot, path.basename(selected, path.extname(selected)));
 	try {
 		const result = await runWithProgress(ctx, "Extract assets", async (progress) => {
-			return await extractUnityPackage(selected, outDir, (p) => progress([`Directory: ${displayPath(extractRoot, ctx.cwd)}`, `Asset: ${path.basename(selected)}`, barProgressLine(p.done, p.total, "Files")], p.done, p.total || 1));
+			return await extractUnityPackage(selected, outDir, (p) => progress([`Directory: ${displayPath(extractRoot, ctx.cwd)}`, path.basename(selected), barProgressLine(p.done, p.total, "Files")], p.done, p.total || 1));
 		});
 		ctx.ui.notify(result.message, result.ok ? "info" : "error");
 	} catch (err) {
@@ -367,7 +393,7 @@ async function runDownloadForAsset(ctx: ExtensionCommandContext, config: AssetSt
 			totalSize: infoMap.get(aid)?.size ?? 0,
 			desiredFilename: filename,
 			signal,
-			onProgress: (p) => progress([`Asset: ${filename}`, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
+			onProgress: (p) => progress([filename, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
 		});
 	});
 	const downloadedSize = result.size ? formatSize(result.size) : "0 B";
@@ -386,7 +412,7 @@ async function runExtractForAsset(ctx: ExtensionCommandContext, config: AssetSto
 	const extractRoot = getExtractRoot(env.downloadDir);
 	const outDir = path.join(extractRoot, path.basename(pkgPath, path.extname(pkgPath)));
 	const result = await runWithProgress(ctx, "Extract asset", async (progress) => {
-		return await extractUnityPackage(pkgPath, outDir, (p) => progress([`Directory: ${displayPath(extractRoot, ctx.cwd)}`, `Asset: ${path.basename(pkgPath)}`, barProgressLine(p.done, p.total, "Files")], p.done, p.total || 1));
+		return await extractUnityPackage(pkgPath, outDir, (p) => progress([`Directory: ${displayPath(extractRoot, ctx.cwd)}`, path.basename(pkgPath), barProgressLine(p.done, p.total, "Files")], p.done, p.total || 1));
 	});
 	ctx.ui.notify(result.message, result.ok ? "info" : "error");
 }
@@ -399,11 +425,12 @@ async function assetActions(ctx: ExtensionCommandContext, accountName: string, a
 	const infoMap = loadInfoMap(infoPath);
 	const info = infoMap.get(assetId);
 	const env = prepareDownloadEnvironment(scoped, ctx.cwd);
+	const isDownloaded = !!findDownloadedPackageForAsset(env, assetId, infoMap);
 	const action = await chooseFromModal<AssetAction>(ctx, {
 		title: `Actions for "${cleanDisplayName(info?.name ?? assetId)}"`,
 		items: [
-			{ value: "download", label: "Download", description: displayPath(env.downloadDir, ctx.cwd) },
-			{ value: "extract", label: "Extract", description: displayPath(getExtractRoot(env.downloadDir), ctx.cwd) },
+			{ value: "download", label: "Download" },
+			{ value: "extract", label: "Extract", disabled: !isDownloaded },
 			{ value: "open-downloads", label: "Open Downloads folder" },
 			{ value: "settings", label: "Account settings" },
 		],
@@ -458,37 +485,48 @@ async function assetBrowser(ctx: ExtensionCommandContext): Promise<void> {
 		const filters: Array<EditorModalFilter<string>> | undefined = config.accounts.length > 1
 			? config.accounts.map((account) => ({ value: account.name, label: account.name }))
 			: undefined;
-		const result = await ctx.ui.custom<BrowserResult>((tui, theme, keybindings, done) => new EditorModal<string, string>({
-			tui,
-			theme,
-			keybindings,
-			title: "Unity Asset Store",
-			subtitle: undefined,
-			filters,
-			initialFilter: activeAccount,
-			initialSelectedValue: activeAssetId,
-			search: true,
-			maxVisible: 12,
-			shortcuts: `type to search • ↑↓ navigate${filters ? " • tab account" : ""} • enter actions • ctrl+r refresh • esc close`,
-			noItemsText: (query) => query.trim() ? "No matching assets" : "No assets cached. Press ctrl+r to fetch this account.",
-			descriptionGap: 4,
-			getItems: (filter, query = "") => {
-				const accountName = filter ?? activeAccount;
-				const infoMap = getInfoMap(accountName);
-				return assetItemsFromInfo(infoMap, filterAssets(infoMap, query), getDownloadedIds(accountName));
-			},
-			onSelect: (item, filter) => done({ action: "asset", accountName: filter ?? activeAccount, assetId: item.value }),
-			onCancel: () => done("cancel"),
-			onFilterChange: (filter) => { activeAccount = filter; },
-			onInput: (data, filter, selectedItem) => {
-				if (data === "\x12") {
-					done({ action: "refresh", accountName: filter ?? activeAccount });
-					return true;
-				}
-				activeAssetId = selectedItem?.value ?? activeAssetId;
-				return false;
-			},
-		}));
+		const result = await ctx.ui.custom<BrowserResult>((tui, theme, keybindings, done) => {
+			let closeDownloadWatchers = () => {};
+			const finish = (value: BrowserResult) => {
+				closeDownloadWatchers();
+				done(value);
+			};
+			closeDownloadWatchers = watchDownloadFolders(config, ctx.cwd, () => {
+				downloadedCache.clear();
+				tui.requestRender();
+			});
+			return new EditorModal<string, string>({
+				tui,
+				theme,
+				keybindings,
+				title: "Unity Asset Store",
+				subtitle: undefined,
+				filters,
+				initialFilter: activeAccount,
+				initialSelectedValue: activeAssetId,
+				search: true,
+				maxVisible: 12,
+				shortcuts: `type to search • ↑↓ navigate${filters ? " • tab account" : ""} • enter actions • ctrl+r refresh • esc close`,
+				noItemsText: (query) => query.trim() ? "No matching assets" : "No assets cached. Press ctrl+r to fetch this account.",
+				descriptionGap: 4,
+				getItems: (filter, query = "") => {
+					const accountName = filter ?? activeAccount;
+					const infoMap = getInfoMap(accountName);
+					return assetItemsFromInfo(infoMap, filterAssets(infoMap, query), getDownloadedIds(accountName));
+				},
+				onSelect: (item, filter) => finish({ action: "asset", accountName: filter ?? activeAccount, assetId: item.value }),
+				onCancel: () => finish("cancel"),
+				onFilterChange: (filter) => { activeAccount = filter; },
+				onInput: (data, filter, selectedItem) => {
+					if (data === "\x12") {
+						finish({ action: "refresh", accountName: filter ?? activeAccount });
+						return true;
+					}
+					activeAssetId = selectedItem?.value ?? activeAssetId;
+					return false;
+				},
+			});
+		});
 		if (result === "cancel") break;
 		if (result.action === "refresh") {
 			try {

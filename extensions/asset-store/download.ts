@@ -132,7 +132,7 @@ export function preCheckDownloads(assetIds: string[], env: DownloadEnvironment, 
 }
 
 export function displayDownloadSummary(downloadDir: string, cwd: string, assetName: string, line: string): string[] {
-	return [`Directory: ${displayPath(downloadDir, cwd)}`, `Asset: ${assetName}`, line];
+	return [`Directory: ${displayPath(downloadDir, cwd)}`, assetName, line];
 }
 
 export async function downloadAsset(
