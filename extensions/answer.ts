@@ -10,9 +10,8 @@
  * 4. Submits the compiled answers when done
  */
 
-import { complete, completeSimple, type Model, type Api, type UserMessage } from "@earendil-works/pi-ai";
+import { completeSimple, type AssistantMessage, type Model, type Api, type UserMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ModelRegistry, Theme } from "@earendil-works/pi-coding-agent";
-import { BorderedLoader } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
 	Editor,
@@ -495,21 +494,53 @@ export default function (pi: ExtensionAPI) {
 				timestamp: Date.now(),
 			};
 
-			let response;
-			try {
-				response = await completeSimple(
+			const extractionCall = await ctx.ui.custom<
+				| { ok: true; response: AssistantMessage }
+				| { ok: false; cancelled: true }
+				| { ok: false; error: unknown }
+			>((_tui, _theme, keybindings, done) => {
+				const controller = new AbortController();
+				let settled = false;
+				const finish = (result: { ok: true; response: AssistantMessage } | { ok: false; cancelled: true } | { ok: false; error: unknown }) => {
+					if (settled) return;
+					settled = true;
+					done(result);
+				};
+				completeSimple(
 					extractionModel,
 					{ systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-					{ apiKey: auth.apiKey, headers: auth.headers, maxTokens: 1024 },
-				);
-			} catch (err) {
-				restoreStatus();
-				const msg = err instanceof Error ? err.message : String(err);
+					{ apiKey: auth.apiKey, headers: auth.headers, maxTokens: 1024, signal: controller.signal },
+				)
+					.then((response) => finish({ ok: true, response }))
+					.catch((error) => {
+						if (controller.signal.aborted) finish({ ok: false, cancelled: true });
+						else finish({ ok: false, error });
+					});
+				return {
+					handleInput(data: string) {
+						if (keybindings.matches(data, "tui.select.cancel") || matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+							controller.abort();
+							finish({ ok: false, cancelled: true });
+						}
+					},
+					render() { return []; },
+					invalidate() {},
+				};
+			}, { overlay: true });
+
+			restoreStatus();
+
+			if (!extractionCall.ok) {
+				if ("cancelled" in extractionCall) {
+					ctx.ui.notify("Answers extraction cancelled by the user", "info");
+					return "cancelled";
+				}
+				const msg = extractionCall.error instanceof Error ? extractionCall.error.message : String(extractionCall.error);
 				ctx.ui.notify(`API call failed: ${msg}`, "error");
 				return "error";
 			}
 
-			restoreStatus();
+			const response = extractionCall.response;
 
 			// Debug: show what we got back
 			const contentTypes = response.content.map((c: any) => `${c.type}${c.text ? '(has text)' : ''}`).join(', ');
@@ -614,7 +645,7 @@ export default function (pi: ExtensionAPI) {
 		},
 		run: runRefineAnswer,
 		hasCachedQuestions: (key: string): boolean => refineQuestionCache.has(key),
-		clearCachedQuestions: (key: string): void => refineQuestionCache.delete(key),
+		clearCachedQuestions: (key: string): void => { refineQuestionCache.delete(key); },
 	};
 
 	(globalThis as any).__piAnswerHandler = answerHandler;
