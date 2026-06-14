@@ -207,6 +207,7 @@ export async function downloadAsset(
 			fs.renameSync(tmpPath, finalPath);
 			return { assetId, ok: true, filename, size: downloaded, message: `Done${isResumed ? " (resumed)" : ""}: ${filename} (${formatSize(downloaded)})` };
 		} catch (err) {
+			if (options.signal?.aborted) return { assetId, ok: false, message: "Download cancelled" };
 			if (attempt < retry) {
 				await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 1000));
 				continue;

@@ -10,7 +10,7 @@ import { extractUnityPackage, getExtractRoot, listUnityPackages } from "./extrac
 import { barProgressLine, displayPath, formatSize, openFolder } from "./platform";
 import { filterAssets, loadInfoMap, cleanDisplayName, accountDataPaths } from "./storage";
 import { CookieInvalidError, runFetchList } from "./unity-api";
-import { AssetIdInputDialog, chooseFromModal, clearProgressWidget, fixedWidthIdNameLabel, setProgressWidget, textPrompt } from "./ui";
+import { AssetIdInputDialog, chooseFromModal, clearProgressWidget, fixedWidthIdNameLabel, textPrompt } from "./ui";
 
 const EXTENSION_NAME = "Asset Store";
 const SETTINGS_COMMAND = "asset-store-settings";
@@ -21,11 +21,16 @@ type BrowserResult = { action: "asset"; accountName: string; assetId: string } |
 type SettingsCommandEvent = { args?: string; ctx?: ExtensionCommandContext; extensionName?: string; title?: string; shortcuts?: string; done?: () => void };
 
 function notifyError(ctx: ExtensionCommandContext, err: unknown): void {
+	const message = err instanceof Error ? err.message : String(err);
+	if (message === "Download cancelled") {
+		ctx.ui.notify(message, "warning");
+		return;
+	}
 	if (err instanceof CookieInvalidError) {
 		ctx.ui.notify(`${err.message}. Update it in Account settings > Enter cookie.`, "error");
 		return;
 	}
-	ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+	ctx.ui.notify(message, "error");
 }
 
 function loadOrCreateConfig(ctx: ExtensionCommandContext): { config: AssetStoreConfig; configPath: string } {
@@ -71,21 +76,27 @@ function updateStatus(ctx: ExtensionCommandContext, config?: AssetStoreConfig, _
 	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("accent", "asset store"));
 }
 
-async function runWithProgress<T>(ctx: ExtensionCommandContext, title: string, work: (progress: (lines: string[], done?: number, total?: number) => void) => Promise<T>): Promise<T> {
+async function runWithProgress<T>(ctx: ExtensionCommandContext, title: string, work: (progress: (lines: string[], done?: number, total?: number) => void, signal: AbortSignal) => Promise<T>): Promise<T> {
 	let progressLines = ["Starting..."];
 	let latestDone = 0;
 	let latestTotal = 1;
 	const wrapped = await ctx.ui.custom<{ ok: true; value: T } | { ok: false; error: unknown }>((tui, theme, keybindings, done) => {
 		let settled = false;
+		const controller = new AbortController();
+		const cancel = () => {
+			if (settled) return;
+			settled = true;
+			controller.abort();
+			clearProgressWidget(ctx);
+			done({ ok: false, error: new Error("Download cancelled") });
+		};
 		const component = {
 			handleInput(data: string) {
-				if (keybindings.matches(data, "tui.select.cancel")) {
-					// UI-only cancellation; underlying task may finish quickly. AbortSignal support is handled by individual functions where passed.
-				}
+				if (keybindings.matches(data, "tui.select.cancel")) cancel();
 			},
 			render(width: number) {
 				const border = theme.fg("border", "─".repeat(Math.max(1, width)));
-				const lines = [border, theme.fg("accent", theme.bold(title)), "", ...progressLines, "", theme.fg("dim", "Working..."), border];
+				const lines = [border, theme.fg("accent", theme.bold(title)), "", ...progressLines, "", theme.fg("dim", "Working... • Esc = cancel"), border];
 				return lines.map((line) => truncateToWidth(line, width));
 			},
 			invalidate() {},
@@ -94,10 +105,9 @@ async function runWithProgress<T>(ctx: ExtensionCommandContext, title: string, w
 			progressLines = lines;
 			latestDone = doneCount;
 			latestTotal = total;
-			setProgressWidget(ctx, title, doneCount, total, lines[0]);
 			tui.requestRender();
 		};
-		work(progress)
+		work(progress, controller.signal)
 			.then((result) => { if (!settled) { settled = true; clearProgressWidget(ctx); done({ ok: true, value: result }); } })
 			.catch((error) => { if (!settled) { settled = true; clearProgressWidget(ctx); done({ ok: false, error }); } });
 		return component;
@@ -262,11 +272,12 @@ async function downloadAssets(ctx: ExtensionCommandContext): Promise<void> {
 	const aid = pending[0]!;
 	const filename = desiredFilename(aid, infoMap);
 	try {
-		const result = await runWithProgress(ctx, "Download assets", async (progress) => {
+		const result = await runWithProgress(ctx, "Download assets", async (progress, signal) => {
 			return await downloadAsset(aid, config, env, {
 				totalSize: infoMap.get(aid)?.size ?? 0,
 				desiredFilename: filename,
-				onProgress: (p) => progress([`Directory: ${displayPath(env.downloadDir, ctx.cwd)}`, `Asset: ${filename}`, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
+				signal,
+				onProgress: (p) => progress([`Asset: ${filename}`, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
 			});
 		});
 		const downloadedSize = result.size ? formatSize(result.size) : "0 B";
@@ -335,11 +346,12 @@ async function runDownloadForAsset(ctx: ExtensionCommandContext, config: AssetSt
 	const aid = pending[0];
 	if (!aid) return;
 	const filename = desiredFilename(aid, infoMap);
-	const result = await runWithProgress(ctx, "Download asset", async (progress) => {
+	const result = await runWithProgress(ctx, "Download asset", async (progress, signal) => {
 		return await downloadAsset(aid, config, env, {
 			totalSize: infoMap.get(aid)?.size ?? 0,
 			desiredFilename: filename,
-			onProgress: (p) => progress([`Directory: ${displayPath(env.downloadDir, ctx.cwd)}`, `Asset: ${filename}`, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
+			signal,
+			onProgress: (p) => progress([`Asset: ${filename}`, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
 		});
 	});
 	const downloadedSize = result.size ? formatSize(result.size) : "0 B";
