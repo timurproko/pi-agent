@@ -7,7 +7,7 @@ import { EditorModal, type EditorModalFilter, type EditorModalItem } from "../co
 import { configPathForCwd, getActiveAccount, loadConfig, normalizeCookieInput, saveActiveAccount, saveActiveAccountCookie, saveConfig, type AssetStoreConfig } from "./config";
 import { desiredFilename, downloadAsset, prepareDownloadEnvironment, preCheckDownloads } from "./download";
 import { extractUnityPackage, getExtractRoot, listUnityPackages } from "./extract";
-import { barProgressLine, displayPath, formatSize, openFolder } from "./platform";
+import { barProgressLine, displayPath, formatSize, openFolder, resolveDownloadDir } from "./platform";
 import { filterAssets, loadInfoMap, cleanDisplayName, accountDataPaths } from "./storage";
 import { CookieInvalidError, runFetchList } from "./unity-api";
 import { AssetIdInputDialog, chooseFromModal, clearProgressWidget, fixedWidthIdNameLabel, textPrompt } from "./ui";
@@ -96,7 +96,7 @@ async function runWithProgress<T>(ctx: ExtensionCommandContext, title: string, w
 			},
 			render(width: number) {
 				const border = theme.fg("border", "─".repeat(Math.max(1, width)));
-				const lines = [border, theme.fg("accent", theme.bold(title)), "", ...progressLines, "", theme.fg("dim", "Working... • Esc = cancel"), border];
+				const lines = [border, theme.fg("accent", theme.bold(title)), "", ...progressLines, "", theme.fg("dim", "esc cancel"), border];
 				return lines.map((line) => truncateToWidth(line, width));
 			},
 			invalidate() {},
@@ -164,7 +164,21 @@ function resultItemsFromInfo(infoMap: Map<string, { name: string; size: number }
 	}));
 }
 
-function assetItemsFromInfo(infoMap: Map<string, { name: string; size: number }>, ids: string[], _accountName: string): Array<EditorModalItem<string>> {
+function downloadedAssetIds(infoMap: Map<string, { name: string; size: number }>, downloadDir: string): Set<string> {
+	const packages = listUnityPackages(downloadDir).map((pkg) => path.basename(pkg).toLowerCase());
+	const downloaded = new Set<string>();
+	if (packages.length === 0) return downloaded;
+	for (const pid of infoMap.keys()) {
+		const desired = desiredFilename(pid, infoMap).toLowerCase();
+		const name = cleanDisplayName(infoMap.get(pid)?.name ?? "").toLowerCase();
+		if (packages.some((pkg) => pkg === desired || pkg.includes(pid) || (name && pkg.includes(name)))) {
+			downloaded.add(pid);
+		}
+	}
+	return downloaded;
+}
+
+function assetItemsFromInfo(infoMap: Map<string, { name: string; size: number }>, ids: string[], downloadedIds: Set<string>): Array<EditorModalItem<string>> {
 	return ids.map((pid) => {
 		const info = infoMap.get(pid);
 		const name = cleanDisplayName(info?.name ?? "") || pid;
@@ -172,6 +186,8 @@ function assetItemsFromInfo(infoMap: Map<string, { name: string; size: number }>
 		return {
 			value: pid,
 			label: name,
+			description: downloadedIds.has(pid) ? "[downloaded]" : undefined,
+			descriptionColor: "muted",
 			selectedDescription: size || undefined,
 		};
 	});
@@ -422,6 +438,7 @@ async function assetBrowser(ctx: ExtensionCommandContext): Promise<void> {
 		if (!config.accounts.some((account) => account.name === activeAccount)) activeAccount = getActiveAccount(config).name;
 		updateStatus(ctx, configForAccount(config, activeAccount));
 		const cache = new Map<string, Map<string, { name: string; size: number }>>();
+		const downloadedCache = new Map<string, Set<string>>();
 		const getInfoMap = (accountName: string) => {
 			let infoMap = cache.get(accountName);
 			if (!infoMap) {
@@ -429,6 +446,14 @@ async function assetBrowser(ctx: ExtensionCommandContext): Promise<void> {
 				cache.set(accountName, infoMap);
 			}
 			return infoMap;
+		};
+		const getDownloadedIds = (accountName: string) => {
+			let ids = downloadedCache.get(accountName);
+			if (!ids) {
+				ids = downloadedAssetIds(getInfoMap(accountName), resolveDownloadDir(configForAccount(config, accountName), ctx.cwd));
+				downloadedCache.set(accountName, ids);
+			}
+			return ids;
 		};
 		const filters: Array<EditorModalFilter<string>> | undefined = config.accounts.length > 1
 			? config.accounts.map((account) => ({ value: account.name, label: account.name }))
@@ -450,7 +475,7 @@ async function assetBrowser(ctx: ExtensionCommandContext): Promise<void> {
 			getItems: (filter, query = "") => {
 				const accountName = filter ?? activeAccount;
 				const infoMap = getInfoMap(accountName);
-				return assetItemsFromInfo(infoMap, filterAssets(infoMap, query), accountName);
+				return assetItemsFromInfo(infoMap, filterAssets(infoMap, query), getDownloadedIds(accountName));
 			},
 			onSelect: (item, filter) => done({ action: "asset", accountName: filter ?? activeAccount, assetId: item.value }),
 			onCancel: () => done("cancel"),

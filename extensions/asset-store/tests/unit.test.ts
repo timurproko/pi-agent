@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as tar from "tar";
 import { configPathForCwd, extensionDataRoot, normalizeConfig, normalizeCookieInput } from "../config.ts";
+import { prepareDownloadEnvironment } from "../download.ts";
 import { extractUnityPackage, getExtractRoot } from "../extract.ts";
 import { formatSize, resolveDownloadDir, safePackageFilename, standardDownloadsDir } from "../platform.ts";
 import { accountDataPaths, safeAccountSlug, filterAssets } from "../storage.ts";
@@ -59,6 +60,24 @@ test("extension data stores are rooted in the extension folder and assets use Do
 	assert.equal(resolveDownloadDir(normalizeConfig({ accounts: [{ name: "Personal", cookie: "" }], active_account: "Personal" }), "/tmp/other"), standardDownloadsDir());
 	assert.equal(resolveDownloadDir(normalizeConfig({ accounts: [{ name: "Personal", cookie: "", download_dir: "./downloads" }], active_account: "Personal" }), "/tmp/other"), standardDownloadsDir());
 	assert.equal(getExtractRoot(standardDownloadsDir()), standardDownloadsDir());
+});
+
+test("download metadata cache is kept out of the user downloads folder", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "asd-download-cache-"));
+	const legacyCache = path.join(tmp, ".cache");
+	fs.mkdirSync(legacyCache, { recursive: true });
+	fs.writeFileSync(path.join(legacyCache, "123.meta"), JSON.stringify({ filename: "Old.unitypackage" }));
+	fs.writeFileSync(path.join(tmp, ".456.meta"), JSON.stringify({ filename: "RootOld.unitypackage" }));
+	const cfg = normalizeConfig({ accounts: [{ name: "Unit Cache", cookie: "", download_dir: tmp }], active_account: "Unit Cache" });
+	const env = prepareDownloadEnvironment(cfg, "/tmp/other");
+	assert.equal(env.downloadDir, tmp);
+	assert.equal(path.resolve(env.cacheDir).startsWith(path.resolve(tmp)), false);
+	assert.equal(fs.existsSync(path.join(tmp, ".cache")), false);
+	assert.equal(fs.existsSync(path.join(tmp, ".456.meta")), false);
+	assert.equal(fs.existsSync(path.join(env.cacheDir, "123.meta")), true);
+	assert.equal(fs.existsSync(path.join(env.cacheDir, "456.meta")), true);
+	fs.rmSync(tmp, { recursive: true, force: true });
+	fs.rmSync(env.cacheDir, { recursive: true, force: true });
 });
 
 test("extracts unitypackage safely and skips traversal", async () => {

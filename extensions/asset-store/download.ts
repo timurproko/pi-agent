@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AssetStoreConfig } from "./config";
-import { getRetry, getTimeoutMs } from "./config";
+import { extensionDataRoot, getActiveAccount, getRetry, getTimeoutMs } from "./config";
 import { displayPath, downloadProgressLine, formatSize, resolveDownloadDir, safePackageFilename } from "./platform";
 import type { ProductInfo } from "./storage";
 import { makeDownloadHeaders, parseFilename, downloadUrl } from "./unity-api";
@@ -27,11 +27,30 @@ export interface DownloadResult {
 	size?: number;
 }
 
+function safeCacheSlug(name: string): string {
+	const slug = String(name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+	return slug || "account";
+}
+
+function removeLegacyDownloadCache(downloadDir: string, cacheDir: string): void {
+	const legacyCacheDir = path.join(downloadDir, ".cache");
+	if (fs.existsSync(legacyCacheDir)) {
+		for (const entry of fs.readdirSync(legacyCacheDir)) {
+			if (!entry.endsWith(".meta")) continue;
+			const oldPath = path.join(legacyCacheDir, entry);
+			const newPath = path.join(cacheDir, entry);
+			if (!fs.existsSync(newPath)) fs.renameSync(oldPath, newPath);
+		}
+		fs.rmSync(legacyCacheDir, { recursive: true, force: true });
+	}
+}
+
 export function prepareDownloadEnvironment(config: AssetStoreConfig, cwd: string): DownloadEnvironment {
 	const downloadDir = resolveDownloadDir(config, cwd);
 	fs.mkdirSync(downloadDir, { recursive: true });
-	const cacheDir = path.join(downloadDir, ".cache");
+	const cacheDir = path.join(extensionDataRoot(), "data", "download-cache", safeCacheSlug(getActiveAccount(config).name));
 	fs.mkdirSync(cacheDir, { recursive: true });
+	removeLegacyDownloadCache(downloadDir, cacheDir);
 	for (const entry of fs.readdirSync(downloadDir)) {
 		if (!/^\..+\.meta$/.test(entry)) continue;
 		const oldPath = path.join(downloadDir, entry);
