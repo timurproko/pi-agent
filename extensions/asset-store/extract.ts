@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { tempDir } from "./platform";
+import { barProgressLine, downloadProgressLine, tempDir } from "./platform";
 
 export interface ExtractProgress {
 	done: number;
@@ -43,14 +43,45 @@ function isUnsafePackagePathname(pathname: string): boolean {
 	return normalized.split("/").some((part) => part === "..");
 }
 
-async function extractTarToTemp(packagePath: string, tmpDir: string): Promise<void> {
+async function extractTarToTemp(packagePath: string, tmpDir: string, onProgress?: (progress: ExtractProgress) => void): Promise<void> {
 	let tar: any;
 	try {
 		tar = await import("tar");
 	} catch {
 		throw new Error("Install extension dependency: npm install in ~/.pi/agent/extensions/asset-store");
 	}
-	await tar.x({ file: packagePath, cwd: tmpDir, strict: false, preservePaths: false });
+	const total = fs.statSync(packagePath).size;
+	let done = 0;
+	let lastRender = 0;
+	const start = Date.now();
+	onProgress?.({ done: 0, total: total || 1, message: downloadProgressLine(0, total, 0) });
+	const input = fs.createReadStream(packagePath);
+	const extractor = tar.x({ cwd: tmpDir, strict: false, preservePaths: false });
+	input.on("data", (chunk: Buffer) => {
+		done += chunk.length;
+		const now = Date.now();
+		if (now - lastRender >= 150) {
+			lastRender = now;
+			const elapsed = Math.max(0.001, (now - start) / 1000);
+			const speed = done / elapsed;
+			onProgress?.({ done, total: total || 1, message: downloadProgressLine(done, total, speed) });
+		}
+	});
+	await new Promise<void>((resolve, reject) => {
+		let settled = false;
+		const finish = (err?: Error) => {
+			if (settled) return;
+			settled = true;
+			err ? reject(err) : resolve();
+		};
+		input.on("error", finish);
+		extractor.on("error", finish);
+		extractor.on("finish", () => finish());
+		extractor.on("close", () => finish());
+		input.pipe(extractor);
+	});
+	const elapsed = Math.max(0.001, (Date.now() - start) / 1000);
+	onProgress?.({ done: total || done, total: total || done || 1, message: downloadProgressLine(total || done, total || done, done / elapsed, true) });
 }
 
 export async function extractUnityPackage(packagePath: string, outputPath: string, onProgress?: (progress: ExtractProgress) => void): Promise<ExtractResult> {
@@ -59,7 +90,7 @@ export async function extractUnityPackage(packagePath: string, outputPath: strin
 	fs.mkdirSync(resolvedOutput, { recursive: true });
 	const tmpDir = tempDir("asset-store-unitypackage-");
 	try {
-		await extractTarToTemp(resolvedPackage, tmpDir);
+		await extractTarToTemp(resolvedPackage, tmpDir, onProgress);
 		const items: Array<{ assetPath: string; outPath: string }> = [];
 		for (const entry of fs.readdirSync(tmpDir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
@@ -74,7 +105,7 @@ export async function extractUnityPackage(packagePath: string, outputPath: strin
 			if (!isInside(resolvedOutput, outPath)) continue;
 			items.push({ assetPath: assetFile, outPath });
 		}
-		onProgress?.({ done: 0, total: items.length });
+		onProgress?.({ done: 0, total: items.length || 1, message: barProgressLine(0, items.length || 1, "Files") });
 		let done = 0;
 		let failed = 0;
 		for (const item of items) {
@@ -85,7 +116,7 @@ export async function extractUnityPackage(packagePath: string, outputPath: strin
 			} catch {
 				failed += 1;
 			}
-			onProgress?.({ done: done + failed, total: items.length });
+			onProgress?.({ done: done + failed, total: items.length || 1, message: barProgressLine(done + failed, items.length || 1, "Files") });
 		}
 		return { ok: failed === 0, files: done, outputPath: resolvedOutput, message: `Extracting complete: ${done} success, ${failed} failed` };
 	} catch (err) {

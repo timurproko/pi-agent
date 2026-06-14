@@ -7,7 +7,7 @@ import { EditorModal, type EditorModalFilter, type EditorModalItem } from "../co
 import { configPathForCwd, getActiveAccount, loadConfig, normalizeCookieInput, saveActiveAccount, saveActiveAccountCookie, saveConfig, type AssetStoreConfig } from "./config";
 import { desiredFilename, downloadAsset, prepareDownloadEnvironment, preCheckDownloads } from "./download";
 import { extractUnityPackage, getExtractRoot, listUnityPackages } from "./extract";
-import { barProgressLine, displayPath, formatSize, openFolder, resolveDownloadDir } from "./platform";
+import { barProgressLine, displayPath, downloadProgressLine, formatSize, openFolder, resolveDownloadDir } from "./platform";
 import { filterAssets, loadInfoMap, cleanDisplayName, accountDataPaths } from "./storage";
 import { CookieInvalidError, runFetchList } from "./unity-api";
 import { AssetIdInputDialog, chooseFromModal, clearProgressWidget, fixedWidthIdNameLabel, textPrompt } from "./ui";
@@ -76,8 +76,8 @@ function updateStatus(ctx: ExtensionCommandContext, config?: AssetStoreConfig, _
 	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("accent", "asset store"));
 }
 
-async function runWithProgress<T>(ctx: ExtensionCommandContext, title: string, work: (progress: (lines: string[], done?: number, total?: number) => void, signal: AbortSignal) => Promise<T>): Promise<T> {
-	let progressLines = ["Starting..."];
+async function runWithProgress<T>(ctx: ExtensionCommandContext, title: string, work: (progress: (lines: string[], done?: number, total?: number) => void, signal: AbortSignal) => Promise<T>, initialLines: string[] = ["Starting..."]): Promise<T> {
+	let progressLines = initialLines;
 	let latestDone = 0;
 	let latestTotal = 1;
 	const wrapped = await ctx.ui.custom<{ ok: true; value: T } | { ok: false; error: unknown }>((tui, theme, keybindings, done) => {
@@ -121,11 +121,11 @@ async function accountSettings(ctx: ExtensionCommandContext): Promise<void> {
 	while (true) {
 		updateStatus(ctx, config, "settings");
 		const active = getActiveAccount(config).name;
+		const accountNames = config.accounts.map((account) => account.name).join(", ");
 		const action = await chooseFromModal<"switch" | "cookie" | "open-config">(ctx, {
-			title: "Account settings",
-			subtitle: `Active account: ${active}`,
+			title: "Asset store settings",
 			items: [
-				{ value: "switch", label: "Switch account", description: config.accounts.length > 1 ? active : "only one account" },
+				{ value: "switch", label: "Active accounts", description: accountNames },
 				{ value: "cookie", label: "Enter cookie", description: "paste Cookie header for active account" },
 				{ value: "open-config", label: "Show config path", description: displayPath(configPath, ctx.cwd) },
 			],
@@ -135,7 +135,7 @@ async function accountSettings(ctx: ExtensionCommandContext): Promise<void> {
 		if (action === "switch") {
 			const selected = await chooseFromModal<string>(ctx, {
 				title: "Switch account",
-				items: config.accounts.map((account) => ({ value: account.name, label: account.name, description: account.name === config.active_account ? "(active)" : undefined, checked: account.name === config.active_account })),
+				items: config.accounts.map((account) => ({ value: account.name, label: account.name, checked: account.name === config.active_account })),
 				shortcuts: "↑↓ navigate • enter select • esc back",
 			});
 			if (selected && selected !== config.active_account) {
@@ -314,14 +314,15 @@ async function downloadAssets(ctx: ExtensionCommandContext): Promise<void> {
 	const aid = pending[0]!;
 	const filename = desiredFilename(aid, infoMap);
 	try {
+		const totalSize = infoMap.get(aid)?.size ?? 0;
 		const result = await runWithProgress(ctx, "Download assets", async (progress, signal) => {
 			return await downloadAsset(aid, config, env, {
-				totalSize: infoMap.get(aid)?.size ?? 0,
+				totalSize,
 				desiredFilename: filename,
 				signal,
 				onProgress: (p) => progress([filename, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
 			});
-		});
+		}, [filename, downloadProgressLine(0, totalSize, 0)]);
 		const downloadedSize = result.size ? formatSize(result.size) : "0 B";
 		ctx.ui.notify(result.ok ? `Download complete: ${downloadedSize}, 1 success, 0 failed` : `Download complete: 0 B, 0 success, 1 failed`, result.ok ? "info" : "error");
 	} catch (err) {
@@ -353,9 +354,11 @@ async function extractAssets(ctx: ExtensionCommandContext): Promise<void> {
 	}
 	const outDir = path.join(extractRoot, path.basename(selected, path.extname(selected)));
 	try {
+		const packageName = path.basename(selected);
+		const packageSize = fs.existsSync(selected) ? fs.statSync(selected).size : 0;
 		const result = await runWithProgress(ctx, "Extract assets", async (progress) => {
-			return await extractUnityPackage(selected, outDir, (p) => progress([`Directory: ${displayPath(extractRoot, ctx.cwd)}`, path.basename(selected), barProgressLine(p.done, p.total, "Files")], p.done, p.total || 1));
-		});
+			return await extractUnityPackage(selected, outDir, (p) => progress([packageName, p.message ?? barProgressLine(p.done, p.total, "Files")], p.done, p.total || 1));
+		}, [packageName, downloadProgressLine(0, packageSize, 0)]);
 		ctx.ui.notify(result.message, result.ok ? "info" : "error");
 	} catch (err) {
 		notifyError(ctx, err);
@@ -388,14 +391,15 @@ async function runDownloadForAsset(ctx: ExtensionCommandContext, config: AssetSt
 	const aid = pending[0];
 	if (!aid) return;
 	const filename = desiredFilename(aid, infoMap);
+	const totalSize = infoMap.get(aid)?.size ?? 0;
 	const result = await runWithProgress(ctx, "Download asset", async (progress, signal) => {
 		return await downloadAsset(aid, config, env, {
-			totalSize: infoMap.get(aid)?.size ?? 0,
+			totalSize,
 			desiredFilename: filename,
 			signal,
 			onProgress: (p) => progress([filename, p.line], p.totalSize ? p.downloaded : 0, p.totalSize || 1),
 		});
-	});
+	}, [filename, downloadProgressLine(0, totalSize, 0)]);
 	const downloadedSize = result.size ? formatSize(result.size) : "0 B";
 	ctx.ui.notify(result.ok ? `Download complete: ${downloadedSize}, 1 success, 0 failed` : result.message, result.ok ? "info" : "error");
 }
@@ -411,9 +415,11 @@ async function runExtractForAsset(ctx: ExtensionCommandContext, config: AssetSto
 	}
 	const extractRoot = getExtractRoot(env.downloadDir);
 	const outDir = path.join(extractRoot, path.basename(pkgPath, path.extname(pkgPath)));
+	const packageName = path.basename(pkgPath);
+	const packageSize = fs.existsSync(pkgPath) ? fs.statSync(pkgPath).size : 0;
 	const result = await runWithProgress(ctx, "Extract asset", async (progress) => {
-		return await extractUnityPackage(pkgPath, outDir, (p) => progress([`Directory: ${displayPath(extractRoot, ctx.cwd)}`, path.basename(pkgPath), barProgressLine(p.done, p.total, "Files")], p.done, p.total || 1));
-	});
+		return await extractUnityPackage(pkgPath, outDir, (p) => progress([packageName, p.message ?? barProgressLine(p.done, p.total, "Files")], p.done, p.total || 1));
+	}, [packageName, downloadProgressLine(0, packageSize, 0)]);
 	ctx.ui.notify(result.message, result.ok ? "info" : "error");
 }
 
@@ -431,8 +437,8 @@ async function assetActions(ctx: ExtensionCommandContext, accountName: string, a
 		items: [
 			{ value: "download", label: "Download" },
 			{ value: "extract", label: "Extract", disabled: !isDownloaded },
-			{ value: "open-downloads", label: "Open Downloads folder" },
-			{ value: "settings", label: "Account settings" },
+			{ value: "open-downloads", label: "Open folder" },
+			{ value: "settings", label: "Settings" },
 		],
 		shortcuts: "↑↓ navigate • enter select • esc back",
 	});
